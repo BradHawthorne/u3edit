@@ -2,7 +2,6 @@
 
 import glob
 import os
-import sys
 
 
 def resolve_game_file(directory: str, prefix: str, letter: str) -> str | None:
@@ -56,10 +55,9 @@ def load_game_file(path: str) -> bytes:
 
 
 def validate_file_size(data: bytes, expected: int, label: str) -> None:
-    """Validate file size, exit with error if wrong."""
+    """Validate file size, raise ValueError if wrong."""
     if len(data) != expected:
-        print(f"Error: {label} should be {expected} bytes, got {len(data)}", file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(f"{label} should be {expected} bytes, got {len(data)}")
 
 
 def decode_high_ascii(data: bytes) -> str:

@@ -4,11 +4,14 @@ Wraps the diskiigs CLI tool via subprocess to read/write files from
 ProDOS and DOS 3.3 disk images (.po, .2mg, .dsk, .do).
 """
 
+import argparse
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+
+from .json_export import export_json
 
 
 def find_diskiigs() -> str | None:
@@ -185,3 +188,113 @@ class DiskContext:
     def write(self, name: str, data: bytes) -> None:
         """Stage a file for writing back to disk image."""
         self._modified[name] = data
+
+
+# =============================================================================
+# CLI Commands
+# =============================================================================
+
+def cmd_info(args) -> None:
+    """Show disk image info."""
+    info = disk_info(args.image)
+    if 'error' in info:
+        print(f"Error: {info['error']}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        export_json(info, args.output)
+        return
+
+    print(f"\n=== Disk Image: {os.path.basename(args.image)} ===\n")
+    for key, val in info.items():
+        print(f"  {key:<20s}  {val}")
+    print()
+
+
+def cmd_list(args) -> None:
+    """List files on disk image."""
+    entries = disk_list(args.image, args.path)
+    if not entries:
+        print(f"No files found (or diskiigs error).", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        export_json(entries, args.output)
+        return
+
+    print(f"\n=== {os.path.basename(args.image)}:{args.path} ===\n")
+    print(f"  {'Name':<20s}  {'Type':<6s}  {'Size':>8s}")
+    print(f"  {'----':<20s}  {'----':<6s}  {'----':>8s}")
+    for e in entries:
+        print(f"  {e['name']:<20s}  {e['type']:<6s}  {e['size']:>8s}")
+    print(f"\n  {len(entries)} files\n")
+
+
+def cmd_extract(args) -> None:
+    """Extract all files from disk image."""
+    output_dir = args.output or '.'
+    ok = disk_extract_all(args.image, output_dir)
+    if ok:
+        print(f"Extracted to {output_dir}")
+    else:
+        print("Extract failed.", file=sys.stderr)
+        sys.exit(1)
+
+
+def register_parser(subparsers) -> None:
+    p = subparsers.add_parser('disk', help='Disk image operations (requires diskiigs)')
+    sub = p.add_subparsers(dest='disk_command')
+
+    p_info = sub.add_parser('info', help='Show disk image info')
+    p_info.add_argument('image', help='Disk image file (.po, .2mg, .dsk)')
+    p_info.add_argument('--json', action='store_true', help='Output as JSON')
+    p_info.add_argument('--output', '-o', help='Output file (for --json)')
+
+    p_list = sub.add_parser('list', help='List files on disk image')
+    p_list.add_argument('image', help='Disk image file')
+    p_list.add_argument('--path', default='/', help='ProDOS directory path (default: /)')
+    p_list.add_argument('--json', action='store_true', help='Output as JSON')
+    p_list.add_argument('--output', '-o', help='Output file (for --json)')
+
+    p_extract = sub.add_parser('extract', help='Extract all files from disk image')
+    p_extract.add_argument('image', help='Disk image file')
+    p_extract.add_argument('--output', '-o', help='Output directory (default: current)')
+
+
+def dispatch(args) -> None:
+    if args.disk_command == 'info':
+        cmd_info(args)
+    elif args.disk_command == 'list':
+        cmd_list(args)
+    elif args.disk_command == 'extract':
+        cmd_extract(args)
+    else:
+        print("Usage: u3edit disk {info|list|extract} ...", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description='Ultima III: Exodus - Disk Image Operations')
+    sub = parser.add_subparsers(dest='disk_command')
+
+    p_info = sub.add_parser('info', help='Show disk image info')
+    p_info.add_argument('image', help='Disk image file')
+    p_info.add_argument('--json', action='store_true')
+    p_info.add_argument('--output', '-o')
+
+    p_list = sub.add_parser('list', help='List files on disk image')
+    p_list.add_argument('image', help='Disk image file')
+    p_list.add_argument('--path', default='/')
+    p_list.add_argument('--json', action='store_true')
+    p_list.add_argument('--output', '-o')
+
+    p_extract = sub.add_parser('extract', help='Extract all files')
+    p_extract.add_argument('image', help='Disk image file')
+    p_extract.add_argument('--output', '-o')
+
+    args = parser.parse_args()
+    dispatch(args)
+
+
+if __name__ == '__main__':
+    main()

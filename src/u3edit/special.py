@@ -13,6 +13,7 @@ from .constants import (
     SPECIAL_MAP_WIDTH, SPECIAL_MAP_HEIGHT, SPECIAL_MAP_TILES,
     tile_char,
 )
+from .fileutil import resolve_single_file
 from .json_export import export_json
 
 
@@ -35,16 +36,11 @@ def cmd_view(args) -> None:
     path_or_dir = args.path
 
     if os.path.isdir(path_or_dir):
-        import glob
         found = []
         for prefix in SPECIAL_NAMES:
-            matches = glob.glob(os.path.join(path_or_dir, f'{prefix}#*'))
-            if not matches:
-                candidate = os.path.join(path_or_dir, prefix)
-                if os.path.isfile(candidate):
-                    matches = [candidate]
-            if matches:
-                found.append((prefix, matches[0]))
+            path = resolve_single_file(path_or_dir, prefix)
+            if path:
+                found.append((prefix, path))
 
         if not found:
             print(f"Error: No special location files found in {path_or_dir}",

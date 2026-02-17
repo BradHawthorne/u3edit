@@ -37,7 +37,8 @@ class Character:
     """A single Ultima III character record (64 bytes)."""
 
     def __init__(self, data: bytes | bytearray):
-        assert len(data) == CHAR_RECORD_SIZE
+        if len(data) != CHAR_RECORD_SIZE:
+            raise ValueError(f"Character record must be {CHAR_RECORD_SIZE} bytes, got {len(data)}")
         self.raw = bytearray(data)
 
     @property

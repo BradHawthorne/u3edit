@@ -27,6 +27,7 @@ from . import special
 from . import text
 from . import spell
 from . import equip
+from . import disk
 
 
 def main() -> None:
@@ -50,6 +51,7 @@ def main() -> None:
     text.register_parser(subparsers)
     spell.register_parser(subparsers)
     equip.register_parser(subparsers)
+    disk.register_parser(subparsers)
 
     args = parser.parse_args()
 
@@ -69,6 +71,7 @@ def main() -> None:
         'text': text.dispatch,
         'spell': spell.dispatch,
         'equip': equip.dispatch,
+        'disk': disk.dispatch,
     }
 
     handler = dispatchers.get(args.tool)

@@ -16,7 +16,7 @@ from .constants import (
     PRTY_FILE_SIZE, PLRS_FILE_SIZE, SOSA_FILE_SIZE, SOSM_FILE_SIZE,
     CHAR_RECORD_SIZE, tile_char,
 )
-from .fileutil import resolve_game_file
+from .fileutil import resolve_single_file
 from .roster import Character
 from .json_export import export_json
 
@@ -25,7 +25,8 @@ class PartyState:
     """Party state from PRTY file (16 bytes)."""
 
     def __init__(self, data: bytes):
-        assert len(data) >= PRTY_FILE_SIZE
+        if len(data) < PRTY_FILE_SIZE:
+            raise ValueError(f"PRTY data too small: {len(data)} bytes (need {PRTY_FILE_SIZE})")
         self.raw = bytearray(data[:PRTY_FILE_SIZE])
 
     @property
@@ -86,23 +87,7 @@ class PartyState:
 def cmd_view(args) -> None:
     game_dir = args.game_dir
 
-    # Load PRTY
-    prty_path = resolve_game_file(game_dir, 'PRTY', '')
-    if not prty_path:
-        # Try without letter
-        prty_path = resolve_game_file(game_dir, 'PRT', 'Y')
-    # Try plain name
-    if not prty_path:
-        candidate = os.path.join(game_dir, 'PRTY')
-        if os.path.isfile(candidate):
-            prty_path = candidate
-    # Try with hash
-    if not prty_path:
-        import glob
-        matches = glob.glob(os.path.join(game_dir, 'PRTY#*'))
-        if matches:
-            prty_path = matches[0]
-
+    prty_path = resolve_single_file(game_dir, 'PRTY')
     if not prty_path:
         print(f"Error: PRTY file not found in {game_dir}", file=sys.stderr)
         sys.exit(1)
@@ -111,14 +96,7 @@ def cmd_view(args) -> None:
         prty_data = f.read()
     party = PartyState(prty_data)
 
-    # Load PLRS
-    plrs_path = None
-    import glob as _glob
-    for pattern in ['PLRS#*', 'PLRS']:
-        matches = _glob.glob(os.path.join(game_dir, pattern))
-        if matches:
-            plrs_path = matches[0]
-            break
+    plrs_path = resolve_single_file(game_dir, 'PLRS')
 
     active_chars = []
     if plrs_path:
@@ -147,12 +125,7 @@ def cmd_view(args) -> None:
                 char.display(i)
 
     # Load SOSA for mini-map if available
-    sosa_path = None
-    for pattern in ['SOSA#*', 'SOSA']:
-        matches = _glob.glob(os.path.join(game_dir, pattern))
-        if matches:
-            sosa_path = matches[0]
-            break
+    sosa_path = resolve_single_file(game_dir, 'SOSA')
 
     if sosa_path and not args.brief:
         with open(sosa_path, 'rb') as f:
@@ -178,14 +151,7 @@ def cmd_view(args) -> None:
 def cmd_edit(args) -> None:
     game_dir = args.game_dir
 
-    import glob as _glob
-    prty_path = None
-    for pattern in ['PRTY#*', 'PRTY']:
-        matches = _glob.glob(os.path.join(game_dir, pattern))
-        if matches:
-            prty_path = matches[0]
-            break
-
+    prty_path = resolve_single_file(game_dir, 'PRTY')
     if not prty_path:
         print(f"Error: PRTY file not found in {game_dir}", file=sys.stderr)
         sys.exit(1)
