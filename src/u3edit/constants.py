@@ -49,8 +49,17 @@ TILES = {
     0x88: ('0', 'Moongate'),
     0x8C: ('|', 'Wall'),
     0x90: (' ', 'Void'),
+    0x94: (':', 'Brick'),
+    0x98: ('-', 'Bridge'),
+    0x9C: ('=', 'Sign'),
+    0xA0: ('c', 'Counter'),
+    0xA4: ('b', 'Bed'),
+    0xA8: ('%', 'Ankh'),
+    0xAC: ('/', 'Door North'),
+    0xB0: ('\\', 'Door East'),
     0xF0: ('+', 'Magic Effect'),
     0xF4: ('f', 'Fire Effect'),
+    0xFC: ('?', 'Hidden'),
 }
 
 
@@ -152,10 +161,29 @@ WEAPONS = [
     '+4 Axe', '+4 Bow', '+4 Sword', 'Exotic',
 ]
 
+# Weapon base damage and price (index matches WEAPONS)
+WEAPON_DAMAGE = [0, 4, 8, 4, 12, 8, 16, 20, 18, 14, 22, 24, 24, 20, 28, 30]
+WEAPON_PRICE = [0, 20, 50, 30, 100, 80, 150, 200, 300, 280, 350, 500, 500, 480, 550, 9999]
+
 ARMORS = [
     'Skin', 'Cloth', 'Leather', 'Chain', 'Plate',
     '+2 Chain', '+2 Plate', 'Exotic',
 ]
+
+# Armor evasion percentage (index matches ARMORS)
+ARMOR_EVASION = [50.0, 51.2, 53.1, 56.2, 59.4, 60.9, 63.3, 65.2]
+
+# Class maximum weapon/armor tier (index into WEAPONS/ARMORS)
+CLASS_MAX_WEAPON = {
+    'Fighter': 15, 'Cleric': 2, 'Wizard': 1, 'Thief': 6,
+    'Lark': 6, 'Illusionist': 6, 'Druid': 2, 'Alchemist': 6,
+    'Ranger': 15, 'Paladin': 15, 'Barbarian': 15,
+}
+CLASS_MAX_ARMOR = {
+    'Fighter': 7, 'Cleric': 5, 'Wizard': 1, 'Thief': 2,
+    'Lark': 2, 'Illusionist': 2, 'Druid': 2, 'Alchemist': 2,
+    'Ranger': 7, 'Paladin': 7, 'Barbarian': 7,
+}
 
 # =============================================================================
 # Marks and Cards (byte 0x0E bitmask)
@@ -175,6 +203,24 @@ CARDS_BITS = {
     1: 'Love',
     0: 'Moons',
 }
+
+# =============================================================================
+# Spells
+# =============================================================================
+
+WIZARD_SPELLS = [
+    ('Repond', 5), ('Mittar', 5), ('Lorum', 10), ('Dumapic', 15),
+    ('Calfo', 20), ('Morlis', 25), ('Pontori', 30), ('Bolatu', 35),
+    ('Malor', 40), ('Lakanito', 45), ('Nacal', 50), ('Appar Unem', 55),
+    ('Zilwan', 60), ('Excuun', 65), ('Lorto', 70), ('Mani', 75),
+]
+
+CLERIC_SPELLS = [
+    ('Sanctu', 5), ('Luminae', 5), ('Dag Acron', 10), ('Alcort', 15),
+    ('Sequitu', 20), ('Sominae', 25), ('Sanctu Mani', 30), ('Zxkuqyb', 35),
+    ('Anju Sermani', 40), ('Noxum', 45), ('Decorp', 50), ('Altair', 55),
+    ('Dag Lificina', 60), ('Lava', 65), ('Pontori', 70), ('Xen Corp', 75),
+]
 
 # =============================================================================
 # Character Record Layout (64 bytes per character)
@@ -242,16 +288,22 @@ MON_ATTR_NAMES = [
     'Ability 1', 'Ability 2',
 ]
 
-# Monster names by tile ID (tile1 value from MON file)
+# Monster sprite names by tile ID (tile1 value from MON file).
+# In Ultima III, monster identity is determined by the tile sprite index.
+# Encounter groups may share the same sprite for all members.
 MONSTER_NAMES = {
+    0x20: 'Invisible',
+    0x24: 'Mimic',
+    0x28: 'Phantom',
+    0x2C: 'Frigate',
+    0x34: 'Sea Serpent',
+    0x38: "Man-o'-War",
     0x3C: 'Pirate Ship',
-    0x34: 'Serpent',
-    0x38: 'Man-o-War',
-    0x40: 'Merchant',
-    0x44: 'Jester',
-    0x48: 'Guard',
-    0x4C: 'Lord British',
-    0x50: 'Fighter',
+    0x40: 'Brigand',
+    0x44: 'Floor Devil',
+    0x48: 'Fighter',
+    0x4C: 'Dark Knight',
+    0x50: 'Ranger',
     0x54: 'Cleric',
     0x58: 'Wizard',
     0x5C: 'Thief',
@@ -263,10 +315,26 @@ MONSTER_NAMES = {
     0x74: 'Dragon',
     0x78: 'Balron',
     0x7C: 'Exodus',
-    # Additional creature names (game uses same tile for groups of 3)
-    0x24: 'Chest',
-    0x28: 'Horse',
-    0x2C: 'Ship',
+    0xFC: 'Devil',
+}
+
+# Context-aware monster group names for each MON encounter file.
+# These provide better names when the same sprite tile is used for all
+# monsters in a file. Key: MON file letter. Value: group description.
+MON_GROUP_NAMES = {
+    'A': 'Grassland',
+    'B': 'Forest',
+    'C': 'Mountain',
+    'D': 'Ocean',
+    'E': 'Town Guard',
+    'F': 'Dungeon L1-2',
+    'G': 'Dungeon L3-4',
+    'H': 'Dungeon L5-6',
+    'I': 'Dungeon L7-8',
+    'J': 'Castle',
+    'K': 'Ambrosia',
+    'L': 'Special',
+    'Z': 'Boss',
 }
 
 # =============================================================================
@@ -400,6 +468,8 @@ SPECIAL_MAP_TILES = SPECIAL_MAP_WIDTH * SPECIAL_MAP_HEIGHT  # 121 bytes
 # =============================================================================
 
 PRTY_TRANSPORT = {
+    0x00: 'None',
+    0x01: 'On Foot',
     0x0A: 'Horse',
     0x0B: 'Ship',
     0x3F: 'On Foot',

@@ -3,6 +3,8 @@
 from u3edit.constants import (
     TILES, DUNGEON_TILES, WEAPONS, ARMORS, RACES, CLASSES,
     MARKS_BITS, CARDS_BITS, MONSTER_NAMES, MAP_NAMES, MON_TERRAIN,
+    WEAPON_DAMAGE, WEAPON_PRICE, ARMOR_EVASION, CLASS_MAX_WEAPON, CLASS_MAX_ARMOR,
+    WIZARD_SPELLS, CLERIC_SPELLS, MON_GROUP_NAMES,
     tile_char, tile_name,
 )
 
@@ -10,12 +12,12 @@ from u3edit.constants import (
 class TestTileTable:
     def test_completeness(self):
         """Tile table should cover all common tile IDs."""
-        # Key tiles that must be present
         assert 0x00 in TILES  # Water
         assert 0x04 in TILES  # Grass
         assert 0x18 in TILES  # Town
         assert 0x20 in TILES  # Floor
         assert 0x48 in TILES  # Guard
+        assert 0xFC in TILES  # Hidden
 
     def test_all_multiples_of_4(self):
         """All tile IDs should be multiples of 4."""
@@ -50,7 +52,7 @@ class TestTileChar:
         assert tile_char(0x01, is_dungeon=True) == '#'
 
     def test_unknown(self):
-        assert tile_char(0xFF) == '?'
+        assert tile_char(0xE3) == '?'
 
 
 class TestTileName:
@@ -62,7 +64,7 @@ class TestTileName:
         assert tile_name(0x01, is_dungeon=True) == 'Wall'
 
     def test_unknown(self):
-        name = tile_name(0xFF)
+        name = tile_name(0xE0)
         assert 'Unknown' in name
 
 
@@ -78,6 +80,24 @@ class TestEquipment:
 
     def test_armors_start_with_skin(self):
         assert ARMORS[0] == 'Skin'
+
+    def test_weapon_damage_matches(self):
+        assert len(WEAPON_DAMAGE) == len(WEAPONS)
+        assert WEAPON_DAMAGE[0] == 0  # Hands do no base damage
+
+    def test_weapon_price_matches(self):
+        assert len(WEAPON_PRICE) == len(WEAPONS)
+        assert WEAPON_PRICE[0] == 0  # Hands are free
+
+    def test_armor_evasion_matches(self):
+        assert len(ARMOR_EVASION) == len(ARMORS)
+        assert ARMOR_EVASION[0] == 50.0  # Skin = 50%
+        assert ARMOR_EVASION[-1] > ARMOR_EVASION[0]  # Better armor = higher evasion
+
+    def test_class_restrictions(self):
+        for cls in CLASSES.values():
+            assert cls in CLASS_MAX_WEAPON
+            assert cls in CLASS_MAX_ARMOR
 
 
 class TestCharacterEnums:
@@ -101,9 +121,31 @@ class TestCharacterEnums:
 
 class TestMonsterNames:
     def test_known_creatures(self):
-        assert MONSTER_NAMES[0x48] == 'Guard'
+        assert MONSTER_NAMES[0x48] == 'Fighter'
         assert MONSTER_NAMES[0x74] == 'Dragon'
         assert MONSTER_NAMES[0x78] == 'Balron'
+        assert MONSTER_NAMES[0xFC] == 'Devil'
 
     def test_not_empty(self):
-        assert len(MONSTER_NAMES) > 10
+        assert len(MONSTER_NAMES) > 15
+
+    def test_group_names(self):
+        assert 'A' in MON_GROUP_NAMES
+        assert 'Z' in MON_GROUP_NAMES
+
+
+class TestSpells:
+    def test_wizard_count(self):
+        assert len(WIZARD_SPELLS) == 16
+
+    def test_cleric_count(self):
+        assert len(CLERIC_SPELLS) == 16
+
+    def test_spell_format(self):
+        for name, cost in WIZARD_SPELLS:
+            assert isinstance(name, str) and len(name) > 0
+            assert isinstance(cost, int) and cost >= 0
+
+    def test_costs_increase(self):
+        costs = [cost for _, cost in WIZARD_SPELLS]
+        assert costs[-1] >= costs[0]

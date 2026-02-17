@@ -9,6 +9,8 @@ Dispatches to all tool modules via a single entry point:
     u3edit save view <dir>
     u3edit special view <dir>
     u3edit text view <file>
+    u3edit spell view
+    u3edit equip view
 """
 
 import argparse
@@ -23,6 +25,8 @@ from . import combat
 from . import save
 from . import special
 from . import text
+from . import spell
+from . import equip
 
 
 def main() -> None:
@@ -44,6 +48,8 @@ def main() -> None:
     save.register_parser(subparsers)
     special.register_parser(subparsers)
     text.register_parser(subparsers)
+    spell.register_parser(subparsers)
+    equip.register_parser(subparsers)
 
     args = parser.parse_args()
 
@@ -61,6 +67,8 @@ def main() -> None:
         'save': save.dispatch,
         'special': special.dispatch,
         'text': text.dispatch,
+        'spell': spell.dispatch,
+        'equip': equip.dispatch,
     }
 
     handler = dispatchers.get(args.tool)

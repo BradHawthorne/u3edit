@@ -15,6 +15,28 @@ from .fileutil import resolve_game_file, decode_high_ascii
 from .json_export import export_json
 
 
+def is_text_record(data: bytes) -> bool:
+    """Check if a binary record looks like valid high-ASCII text (not code).
+
+    Real TLK text uses high-bit ASCII (0xA0-0xFE = printable chars with bit 7).
+    Code sections have many bytes below 0x80. We check that most content bytes
+    are in the high-ASCII printable range.
+    """
+    if not data:
+        return False
+    content_bytes = 0
+    high_ascii_printable = 0
+    for b in data:
+        if b == TLK_LINE_BREAK or b == TLK_RECORD_END:
+            continue
+        content_bytes += 1
+        if 0xA0 <= b <= 0xFE:
+            high_ascii_printable += 1
+    if content_bytes == 0:
+        return False
+    return high_ascii_printable / content_bytes > 0.7
+
+
 def decode_record(data: bytes) -> list[str]:
     """Decode a single TLK record into a list of text lines."""
     lines: list[str] = []
@@ -26,8 +48,10 @@ def decode_record(data: bytes) -> list[str]:
             continue
         if b == TLK_RECORD_END:
             break
-        ch = chr(b & 0x7F)
-        cur.append(ch)
+        ch = b & 0x7F
+        if 0x20 <= ch < 0x7F:
+            cur.append(chr(ch))
+        # Skip non-printable bytes
     if cur or not lines:
         lines.append(''.join(cur))
     return lines
@@ -45,8 +69,12 @@ def encode_record(lines: list[str]) -> bytes:
     return bytes(out)
 
 
-def load_tlk_records(path: str) -> list[list[str]]:
-    """Load a TLK file and return list of decoded records."""
+def load_tlk_records(path: str, skip_binary: bool = True) -> list[list[str]]:
+    """Load a TLK file and return list of decoded records.
+
+    If skip_binary is True, records that appear to be binary data (code)
+    rather than text are excluded from the result.
+    """
     with open(path, 'rb') as f:
         data = f.read()
 
@@ -54,6 +82,8 @@ def load_tlk_records(path: str) -> list[list[str]]:
     parts = data.split(bytes([TLK_RECORD_END]))
     for part in parts:
         if not part:
+            continue
+        if skip_binary and not is_text_record(part):
             continue
         records.append(decode_record(part + bytes([TLK_RECORD_END])))
     return records

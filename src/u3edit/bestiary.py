@@ -17,7 +17,7 @@ from .constants import (
     MON_ATTR_TILE1, MON_ATTR_TILE2, MON_ATTR_FLAGS1, MON_ATTR_FLAGS2,
     MON_ATTR_HP, MON_ATTR_ATTACK, MON_ATTR_DEFENSE, MON_ATTR_SPEED,
     MON_ATTR_ABILITY1, MON_ATTR_ABILITY2,
-    MON_TERRAIN, MON_LETTERS, MONSTER_NAMES, TILES,
+    MON_TERRAIN, MON_LETTERS, MONSTER_NAMES, MON_GROUP_NAMES, TILES,
 )
 from .fileutil import resolve_game_file
 from .json_export import export_json
@@ -26,8 +26,9 @@ from .json_export import export_json
 class Monster:
     """A single monster extracted from columnar MON data."""
 
-    def __init__(self, attrs: list[int], index: int):
+    def __init__(self, attrs: list[int], index: int, file_letter: str = ''):
         self.index = index
+        self.file_letter = file_letter
         self.tile1 = attrs[MON_ATTR_TILE1]
         self.tile2 = attrs[MON_ATTR_TILE2]
         self.flags1 = attrs[MON_ATTR_FLAGS1]
@@ -45,7 +46,6 @@ class Monster:
 
     @property
     def name(self) -> str:
-        # B-1 FIX: Use MONSTER_NAMES, then fall back to TILES lookup with &0xFC
         n = MONSTER_NAMES.get(self.tile1)
         if n:
             return n
@@ -106,8 +106,8 @@ class Monster:
         if self.is_empty:
             return
         if compact:
-            print(f"    [{self.index:2d}] {self.name:<20s}  HP:{self.hp:3d}  "
-                  f"ATK:{self.attack:3d}  DEF:{self.defense:3d}  "
+            print(f"    [{self.index:2d}] ${self.tile1:02X} {self.name:<16s}  "
+                  f"HP:{self.hp:3d}  ATK:{self.attack:3d}  DEF:{self.defense:3d}  "
                   f"SPD:{self.speed:3d}  {self.flag_desc}")
         else:
             print(f"    Monster #{self.index}")
@@ -121,7 +121,7 @@ class Monster:
             print()
 
 
-def load_mon_file(path: str) -> list[Monster]:
+def load_mon_file(path: str, file_letter: str = '') -> list[Monster]:
     """Load a MON file and extract 16 monsters from columnar format."""
     with open(path, 'rb') as f:
         data = f.read()
@@ -136,7 +136,7 @@ def load_mon_file(path: str) -> list[Monster]:
         for row in range(MON_ATTR_COUNT):
             offset = row * MON_MONSTERS_PER_FILE + i
             attrs.append(data[offset] if offset < len(data) else 0)
-        monsters.append(Monster(attrs, i))
+        monsters.append(Monster(attrs, i, file_letter))
     return monsters
 
 
@@ -172,7 +172,7 @@ def cmd_view(args) -> None:
         for letter, path in mon_files:
             if args.file and args.file.upper() != f'MON{letter}':
                 continue
-            monsters = load_mon_file(path)
+            monsters = load_mon_file(path, letter)
             result[f'MON{letter}'] = {
                 'terrain': MON_TERRAIN.get(letter, 'Unknown'),
                 'monsters': [m.to_dict() for m in monsters if not m.is_empty],
@@ -188,13 +188,13 @@ def cmd_view(args) -> None:
         if args.file and args.file.upper() != f'MON{letter}':
             continue
 
-        monsters = load_mon_file(path)
+        monsters = load_mon_file(path, letter)
         active = [m for m in monsters if not m.is_empty]
         total_monsters += len(active)
 
         print(f"  MON{letter} - {terrain} ({len(active)} monsters)")
-        print(f"  {'':4s}{'#':>4s} {'Type':<20s}  {'HP':>3s}  {'ATK':>3s}  {'DEF':>3s}  {'SPD':>3s}  Flags")
-        print(f"  {'':4s}{'---':>4s} {'----':<20s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  -----")
+        print(f"  {'':4s}{'#':>4s} {'Tile':4s} {'Type':<16s}  {'HP':>3s}  {'ATK':>3s}  {'DEF':>3s}  {'SPD':>3s}  Flags")
+        print(f"  {'':4s}{'---':>4s} {'----':4s} {'----':<16s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  -----")
 
         for m in monsters:
             if not m.is_empty:

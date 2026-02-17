@@ -8,9 +8,9 @@ from u3edit.constants import MON_FILE_SIZE, MON_MONSTERS_PER_FILE
 
 
 class TestMonster:
-    def test_name_guard(self, sample_mon_bytes):
+    def test_name_fighter(self, sample_mon_bytes):
         monsters = load_mon_file_from_bytes(sample_mon_bytes)
-        assert monsters[0].name == 'Guard'
+        assert monsters[0].name == 'Fighter'
 
     def test_name_dragon(self, sample_mon_bytes):
         monsters = load_mon_file_from_bytes(sample_mon_bytes)
@@ -53,7 +53,7 @@ class TestLoadSave:
     def test_load(self, sample_mon_file):
         monsters = load_mon_file(sample_mon_file)
         assert len(monsters) == 16
-        assert monsters[0].name == 'Guard'
+        assert monsters[0].name == 'Fighter'
 
     def test_roundtrip(self, sample_mon_file, tmp_dir):
         monsters = load_mon_file(sample_mon_file)

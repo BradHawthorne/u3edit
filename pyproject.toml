@@ -1,6 +1,6 @@
 [project]
 name = "u3edit"
-version = "1.0.0"
+version = "1.1.0"
 description = "Ultima III: Exodus - Data file toolkit for Apple II archaeology"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,8 @@ u3-combat = "u3edit.combat:main"
 u3-save = "u3edit.save:main"
 u3-special = "u3edit.special:main"
 u3-text = "u3edit.text:main"
+u3-spell = "u3edit.spell:main"
+u3-equip = "u3edit.equip:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -2,7 +2,7 @@
 
 A complete data toolkit for **Ultima III: Exodus** (Apple II, 1983).
 
-View, edit, and export all game data formats: character rosters, monster bestiaries, overworld and dungeon maps, NPC dialog, combat battlefields, save states, and more. Works with extracted files or directly with ProDOS disk images.
+View, edit, and export all game data formats: character rosters, monster bestiaries, overworld and dungeon maps, NPC dialog, combat battlefields, save states, spells, equipment stats, and more. Works with extracted files or directly with ProDOS disk images.
 
 ## Installation
 
@@ -39,6 +39,12 @@ u3edit combat view path/to/GAME/
 # View save state
 u3edit save view path/to/GAME/
 
+# Spell reference
+u3edit spell view
+
+# Equipment stats and class restrictions
+u3edit equip view
+
 # Export anything to JSON
 u3edit roster view path/to/ROST#069500 --json -o roster.json
 ```
@@ -64,6 +70,8 @@ u3edit disk list game.po
 | `save` | Save state viewer/editor | `view`, `edit` |
 | `special` | Special location viewer (shrines, fountains) | `view` |
 | `text` | Game text string viewer | `view` |
+| `spell` | Spell reference (wizard + cleric) | `view` |
+| `equip` | Equipment stats and class restrictions | `view` |
 
 Each tool is also available standalone: `u3-roster`, `u3-bestiary`, `u3-map`, etc.
 
@@ -102,11 +110,15 @@ u3edit save edit path/to/GAME/ --x 32 --y 32 --transport horse
 |--------|------|-------|----------|
 | 0x00 | 10 | Name | High-bit ASCII |
 | 0x0E | 1 | Marks/Cards | Bitmask (hi=marks, lo=cards) |
+| 0x0F | 1 | Torches | Count |
 | 0x11 | 1 | Status | ASCII: G/P/D/A |
 | 0x12-0x15 | 4 | STR/DEX/INT/WIS | BCD (0-99 each) |
 | 0x16-0x18 | 3 | Race/Class/Gender | ASCII codes |
+| 0x19 | 1 | MP | Raw byte |
 | 0x1A-0x1B | 2 | HP | BCD16 (0-9999) |
+| 0x1C-0x1D | 2 | Max HP | BCD16 (0-9999) |
 | 0x1E-0x1F | 2 | EXP | BCD16 (0-9999) |
+| 0x20 | 1 | Sub-morsels | Food fraction |
 | 0x21-0x22 | 2 | Food | BCD16 (0-9999) |
 | 0x23-0x24 | 2 | Gold | BCD16 (0-9999) |
 | 0x25-0x27 | 3 | Gems/Keys/Powders | BCD (0-99 each) |
@@ -137,7 +149,7 @@ Lower nibble encodes tile type (0=open, 1=wall, 2=door, etc.).
 
 ### TLK Dialog (variable length)
 
-High-bit ASCII text. `0xFF` = line break, `0x00` = record terminator.
+High-bit ASCII text. `0xFF` = line break, `0x00` = record terminator. Binary data (embedded code) is automatically filtered.
 
 ### Combat Map (CON, 192 bytes)
 
@@ -156,7 +168,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-140 tests covering all modules with synthesized game data (no real game files needed).
+163 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 
