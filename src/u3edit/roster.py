@@ -352,9 +352,9 @@ def load_roster(path: str) -> tuple[list[Character], bytes]:
         data = f.read()
 
     if len(data) < CHAR_RECORD_SIZE:
-        print(f"Error: File too small ({len(data)} bytes, need at least {CHAR_RECORD_SIZE})",
-              file=sys.stderr)
-        sys.exit(1)
+        raise ValueError(
+            f"Roster file too small ({len(data)} bytes, need at least {CHAR_RECORD_SIZE})"
+        )
 
     num_slots = len(data) // CHAR_RECORD_SIZE
     chars = []

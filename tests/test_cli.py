@@ -1,5 +1,6 @@
 """Tests for unified CLI dispatcher."""
 
+import json
 import subprocess
 import sys
 
@@ -57,7 +58,6 @@ class TestCLI:
             capture_output=True, text=True
         )
         assert result.returncode == 0
-        import json
         data = json.loads(result.stdout)
         assert 'wizard' in data
         assert len(data['wizard']) == 16
@@ -68,7 +68,6 @@ class TestCLI:
             capture_output=True, text=True
         )
         assert result.returncode == 0
-        import json
         data = json.loads(result.stdout)
         assert 'weapons' in data
         assert 'armors' in data

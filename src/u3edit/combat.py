@@ -71,7 +71,8 @@ class CombatMap:
     def to_dict(self) -> dict:
         return {
             'tiles': [[tile_char(self.tiles[y * CON_MAP_WIDTH + x])
-                        for x in range(CON_MAP_WIDTH)]
+                        for x in range(CON_MAP_WIDTH)
+                        if y * CON_MAP_WIDTH + x < len(self.tiles)]
                        for y in range(CON_MAP_HEIGHT)
                        if y * CON_MAP_WIDTH < len(self.tiles)],
             'monsters': [{'x': self.monster_x[i], 'y': self.monster_y[i]}
