@@ -282,6 +282,11 @@ class Character:
                 inv[ARMORS[i + 1]] = count
         return inv
 
+    def set_armor_count(self, index: int, count: int) -> None:
+        """Set inventory count for armor at index (1-7, skipping Skin)."""
+        if 1 <= index < len(ARMORS):
+            self.raw[CHAR_ARMOR_START + index - 1] = int_to_bcd(count)
+
     @property
     def weapon_inventory(self) -> dict[str, int]:
         inv = {}
@@ -290,6 +295,11 @@ class Character:
             if count > 0:
                 inv[WEAPONS[i + 1]] = count
         return inv
+
+    def set_weapon_count(self, index: int, count: int) -> None:
+        """Set inventory count for weapon at index (1-15, skipping Hands)."""
+        if 1 <= index < len(WEAPONS):
+            self.raw[CHAR_WEAPON_START + index - 1] = int_to_bcd(count)
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -454,12 +464,22 @@ def cmd_edit(args) -> None:
         char.torches = args.torches; modified = True
     if args.status is not None:
         char.status = args.status; modified = True
+    if args.race is not None:
+        char.race = args.race; modified = True
+    if args.class_ is not None:
+        char.char_class = args.class_; modified = True
     if args.gender is not None:
         char.gender = args.gender; modified = True
     if args.weapon is not None:
         char.equipped_weapon = args.weapon; modified = True
     if args.armor is not None:
         char.equipped_armor = args.armor; modified = True
+    if args.give_weapon is not None:
+        idx, count = args.give_weapon
+        char.set_weapon_count(idx, count); modified = True
+    if args.give_armor is not None:
+        idx, count = args.give_armor
+        char.set_armor_count(idx, count); modified = True
     if args.marks is not None:
         char.marks = [m.strip() for m in args.marks.split(',')]; modified = True
     if args.cards is not None:
@@ -539,10 +559,16 @@ def register_parser(subparsers) -> None:
     p_edit.add_argument('--keys', type=int, help='Keys (0-99)')
     p_edit.add_argument('--powders', type=int, help='Powders (0-99)')
     p_edit.add_argument('--torches', type=int, help='Torches (0-99)')
+    p_edit.add_argument('--race', help='Race: H(uman) E(lf) D(warf) B(obbit) F(uzzy)')
+    p_edit.add_argument('--class', dest='class_', help='Class: F C W T L I D A R P B')
     p_edit.add_argument('--status', help='Status: G(ood) P(oisoned) D(ead) A(shes)')
     p_edit.add_argument('--gender', help='Gender: M(ale) F(emale) O(ther)')
-    p_edit.add_argument('--weapon', type=int, help='Weapon index (0-15)')
-    p_edit.add_argument('--armor', type=int, help='Armor index (0-7)')
+    p_edit.add_argument('--weapon', type=int, help='Equipped weapon index (0-15)')
+    p_edit.add_argument('--armor', type=int, help='Equipped armor index (0-7)')
+    p_edit.add_argument('--give-weapon', type=int, nargs=2, metavar=('INDEX', 'COUNT'),
+                         help='Set weapon inventory count (index 1-15, count 0-99)')
+    p_edit.add_argument('--give-armor', type=int, nargs=2, metavar=('INDEX', 'COUNT'),
+                         help='Set armor inventory count (index 1-7, count 0-99)')
     p_edit.add_argument('--marks', help='Marks (comma-separated: Kings,Snake,Fire,Force)')
     p_edit.add_argument('--cards', help='Cards (comma-separated: Death,Sol,Love,Moons)')
 
