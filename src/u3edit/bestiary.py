@@ -1,0 +1,340 @@
+"""Ultima III: Exodus - Monster Bestiary Viewer/Editor.
+
+Reads MON* files (256 bytes each, columnar format: 16 monsters x 10 attributes).
+Each MON file represents monsters for a terrain/encounter type (A-L, Z).
+
+Bug fixes from prototype:
+  B-1: Replaced sparse/wrong TILE_NAMES with constants.MONSTER_NAMES + TILES lookup
+  B-2: Removed dead code FLAG1_BITS dict
+"""
+
+import argparse
+import os
+import sys
+
+from .constants import (
+    MON_FILE_SIZE, MON_ATTR_COUNT, MON_MONSTERS_PER_FILE, MON_ATTR_NAMES,
+    MON_ATTR_TILE1, MON_ATTR_TILE2, MON_ATTR_FLAGS1, MON_ATTR_FLAGS2,
+    MON_ATTR_HP, MON_ATTR_ATTACK, MON_ATTR_DEFENSE, MON_ATTR_SPEED,
+    MON_ATTR_ABILITY1, MON_ATTR_ABILITY2,
+    MON_TERRAIN, MON_LETTERS, MONSTER_NAMES, TILES,
+)
+from .fileutil import resolve_game_file
+from .json_export import export_json
+
+
+class Monster:
+    """A single monster extracted from columnar MON data."""
+
+    def __init__(self, attrs: list[int], index: int):
+        self.index = index
+        self.tile1 = attrs[MON_ATTR_TILE1]
+        self.tile2 = attrs[MON_ATTR_TILE2]
+        self.flags1 = attrs[MON_ATTR_FLAGS1]
+        self.flags2 = attrs[MON_ATTR_FLAGS2]
+        self.hp = attrs[MON_ATTR_HP]
+        self.attack = attrs[MON_ATTR_ATTACK]
+        self.defense = attrs[MON_ATTR_DEFENSE]
+        self.speed = attrs[MON_ATTR_SPEED]
+        self.ability1 = attrs[MON_ATTR_ABILITY1]
+        self.ability2 = attrs[MON_ATTR_ABILITY2]
+
+    @property
+    def is_empty(self) -> bool:
+        return self.tile1 == 0 and self.hp == 0
+
+    @property
+    def name(self) -> str:
+        # B-1 FIX: Use MONSTER_NAMES, then fall back to TILES lookup with &0xFC
+        n = MONSTER_NAMES.get(self.tile1)
+        if n:
+            return n
+        entry = TILES.get(self.tile1 & 0xFC)
+        if entry:
+            return entry[1]
+        return f'Creature ${self.tile1:02X}'
+
+    @property
+    def flag_desc(self) -> str:
+        desc = []
+        f1 = self.flags1
+        if f1 & 0x0C == 0x0C:
+            desc.append('Magic User')
+        else:
+            if f1 & 0x04:
+                desc.append('Undead')
+            if f1 & 0x08:
+                desc.append('Ranged')
+        if f1 & 0x80:
+            desc.append('Boss')
+        return ', '.join(desc) if desc else '-'
+
+    @property
+    def ability_desc(self) -> str:
+        desc = []
+        a1 = self.ability1
+        if a1 & 0x01:
+            desc.append('Poison')
+        if a1 & 0x02:
+            desc.append('Sleep')
+        if a1 & 0x04:
+            desc.append('Negate')
+        if a1 & 0x40:
+            desc.append('Teleport')
+        if a1 & 0x80:
+            desc.append('Divide')
+        a2 = self.ability2
+        if a2 & 0xC0:
+            desc.append('Resistant')
+        return ', '.join(desc) if desc else '-'
+
+    def to_dict(self) -> dict:
+        return {
+            'index': self.index,
+            'name': self.name,
+            'tile1': self.tile1,
+            'tile2': self.tile2,
+            'hp': self.hp,
+            'attack': self.attack,
+            'defense': self.defense,
+            'speed': self.speed,
+            'flags': self.flag_desc,
+            'abilities': self.ability_desc,
+        }
+
+    def display(self, compact: bool = False) -> None:
+        if self.is_empty:
+            return
+        if compact:
+            print(f"    [{self.index:2d}] {self.name:<20s}  HP:{self.hp:3d}  "
+                  f"ATK:{self.attack:3d}  DEF:{self.defense:3d}  "
+                  f"SPD:{self.speed:3d}  {self.flag_desc}")
+        else:
+            print(f"    Monster #{self.index}")
+            print(f"      Type:     {self.name} (tile ${self.tile1:02X}/${self.tile2:02X})")
+            print(f"      HP:       {self.hp}")
+            print(f"      Attack:   {self.attack}")
+            print(f"      Defense:  {self.defense}")
+            print(f"      Speed:    {self.speed}")
+            print(f"      Flags:    {self.flag_desc} (${self.flags1:02X}/${self.flags2:02X})")
+            print(f"      Ability:  {self.ability_desc} (${self.ability1:02X}/${self.ability2:02X})")
+            print()
+
+
+def load_mon_file(path: str) -> list[Monster]:
+    """Load a MON file and extract 16 monsters from columnar format."""
+    with open(path, 'rb') as f:
+        data = f.read()
+
+    if len(data) < MON_ATTR_COUNT * MON_MONSTERS_PER_FILE:
+        print(f"Warning: MON file too small ({len(data)} bytes)", file=sys.stderr)
+        return []
+
+    monsters = []
+    for i in range(MON_MONSTERS_PER_FILE):
+        attrs = []
+        for row in range(MON_ATTR_COUNT):
+            offset = row * MON_MONSTERS_PER_FILE + i
+            attrs.append(data[offset] if offset < len(data) else 0)
+        monsters.append(Monster(attrs, i))
+    return monsters
+
+
+def save_mon_file(path: str, monsters: list[Monster]) -> None:
+    """Write monsters back to columnar MON format."""
+    data = bytearray(MON_FILE_SIZE)
+    for m in monsters:
+        attrs = [m.tile1, m.tile2, m.flags1, m.flags2,
+                 m.hp, m.attack, m.defense, m.speed,
+                 m.ability1, m.ability2]
+        for row, val in enumerate(attrs):
+            data[row * MON_MONSTERS_PER_FILE + m.index] = val
+    with open(path, 'wb') as f:
+        f.write(data)
+    print(f"Saved to {path}")
+
+
+def cmd_view(args) -> None:
+    game_dir = args.game_dir
+
+    mon_files = []
+    for letter in MON_LETTERS:
+        path = resolve_game_file(game_dir, 'MON', letter)
+        if path:
+            mon_files.append((letter, path))
+
+    if not mon_files:
+        print(f"Error: No MON files found in {game_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.json:
+        result = {}
+        for letter, path in mon_files:
+            if args.file and args.file.upper() != f'MON{letter}':
+                continue
+            monsters = load_mon_file(path)
+            result[f'MON{letter}'] = {
+                'terrain': MON_TERRAIN.get(letter, 'Unknown'),
+                'monsters': [m.to_dict() for m in monsters if not m.is_empty],
+            }
+        export_json(result, args.output)
+        return
+
+    print(f"\n=== Ultima III Bestiary ({len(mon_files)} encounter files) ===\n")
+
+    total_monsters = 0
+    for letter, path in mon_files:
+        terrain = MON_TERRAIN.get(letter, 'Unknown')
+        if args.file and args.file.upper() != f'MON{letter}':
+            continue
+
+        monsters = load_mon_file(path)
+        active = [m for m in monsters if not m.is_empty]
+        total_monsters += len(active)
+
+        print(f"  MON{letter} - {terrain} ({len(active)} monsters)")
+        print(f"  {'':4s}{'#':>4s} {'Type':<20s}  {'HP':>3s}  {'ATK':>3s}  {'DEF':>3s}  {'SPD':>3s}  Flags")
+        print(f"  {'':4s}{'---':>4s} {'----':<20s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  {'---':>3s}  -----")
+
+        for m in monsters:
+            if not m.is_empty:
+                m.display(compact=True)
+        print()
+
+    if not args.file:
+        print(f"  Total: {total_monsters} monsters across {len(mon_files)} encounter types\n")
+
+
+def cmd_dump(args) -> None:
+    """Raw hex dump of a MON file."""
+    monsters = load_mon_file(args.file)
+    filename = os.path.basename(args.file)
+
+    with open(args.file, 'rb') as f:
+        data = f.read()
+
+    print(f"\n=== MON File Dump: {filename} ===\n")
+    print("  Columnar view (rows = attributes, columns = monsters):\n")
+
+    for row in range(min(MON_ATTR_COUNT, len(data) // MON_MONSTERS_PER_FILE)):
+        offset = row * MON_MONSTERS_PER_FILE
+        hex_str = ' '.join(f'{data[offset+i]:02X}' for i in range(MON_MONSTERS_PER_FILE))
+        print(f"    {MON_ATTR_NAMES[row]:>10s}: {hex_str}")
+
+    print(f"\n  Per-monster view:\n")
+    for m in monsters:
+        m.display(compact=False)
+
+
+def cmd_edit(args) -> None:
+    """Edit a monster's attributes in a MON file."""
+    monsters = load_mon_file(args.file)
+
+    if args.monster < 0 or args.monster >= MON_MONSTERS_PER_FILE:
+        print(f"Error: Monster index must be 0-15", file=sys.stderr)
+        sys.exit(1)
+
+    m = monsters[args.monster]
+    modified = False
+
+    if args.hp is not None:
+        m.hp = max(0, min(255, args.hp)); modified = True
+    if args.attack is not None:
+        m.attack = max(0, min(255, args.attack)); modified = True
+    if args.defense is not None:
+        m.defense = max(0, min(255, args.defense)); modified = True
+    if args.speed is not None:
+        m.speed = max(0, min(255, args.speed)); modified = True
+    if args.tile1 is not None:
+        m.tile1 = max(0, min(255, args.tile1)); modified = True
+    if args.tile2 is not None:
+        m.tile2 = max(0, min(255, args.tile2)); modified = True
+    if args.flags1 is not None:
+        m.flags1 = max(0, min(255, args.flags1)); modified = True
+    if args.flags2 is not None:
+        m.flags2 = max(0, min(255, args.flags2)); modified = True
+    if args.ability1 is not None:
+        m.ability1 = max(0, min(255, args.ability1)); modified = True
+    if args.ability2 is not None:
+        m.ability2 = max(0, min(255, args.ability2)); modified = True
+
+    if modified:
+        output = args.output if args.output else args.file
+        save_mon_file(output, monsters)
+        print(f"Modified monster #{args.monster}:")
+        m.display(compact=False)
+    else:
+        print("No modifications specified.")
+
+
+def register_parser(subparsers) -> None:
+    """Register bestiary subcommands on a CLI subparser group."""
+    p = subparsers.add_parser('bestiary', help='Monster bestiary viewer/editor')
+    sub = p.add_subparsers(dest='bestiary_command')
+
+    p_view = sub.add_parser('view', help='View all monsters')
+    p_view.add_argument('game_dir', help='GAME directory containing MON* files')
+    p_view.add_argument('--file', help='Show only specific MON file (e.g., MONA)')
+    p_view.add_argument('--json', action='store_true', help='Output as JSON')
+    p_view.add_argument('--output', '-o', help='Output file (for --json)')
+
+    p_dump = sub.add_parser('dump', help='Raw dump of a MON file')
+    p_dump.add_argument('file', help='MON file path')
+
+    p_edit = sub.add_parser('edit', help='Edit a monster')
+    p_edit.add_argument('file', help='MON file path')
+    p_edit.add_argument('--monster', type=int, required=True, help='Monster index (0-15)')
+    p_edit.add_argument('--output', '-o', help='Output file (default: overwrite)')
+    p_edit.add_argument('--hp', type=int, help='Hit points (0-255)')
+    p_edit.add_argument('--attack', type=int, help='Attack value (0-255)')
+    p_edit.add_argument('--defense', type=int, help='Defense value (0-255)')
+    p_edit.add_argument('--speed', type=int, help='Speed value (0-255)')
+    p_edit.add_argument('--tile1', type=int, help='Tile/sprite byte 1 (0-255)')
+    p_edit.add_argument('--tile2', type=int, help='Tile/sprite byte 2 (0-255)')
+    p_edit.add_argument('--flags1', type=int, help='Flags byte 1 (0-255)')
+    p_edit.add_argument('--flags2', type=int, help='Flags byte 2 (0-255)')
+    p_edit.add_argument('--ability1', type=int, help='Ability byte 1 (0-255)')
+    p_edit.add_argument('--ability2', type=int, help='Ability byte 2 (0-255)')
+
+
+def dispatch(args) -> None:
+    """Dispatch bestiary subcommand."""
+    if args.bestiary_command == 'view':
+        cmd_view(args)
+    elif args.bestiary_command == 'dump':
+        cmd_dump(args)
+    elif args.bestiary_command == 'edit':
+        cmd_edit(args)
+    else:
+        print("Usage: u3edit bestiary {view|dump|edit} ...", file=sys.stderr)
+
+
+def main() -> None:
+    """Standalone entry point."""
+    parser = argparse.ArgumentParser(
+        description='Ultima III: Exodus - Monster Bestiary Viewer/Editor')
+    sub = parser.add_subparsers(dest='bestiary_command')
+
+    p_view = sub.add_parser('view', help='View all monsters')
+    p_view.add_argument('game_dir', help='GAME directory containing MON* files')
+    p_view.add_argument('--file', help='Show only specific MON file')
+    p_view.add_argument('--json', action='store_true')
+    p_view.add_argument('--output', '-o')
+
+    p_dump = sub.add_parser('dump', help='Raw dump of a MON file')
+    p_dump.add_argument('file', help='MON file path')
+
+    p_edit = sub.add_parser('edit', help='Edit a monster')
+    p_edit.add_argument('file', help='MON file path')
+    p_edit.add_argument('--monster', type=int, required=True)
+    p_edit.add_argument('--output', '-o')
+    for attr in ['hp', 'attack', 'defense', 'speed', 'tile1', 'tile2',
+                 'flags1', 'flags2', 'ability1', 'ability2']:
+        p_edit.add_argument(f'--{attr}', type=int)
+
+    args = parser.parse_args()
+    dispatch(args)
+
+
+if __name__ == '__main__':
+    main()

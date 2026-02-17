@@ -1,0 +1,435 @@
+"""Ultima III: Exodus - Complete game data constants.
+
+Single source of truth for all tile tables, character record layouts,
+item names, map names, monster names, and file format specifications.
+"""
+
+# =============================================================================
+# Overworld / Town Tile Table
+# =============================================================================
+# Tile IDs are multiples of 4. Low 2 bits are animation frame.
+# Use (tile_byte & 0xFC) to get the canonical tile ID.
+# Format: tile_id -> (display_char, name)
+
+TILES = {
+    0x00: ('~', 'Water'),
+    0x04: ('.', 'Grass'),
+    0x08: ('"', 'Brush'),
+    0x0C: ('T', 'Forest'),
+    0x10: ('^', 'Mountains'),
+    0x14: ('D', 'Dungeon'),
+    0x18: ('#', 'Town'),
+    0x1C: ('@', 'Castle'),
+    0x20: ('_', 'Floor'),
+    0x24: ('$', 'Chest'),
+    0x28: ('h', 'Horse'),
+    0x2C: ('S', 'Ship'),
+    0x30: ('O', 'Whirlpool'),
+    0x34: ('s', 'Serpent'),
+    0x38: ('W', 'Man-o-War'),
+    0x3C: ('P', 'Pirate Ship'),
+    0x40: ('M', 'Merchant'),
+    0x44: ('J', 'Jester'),
+    0x48: ('G', 'Guard'),
+    0x4C: ('L', 'Lord British'),
+    0x50: ('F', 'Fighter'),
+    0x54: ('C', 'Cleric'),
+    0x58: ('w', 'Wizard'),
+    0x5C: ('t', 'Thief'),
+    0x60: ('o', 'Orc'),
+    0x64: ('k', 'Skeleton'),
+    0x68: ('g', 'Giant'),
+    0x6C: ('d', 'Daemon'),
+    0x70: ('p', 'Pincher'),
+    0x74: ('R', 'Dragon'),
+    0x78: ('B', 'Balron'),
+    0x7C: ('X', 'Exodus'),
+    0x80: ('!', 'Force Field'),
+    0x84: ('*', 'Lava'),
+    0x88: ('0', 'Moongate'),
+    0x8C: ('|', 'Wall'),
+    0x90: (' ', 'Void'),
+    0xF0: ('+', 'Magic Effect'),
+    0xF4: ('f', 'Fire Effect'),
+}
+
+
+def tile_char(byte_val: int, is_dungeon: bool = False) -> str:
+    """Get the display character for a tile byte value."""
+    if is_dungeon:
+        entry = DUNGEON_TILES.get(byte_val & 0x0F)
+        return entry[0] if entry else '?'
+    entry = TILES.get(byte_val & 0xFC)
+    return entry[0] if entry else '?'
+
+
+def tile_name(byte_val: int, is_dungeon: bool = False) -> str:
+    """Get the human-readable name for a tile byte value."""
+    if is_dungeon:
+        entry = DUNGEON_TILES.get(byte_val & 0x0F)
+        return entry[1] if entry else f'Unknown(${byte_val:02X})'
+    entry = TILES.get(byte_val & 0xFC)
+    return entry[1] if entry else f'Unknown(${byte_val:02X})'
+
+
+# =============================================================================
+# Dungeon Tile Table
+# =============================================================================
+# Dungeon tiles use a separate encoding (lower nibble only).
+
+DUNGEON_TILES = {
+    0x00: ('.', 'Open'),
+    0x01: ('#', 'Wall'),
+    0x02: ('D', 'Door'),
+    0x03: ('>', 'Secret Door'),
+    0x04: ('$', 'Chest'),
+    0x05: ('V', 'Ladder Down'),
+    0x06: ('^', 'Ladder Up'),
+    0x07: ('B', 'Ladder Both'),
+    0x08: ('T', 'Trap'),
+    0x09: ('F', 'Fountain'),
+    0x0A: ('M', 'Mark'),
+    0x0B: ('W', 'Wind'),
+    0x0C: ('G', 'Gremlins'),
+    0x0D: ('O', 'Orb'),
+    0x0E: ('P', 'Pit'),
+    0x0F: ('?', 'Unknown'),
+}
+
+# =============================================================================
+# Character Races and Classes
+# =============================================================================
+
+RACES = {
+    ord('H'): 'Human',
+    ord('E'): 'Elf',
+    ord('D'): 'Dwarf',
+    ord('B'): 'Bobbit',
+    ord('F'): 'Fuzzy',
+}
+RACE_CODES = {v[0].upper(): k for k, v in RACES.items()}
+
+CLASSES = {
+    ord('F'): 'Fighter',
+    ord('C'): 'Cleric',
+    ord('W'): 'Wizard',
+    ord('T'): 'Thief',
+    ord('L'): 'Lark',
+    ord('I'): 'Illusionist',
+    ord('D'): 'Druid',
+    ord('A'): 'Alchemist',
+    ord('R'): 'Ranger',
+    ord('P'): 'Paladin',
+    ord('B'): 'Barbarian',
+}
+CLASS_CODES = {v[0].upper(): k for k, v in CLASSES.items() if k != 0}
+
+GENDERS = {ord('M'): 'Male', ord('F'): 'Female', ord('O'): 'Other'}
+
+STATUS_CODES = {
+    ord('G'): 'Good',
+    ord('P'): 'Poisoned',
+    ord('D'): 'Dead',
+    ord('A'): 'Ashes',
+}
+
+# Race stat maximums: (STR, DEX, INT, WIS)
+RACE_MAX_STATS = {
+    'Human':  (75, 75, 75, 75),
+    'Elf':    (75, 99, 75, 50),
+    'Dwarf':  (99, 75, 50, 75),
+    'Bobbit': (75, 50, 75, 99),
+    'Fuzzy':  (25, 99, 99, 75),
+}
+
+# =============================================================================
+# Weapons and Armor
+# =============================================================================
+
+WEAPONS = [
+    'Hands', 'Dagger', 'Mace', 'Sling', 'Axe', 'Bow', 'Sword',
+    '2H Sword', '+2 Axe', '+2 Bow', '+2 Sword', 'Gloves',
+    '+4 Axe', '+4 Bow', '+4 Sword', 'Exotic',
+]
+
+ARMORS = [
+    'Skin', 'Cloth', 'Leather', 'Chain', 'Plate',
+    '+2 Chain', '+2 Plate', 'Exotic',
+]
+
+# =============================================================================
+# Marks and Cards (byte 0x0E bitmask)
+# =============================================================================
+# High nibble = Marks, Low nibble = Cards
+
+MARKS_BITS = {
+    7: 'Kings',
+    6: 'Snake',
+    5: 'Fire',
+    4: 'Force',
+}
+
+CARDS_BITS = {
+    3: 'Death',
+    2: 'Sol',
+    1: 'Love',
+    0: 'Moons',
+}
+
+# =============================================================================
+# Character Record Layout (64 bytes per character)
+# =============================================================================
+
+CHAR_RECORD_SIZE = 64
+CHAR_MAX_SLOTS = 20
+
+# Field offsets
+CHAR_NAME_OFFSET = 0x00
+CHAR_NAME_LENGTH = 10
+CHAR_MARKS_CARDS = 0x0E
+CHAR_TORCHES = 0x0F
+CHAR_IN_PARTY = 0x10
+CHAR_STATUS = 0x11
+CHAR_STR = 0x12
+CHAR_DEX = 0x13
+CHAR_INT = 0x14
+CHAR_WIS = 0x15
+CHAR_RACE = 0x16
+CHAR_CLASS = 0x17
+CHAR_GENDER = 0x18
+CHAR_MP = 0x19
+CHAR_HP_HI = 0x1A
+CHAR_HP_LO = 0x1B
+CHAR_MAX_HP_HI = 0x1C
+CHAR_MAX_HP_LO = 0x1D
+CHAR_EXP_HI = 0x1E
+CHAR_EXP_LO = 0x1F
+CHAR_SUB_MORSELS = 0x20
+CHAR_FOOD_HI = 0x21
+CHAR_FOOD_LO = 0x22
+CHAR_GOLD_HI = 0x23
+CHAR_GOLD_LO = 0x24
+CHAR_GEMS = 0x25
+CHAR_KEYS = 0x26
+CHAR_POWDERS = 0x27
+CHAR_WORN_ARMOR = 0x28
+CHAR_ARMOR_START = 0x29  # 7 armor counts (Cloth..Exotic)
+CHAR_READIED_WEAPON = 0x30
+CHAR_WEAPON_START = 0x31  # 15 weapon counts (Dagger..Exotic)
+
+# =============================================================================
+# Monster Attributes (MON file columnar layout)
+# =============================================================================
+# Each MON file: 256 bytes = 16 rows x 16 monsters (columnar)
+# Row N, Monster M = file[N * 16 + M]
+
+MON_ATTR_TILE1 = 0
+MON_ATTR_TILE2 = 1
+MON_ATTR_FLAGS1 = 2
+MON_ATTR_FLAGS2 = 3
+MON_ATTR_HP = 4
+MON_ATTR_ATTACK = 5
+MON_ATTR_DEFENSE = 6
+MON_ATTR_SPEED = 7
+MON_ATTR_ABILITY1 = 8
+MON_ATTR_ABILITY2 = 9
+MON_ATTR_COUNT = 10
+MON_MONSTERS_PER_FILE = 16
+
+MON_ATTR_NAMES = [
+    'Tile 1', 'Tile 2', 'Flags 1', 'Flags 2',
+    'HP', 'Attack', 'Defense', 'Speed',
+    'Ability 1', 'Ability 2',
+]
+
+# Monster names by tile ID (tile1 value from MON file)
+MONSTER_NAMES = {
+    0x3C: 'Pirate Ship',
+    0x34: 'Serpent',
+    0x38: 'Man-o-War',
+    0x40: 'Merchant',
+    0x44: 'Jester',
+    0x48: 'Guard',
+    0x4C: 'Lord British',
+    0x50: 'Fighter',
+    0x54: 'Cleric',
+    0x58: 'Wizard',
+    0x5C: 'Thief',
+    0x60: 'Orc',
+    0x64: 'Skeleton',
+    0x68: 'Giant',
+    0x6C: 'Daemon',
+    0x70: 'Pincher',
+    0x74: 'Dragon',
+    0x78: 'Balron',
+    0x7C: 'Exodus',
+    # Additional creature names (game uses same tile for groups of 3)
+    0x24: 'Chest',
+    0x28: 'Horse',
+    0x2C: 'Ship',
+}
+
+# =============================================================================
+# Map Names
+# =============================================================================
+
+MAP_NAMES = {
+    'A': 'Sosaria (Overworld)',
+    'B': 'Lord British Castle',
+    'C': 'Castle of Death',
+    'D': 'Town of Dawn',
+    'E': 'Town of Fawn',
+    'F': 'Town of Grey',
+    'G': 'Town of Moon',
+    'H': 'Town of Yew',
+    'I': 'Town of Montor East',
+    'J': 'Town of Montor West',
+    'K': 'Town of Devil Guard',
+    'L': 'Ambrosia',
+    'M': 'Dungeon of Fire',
+    'N': 'Dungeon of Doom',
+    'O': 'Dungeon of Snake',
+    'P': 'Dungeon of Perinian',
+    'Q': 'Dungeon of Time',
+    'R': 'Dungeon of Mine',
+    'S': 'Dungeon of Darkling',
+    'Z': 'Exodus Castle Interior',
+}
+
+# Letters used for scanning MAP files
+MAP_LETTERS = 'ABCDEFGHIJKLMNOPQRSZ'
+
+# =============================================================================
+# Monster Encounter Terrain Names
+# =============================================================================
+
+MON_TERRAIN = {
+    'A': 'Grassland/Plains',
+    'B': 'Forest/Woods',
+    'C': 'Mountains',
+    'D': 'Water/Ocean',
+    'E': 'Town Guards',
+    'F': 'Dungeon Level 1-2',
+    'G': 'Dungeon Level 3-4',
+    'H': 'Dungeon Level 5-6',
+    'I': 'Dungeon Level 7-8',
+    'J': 'Castle/Fortress',
+    'K': 'Ambrosia',
+    'L': 'Special Encounters',
+    'Z': 'Bosses/Unique',
+}
+
+MON_LETTERS = 'ABCDEFGHIJKLZ'
+
+# =============================================================================
+# Combat / Conflict Map Names
+# =============================================================================
+
+CON_NAMES = {
+    'A': 'Lord British Castle',
+    'B': 'Castle of Death',
+    'C': 'Castle Arena',
+    'F': 'Dungeon',
+    'G': 'Grassland',
+    'M': 'Mountains',
+    'Q': 'Water',
+    'R': 'Forest',
+    'S': 'Town',
+}
+
+CON_LETTERS = 'ABCFGMQRS'
+
+# Combat map dimensions
+CON_MAP_WIDTH = 11
+CON_MAP_HEIGHT = 11
+CON_MAP_TILES = CON_MAP_WIDTH * CON_MAP_HEIGHT  # 121 bytes
+CON_MONSTER_X_OFFSET = 0x80
+CON_MONSTER_Y_OFFSET = 0x88
+CON_MONSTER_COUNT = 8
+CON_PC_X_OFFSET = 0xA0
+CON_PC_Y_OFFSET = 0xA4
+CON_PC_COUNT = 4
+
+# =============================================================================
+# TLK (Dialog) File Constants
+# =============================================================================
+
+TLK_LETTERS = 'ABCDEFGHIJKLMNOPQRS'
+TLK_LINE_BREAK = 0xFF
+TLK_RECORD_END = 0x00
+
+TLK_NAMES = {
+    'A': 'Lord British Castle',
+    'B': 'Castle of Death',
+    'C': 'Castle Arena',
+    'D': 'Town of Dawn',
+    'E': 'Town of Fawn',
+    'F': 'Town of Grey',
+    'G': 'Town of Moon',
+    'H': 'Town of Yew',
+    'I': 'Town of Montor East',
+    'J': 'Town of Montor West',
+    'K': 'Town of Devil Guard',
+    'L': 'Ambrosia',
+    'M': 'Dungeon of Fire',
+    'N': 'Dungeon of Doom',
+    'O': 'Dungeon of Snake',
+    'P': 'Dungeon of Perinian',
+    'Q': 'Dungeon of Time',
+    'R': 'Dungeon of Mine',
+    'S': 'Dungeon of Darkling',
+}
+
+# =============================================================================
+# Special Location Names
+# =============================================================================
+
+SPECIAL_NAMES = {
+    'BRND': 'Brand Shrine',
+    'SHRN': 'Shrines',
+    'FNTN': 'Fountains',
+    'TIME': 'Time Lord',
+}
+
+SPECIAL_MAP_WIDTH = 11
+SPECIAL_MAP_HEIGHT = 11
+SPECIAL_MAP_TILES = SPECIAL_MAP_WIDTH * SPECIAL_MAP_HEIGHT  # 121 bytes
+
+# =============================================================================
+# Save State Constants (PRTY file)
+# =============================================================================
+
+PRTY_TRANSPORT = {
+    0x0A: 'Horse',
+    0x0B: 'Ship',
+    0x3F: 'On Foot',
+}
+
+PRTY_TRANSPORT_CODES = {v.lower(): k for k, v in PRTY_TRANSPORT.items()}
+
+PRTY_LOCATION_TYPE = {
+    0x00: 'Sosaria',
+    0x01: 'Dungeon',
+    0x02: 'Town',
+    0x03: 'Castle',
+    0x04: 'Shrine/Fountain/Mark',
+    0x80: 'Combat',
+    0xF0: 'Merchant',
+    0xFF: 'Ambrosia',
+}
+
+# =============================================================================
+# File Size Constants (for validation)
+# =============================================================================
+
+ROSTER_FILE_SIZE = CHAR_RECORD_SIZE * CHAR_MAX_SLOTS  # 1280
+MON_FILE_SIZE = 256
+MAP_OVERWORLD_SIZE = 4096
+MAP_DUNGEON_SIZE = 2048
+CON_FILE_SIZE = 192
+SPECIAL_FILE_SIZE = 128
+TEXT_FILE_SIZE = 1024
+PRTY_FILE_SIZE = 16
+PLRS_FILE_SIZE = 256
+SOSA_FILE_SIZE = 4096
+SOSM_FILE_SIZE = 256

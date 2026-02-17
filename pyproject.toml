@@ -1,0 +1,46 @@
+[project]
+name = "u3edit"
+version = "1.0.0"
+description = "Ultima III: Exodus - Data file toolkit for Apple II archaeology"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Brad Hawthorne", email = "brad@hawthorne.net"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Games/Entertainment :: Role-Playing",
+    "Topic :: Software Development :: Disassemblers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+u3edit = "u3edit.cli:main"
+u3-roster = "u3edit.roster:main"
+u3-bestiary = "u3edit.bestiary:main"
+u3-map = "u3edit.map:main"
+u3-tlk = "u3edit.tlk:main"
+u3-combat = "u3edit.combat:main"
+u3-save = "u3edit.save:main"
+u3-special = "u3edit.special:main"
+u3-text = "u3edit.text:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/u3edit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
