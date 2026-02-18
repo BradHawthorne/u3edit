@@ -191,6 +191,12 @@ class DrillDownTab:
         @nav_kb.add('escape')
         def _back(event):
             if tab.active_editor:
+                # If sub-editor has field-editing mode, exit that first
+                if (hasattr(tab.active_editor, 'editing_fields')
+                        and tab.active_editor.editing_fields):
+                    tab.active_editor.editing_fields = False
+                    tab.active_editor._current_fields = []
+                    return
                 if tab.active_editor.is_dirty:
                     tab.active_editor.save()
                 tab.active_editor = None

@@ -629,6 +629,8 @@ def main() -> None:
     p_edit.add_argument('--gender')
     p_edit.add_argument('--weapon', type=int)
     p_edit.add_argument('--armor', type=int)
+    p_edit.add_argument('--give-weapon', type=int, nargs=2, metavar=('INDEX', 'COUNT'))
+    p_edit.add_argument('--give-armor', type=int, nargs=2, metavar=('INDEX', 'COUNT'))
     p_edit.add_argument('--marks')
     p_edit.add_argument('--cards')
 

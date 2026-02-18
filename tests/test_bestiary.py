@@ -66,6 +66,25 @@ class TestLoadSave:
         assert monsters2[0].hp == 99
         assert monsters2[1].name == 'Dragon'  # Other monsters preserved
 
+    def test_unknown_rows_preserved(self, tmp_dir):
+        """save_mon_file should preserve unknown data in rows 10-15."""
+        data = bytearray(256)
+        data[0 * 16 + 0] = 0x48  # tile1 for monster 0
+        data[4 * 16 + 0] = 50    # hp for monster 0
+        data[12 * 16 + 5] = 0xAB  # unknown data in row 12, col 5
+        data[15 * 16 + 0] = 0xCD  # unknown data in row 15, col 0
+        path = os.path.join(tmp_dir, 'MONA_TEST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        monsters = load_mon_file(path)
+        output = os.path.join(tmp_dir, 'MONA_OUT')
+        save_mon_file(output, monsters, original_data=bytes(data))
+        with open(output, 'rb') as f:
+            result = f.read()
+        assert result[12 * 16 + 5] == 0xAB
+        assert result[15 * 16 + 0] == 0xCD
+        assert result[4 * 16 + 0] == 50  # Known data still correct
+
 
 class TestCmdEdit:
     def test_edit_hp(self, sample_mon_file, tmp_dir):

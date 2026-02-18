@@ -70,6 +70,8 @@ def _monster_fields(monster):
 
 def make_bestiary_tab(data, file_letter, save_callback):
     """Create a FormEditorTab for a single MON file."""
+    original_data = bytes(data)
+
     # Parse monsters from columnar format
     monsters = []
     for i in range(MON_MONSTERS_PER_FILE):
@@ -80,7 +82,7 @@ def make_bestiary_tab(data, file_letter, save_callback):
         monsters.append(Monster(attrs, i, file_letter))
 
     def get_save_data():
-        out = bytearray(MON_FILE_SIZE)
+        out = bytearray(original_data)  # Preserve unknown rows
         for m in monsters:
             attrs = [m.tile1, m.tile2, m.flags1, m.flags2,
                      m.hp, m.attack, m.defense, m.speed,

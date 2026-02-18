@@ -99,3 +99,12 @@ class TestCmdEdit:
         with open(out, 'rb') as f:
             result = f.read()
         assert PartyState(result).party_size == 2
+
+    def test_transport_foot_alias(self, tmp_dir, sample_prty_bytes):
+        """'foot' should work as an alias for 'on foot'."""
+        self._write_prty(tmp_dir, sample_prty_bytes)
+        out = os.path.join(tmp_dir, 'PRTY_OUT')
+        cmd_edit(_save_args(game_dir=tmp_dir, transport='foot', output=out))
+        with open(out, 'rb') as f:
+            result = f.read()
+        assert PartyState(result).transport == 'On Foot'

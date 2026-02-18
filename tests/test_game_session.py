@@ -3,6 +3,7 @@
 import os
 import pytest
 
+from u3edit.disk import DiskContext
 from u3edit.tui.game_session import GameSession
 
 
@@ -168,3 +169,23 @@ class TestEmptyDisk:
         assert not session.has_category('maps')
         assert not session.has_category('combat')
         assert not session.has_category('bestiary')
+
+
+class TestDiskContextHashParsing:
+    def test_parse_hash_suffix(self):
+        name, ft, at = DiskContext._parse_hash_suffix('ROST#069500')
+        assert name == 'ROST'
+        assert ft == 0x06
+        assert at == 0x9500
+
+    def test_parse_no_hash(self):
+        name, ft, at = DiskContext._parse_hash_suffix('MAPA')
+        assert name == 'MAPA'
+        assert ft == 0x06
+        assert at == 0x0000
+
+    def test_parse_short_suffix(self):
+        name, ft, at = DiskContext._parse_hash_suffix('FOO#06')
+        assert name == 'FOO'
+        assert ft == 0x06
+        assert at == 0x0000

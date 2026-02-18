@@ -150,6 +150,7 @@ class DiskContext:
         self.diskiigs_path = diskiigs_path
         self._cache: dict[str, bytes] = {}
         self._modified: dict[str, bytes] = {}
+        self._file_types: dict[str, tuple[int, int]] = {}  # name → (file_type, aux_type)
         self._tmpdir: str | None = None
 
     def __enter__(self):
@@ -163,13 +164,30 @@ class DiskContext:
         if self._modified:
             for name, data in self._modified.items():
                 try:
+                    ft, at = self._file_types.get(name.upper(), (0x06, 0x0000))
                     disk_write(self.image_path, name, data,
+                               file_type=ft, aux_type=at,
                                diskiigs_path=self.diskiigs_path)
                 except Exception:
                     pass  # Best-effort write-back; don't mask original exception
         if self._tmpdir:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
         return False
+
+    @staticmethod
+    def _parse_hash_suffix(filename: str) -> tuple[str, int, int]:
+        """Parse 'NAME#TTAAAA' into (name, file_type, aux_type)."""
+        if '#' in filename:
+            base, suffix = filename.split('#', 1)
+            if len(suffix) >= 6:
+                try:
+                    ft = int(suffix[:2], 16)
+                    at = int(suffix[2:6], 16)
+                    return base, ft, at
+                except ValueError:
+                    pass
+            return base, 0x06, 0x0000
+        return filename, 0x06, 0x0000
 
     def read(self, name: str) -> bytes | None:
         """Read a file from the disk image (cached)."""
@@ -180,12 +198,13 @@ class DiskContext:
         if self._tmpdir:
             # Search extracted files
             for f in os.listdir(self._tmpdir):
-                basename = f.split('#')[0]
-                if basename.upper() == name.upper():
+                base, ft, at = self._parse_hash_suffix(f)
+                if base.upper() == name.upper():
                     fpath = os.path.join(self._tmpdir, f)
                     with open(fpath, 'rb') as fp:
                         data = fp.read()
                     self._cache[name] = data
+                    self._file_types[name.upper()] = (ft, at)
                     return data
         return None
 

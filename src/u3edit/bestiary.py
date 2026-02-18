@@ -140,9 +140,10 @@ def load_mon_file(path: str, file_letter: str = '') -> list[Monster]:
     return monsters
 
 
-def save_mon_file(path: str, monsters: list[Monster]) -> None:
-    """Write monsters back to columnar MON format."""
-    data = bytearray(MON_FILE_SIZE)
+def save_mon_file(path: str, monsters: list[Monster],
+                   original_data: bytes | None = None) -> None:
+    """Write monsters back to columnar MON format, preserving unknown rows."""
+    data = bytearray(original_data) if original_data else bytearray(MON_FILE_SIZE)
     for m in monsters:
         attrs = [m.tile1, m.tile2, m.flags1, m.flags2,
                  m.hp, m.attack, m.defense, m.speed,
@@ -228,6 +229,8 @@ def cmd_dump(args) -> None:
 
 def cmd_edit(args) -> None:
     """Edit a monster's attributes in a MON file."""
+    with open(args.file, 'rb') as f:
+        original_data = f.read()
     monsters = load_mon_file(args.file)
 
     if args.monster < 0 or args.monster >= MON_MONSTERS_PER_FILE:
@@ -260,7 +263,7 @@ def cmd_edit(args) -> None:
 
     if modified:
         output = args.output if args.output else args.file
-        save_mon_file(output, monsters)
+        save_mon_file(output, monsters, original_data)
         print(f"Modified monster #{args.monster}:")
         m.display(compact=False)
     else:

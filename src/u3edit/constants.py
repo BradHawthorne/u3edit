@@ -479,6 +479,7 @@ PRTY_TRANSPORT = {
 PRTY_TRANSPORT_CODES = {
     'none': 0x00,
     'on foot': 0x01,
+    'foot': 0x01,
     'on foot (default)': 0x3F,
     'horse': 0x0A,
     'ship': 0x0B,
