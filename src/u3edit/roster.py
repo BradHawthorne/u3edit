@@ -153,6 +153,11 @@ class Character:
         code = code.upper()
         if code in RACE_CODES:
             self.raw[CHAR_RACE] = RACE_CODES[code]
+            return
+        for k, v in RACES.items():
+            if v.upper() == code:
+                self.raw[CHAR_RACE] = k
+                return
 
     @property
     def char_class(self) -> str:
@@ -163,6 +168,11 @@ class Character:
         code = code.upper()
         if code in CLASS_CODES:
             self.raw[CHAR_CLASS] = CLASS_CODES[code]
+            return
+        for k, v in CLASSES.items():
+            if v.upper() == code:
+                self.raw[CHAR_CLASS] = k
+                return
 
     @property
     def gender(self) -> str:

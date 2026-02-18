@@ -19,6 +19,7 @@ class DialogEditor:
         # Parse records from raw data, preserving binary parts
         self._raw_parts = data.split(bytes([TLK_RECORD_END]))
         self._text_part_indices = []  # maps text record index → raw part index
+        self._modified_records = set()  # track which text records were edited
         self.records = []  # list of list[str] (lines per record)
         for i, part in enumerate(self._raw_parts):
             if not part:
@@ -38,11 +39,11 @@ class DialogEditor:
         self._save()
 
     def _save(self):
-        # Write modified text records back into raw parts, preserving binary parts
+        # Only re-encode records the user actually modified; preserve others as-is
         parts = list(self._raw_parts)
-        for text_idx, rec in enumerate(self.records):
+        for text_idx in self._modified_records:
             raw_idx = self._text_part_indices[text_idx]
-            encoded = encode_record(rec)
+            encoded = encode_record(self.records[text_idx])
             parts[raw_idx] = encoded[:-1]  # strip trailing TLK_RECORD_END
         data = bytes([TLK_RECORD_END]).join(parts)
         if self.save_callback:
@@ -133,6 +134,7 @@ class DialogEditor:
             ).run()
             if result is not None and result != current:
                 editor.records[editor.selected_index] = result.split('\\n')
+                editor._modified_records.add(editor.selected_index)
                 editor.dirty = True
 
         return root, kb

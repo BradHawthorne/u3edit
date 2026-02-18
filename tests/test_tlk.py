@@ -126,8 +126,9 @@ class TestBinaryPreservation:
         assert len(editor.records) == 2
         assert editor.records[0] == ['HELLO']
         assert editor.records[1] == ['WORLD']
-        # Modify first text record
+        # Modify first text record (mark as modified, as the UI does)
         editor.records[0] = ['GOODBYE']
+        editor._modified_records.add(0)
         editor.dirty = True
         editor._save()
         # Binary record should be preserved in the output

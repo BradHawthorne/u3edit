@@ -2,6 +2,7 @@
 
 from ..constants import (
     CHAR_RECORD_SIZE, CHAR_MAX_SLOTS, ROSTER_FILE_SIZE,
+    CHAR_READIED_WEAPON, CHAR_WORN_ARMOR,
     RACES, CLASSES,
 )
 from ..roster import Character
@@ -93,11 +94,11 @@ def _character_fields(char):
                              lambda v: setattr(char, 'torches', int(v)),
                              fmt='int'))
     fields.append(FormField('Weapon',
-                             lambda: char.equipped_weapon,
+                             lambda: f'{char.raw[CHAR_READIED_WEAPON]} ({char.equipped_weapon})',
                              lambda v: setattr(char, 'equipped_weapon', int(v)),
                              fmt='int'))
     fields.append(FormField('Armor',
-                             lambda: char.equipped_armor,
+                             lambda: f'{char.raw[CHAR_WORN_ARMOR]} ({char.equipped_armor})',
                              lambda v: setattr(char, 'equipped_armor', int(v)),
                              fmt='int'))
     return fields
