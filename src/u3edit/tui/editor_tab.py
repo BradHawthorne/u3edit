@@ -56,6 +56,27 @@ class TextEditorTab:
         self._editor._save()
 
 
+class DialogEditorTab:
+    """Wraps a DialogEditor as a tab."""
+
+    def __init__(self, editor):
+        self._editor = editor
+
+    @property
+    def name(self):
+        return 'Dialog'
+
+    @property
+    def is_dirty(self):
+        return self._editor.is_dirty
+
+    def build_ui(self):
+        return self._editor.build_ui()
+
+    def save(self):
+        self._editor.save()
+
+
 class DrillDownTab:
     """Multi-file tab: file selector list → editor → back with Escape.
 

@@ -8,7 +8,7 @@ import os
 
 from ..constants import MAP_DUNGEON_SIZE
 from .game_session import GameSession
-from .editor_tab import TileEditorTab, TextEditorTab, DrillDownTab
+from .editor_tab import TileEditorTab, TextEditorTab, DialogEditorTab, DrillDownTab
 from .theme import U3_STYLE
 
 
@@ -107,26 +107,7 @@ class UnifiedApp:
         """Factory for DialogEditor wrapped as a tab."""
         from .dialog_editor import DialogEditor
         editor = DialogEditor(fname, data, save_callback=save_cb)
-
-        class DialogTab:
-            def __init__(self, ed):
-                self._editor = ed
-
-            @property
-            def name(self):
-                return 'Dialog'
-
-            @property
-            def is_dirty(self):
-                return self._editor.is_dirty
-
-            def build_ui(self):
-                return self._editor.build_ui()
-
-            def save(self):
-                self._editor.save()
-
-        return DialogTab(editor)
+        return DialogEditorTab(editor)
 
     def _make_bestiary_editor(self, fname, data, save_cb):
         """Factory for BestiaryEditor wrapped as a tab."""
@@ -148,13 +129,22 @@ class UnifiedApp:
             print("No game data files found on disk image.")
             return False
 
-        # Build UI for each tab
+        # Build UI for each tab (skip tabs that fail to build)
         tab_containers = []
         tab_keybindings = []
+        valid_tabs = []
         for tab in self.tabs:
-            container, kb = tab.build_ui()
-            tab_containers.append(container)
-            tab_keybindings.append(kb)
+            try:
+                container, kb = tab.build_ui()
+                tab_containers.append(container)
+                tab_keybindings.append(kb)
+                valid_tabs.append(tab)
+            except Exception:
+                pass  # Skip tabs that fail to build
+        self.tabs = valid_tabs
+        if not self.tabs:
+            print("No game data files found on disk image.")
+            return False
 
         app_ref = self
 
@@ -167,7 +157,7 @@ class UnifiedApp:
                     style = 'class:tab-active'
                 else:
                     style = 'class:tab-inactive'
-                fragments.append((style, f' {tab.name}{dirty} '))
+                fragments.append((style, f' {i + 1}:{tab.name}{dirty} '))
                 fragments.append(('class:tab-bar', ' '))
             return fragments
 
@@ -192,7 +182,8 @@ class UnifiedApp:
         # Global help
         def get_global_help():
             return [
-                ('class:help-key', ' Ctrl+←/→'), ('class:help-text', '=tab '),
+                ('class:help-key', ' Ctrl+←/→ '), ('class:help-text', '=tab '),
+                ('class:help-key', 'Shift+Tab'), ('class:help-text', '=next '),
                 ('class:help-key', 'Ctrl+S'), ('class:help-text', '=save '),
                 ('class:help-key', 'Ctrl+Q'), ('class:help-text', '=quit '),
             ]
@@ -207,6 +198,7 @@ class UnifiedApp:
         global_kb = KeyBindings()
 
         @global_kb.add('c-right')
+        @global_kb.add('s-tab', eager=True)  # Shift+Tab fallback
         def _next_tab(event):
             app_ref.active_tab_index = (
                 (app_ref.active_tab_index + 1) % len(app_ref.tabs))
