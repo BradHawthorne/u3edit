@@ -334,12 +334,12 @@ def cmd_edit(args) -> None:
             char.intelligence = args.int_; plrs_modified = True
         if getattr(args, 'wis', None) is not None:
             char.wisdom = args.wis; plrs_modified = True
+        if getattr(args, 'max_hp', None) is not None:
+            char.max_hp = args.max_hp; plrs_modified = True
         if getattr(args, 'hp', None) is not None:
             char.hp = args.hp
             char.max_hp = max(char.max_hp, args.hp)
             plrs_modified = True
-        if getattr(args, 'max_hp', None) is not None:
-            char.max_hp = args.max_hp; plrs_modified = True
         if getattr(args, 'mp', None) is not None:
             char.mp = args.mp; plrs_modified = True
         if getattr(args, 'gold', None) is not None:
@@ -506,10 +506,11 @@ def cmd_import(args) -> None:
                     char.intelligence = stats['int']
                 if 'wis' in stats:
                     char.wisdom = stats['wis']
-                if 'hp' in entry:
-                    char.hp = entry['hp']
                 if 'max_hp' in entry:
                     char.max_hp = entry['max_hp']
+                if 'hp' in entry:
+                    char.hp = entry['hp']
+                    char.max_hp = max(char.max_hp, entry['hp'])
                 if 'mp' in entry:
                     char.mp = entry['mp']
                 if 'exp' in entry:

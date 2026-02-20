@@ -554,12 +554,12 @@ def _apply_edits(char: Character, args) -> bool:
         char.intelligence = args.int_; modified = True
     if args.wis is not None:
         char.wisdom = args.wis; modified = True
+    if args.max_hp is not None:
+        char.max_hp = args.max_hp; modified = True
     if args.hp is not None:
         char.hp = args.hp
         char.max_hp = max(char.max_hp, args.hp)
         modified = True
-    if args.max_hp is not None:
-        char.max_hp = args.max_hp; modified = True
     if args.mp is not None:
         char.mp = args.mp; modified = True
     if args.gold is not None:
@@ -791,10 +791,11 @@ def cmd_import(args) -> None:
             char.intelligence = stats['int']
         if 'wis' in stats:
             char.wisdom = stats['wis']
-        if 'hp' in entry:
-            char.hp = entry['hp']
         if 'max_hp' in entry:
             char.max_hp = entry['max_hp']
+        if 'hp' in entry:
+            char.hp = entry['hp']
+            char.max_hp = max(char.max_hp, entry['hp'])
         if 'mp' in entry:
             char.mp = entry['mp']
         if 'exp' in entry:

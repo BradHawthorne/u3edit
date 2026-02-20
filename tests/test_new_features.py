@@ -4207,3 +4207,148 @@ class TestShapesImportIntegration:
         with open(path, 'rb') as f:
             result = f.read()
         assert result == bytes(original)
+
+
+# =============================================================================
+# Fix: HP > MaxHP race condition when both --hp and --max-hp provided
+# =============================================================================
+
+class TestHpMaxHpOrdering:
+    """Verify max_hp >= hp when both are set simultaneously."""
+
+    def test_roster_hp_exceeds_max_hp(self, sample_character_bytes):
+        """roster _apply_edits: --hp 200 --max-hp 100 should auto-raise max_hp."""
+        from u3edit.roster import Character, _apply_edits
+        char = Character(bytearray(sample_character_bytes))
+        args = type('Args', (), {
+            'name': None, 'str': None, 'dex': None, 'int_': None, 'wis': None,
+            'hp': 200, 'max_hp': 100, 'mp': None, 'gold': None, 'exp': None,
+            'food': None, 'gems': None, 'keys': None, 'powders': None,
+            'torches': None, 'status': None, 'race': None, 'class_': None,
+            'gender': None, 'weapon': None, 'armor': None,
+            'marks': None, 'cards': None, 'sub_morsels': None,
+            'give_weapon': None, 'give_armor': None,
+            'in_party': None, 'not_in_party': None,
+        })()
+        _apply_edits(char, args)
+        assert char.hp == 200
+        assert char.max_hp >= char.hp, f"max_hp {char.max_hp} < hp {char.hp}"
+
+    def test_roster_max_hp_alone(self, sample_character_bytes):
+        """roster _apply_edits: --max-hp 500 alone sets max_hp without touching hp."""
+        from u3edit.roster import Character, _apply_edits
+        char = Character(bytearray(sample_character_bytes))
+        original_hp = char.hp
+        args = type('Args', (), {
+            'name': None, 'str': None, 'dex': None, 'int_': None, 'wis': None,
+            'hp': None, 'max_hp': 500, 'mp': None, 'gold': None, 'exp': None,
+            'food': None, 'gems': None, 'keys': None, 'powders': None,
+            'torches': None, 'status': None, 'race': None, 'class_': None,
+            'gender': None, 'weapon': None, 'armor': None,
+            'marks': None, 'cards': None, 'sub_morsels': None,
+            'give_weapon': None, 'give_armor': None,
+            'in_party': None, 'not_in_party': None,
+        })()
+        _apply_edits(char, args)
+        assert char.hp == original_hp
+        assert char.max_hp == 500
+
+    def test_save_plrs_hp_exceeds_max_hp(self, tmp_dir, sample_prty_bytes,
+                                          sample_character_bytes):
+        """save cmd_edit: --hp 200 --max-hp 100 via PLRS should auto-raise max_hp."""
+        from u3edit.save import cmd_edit
+        from u3edit.constants import PLRS_FILE_SIZE, CHAR_RECORD_SIZE
+        from u3edit.roster import Character
+        prty_path = os.path.join(tmp_dir, 'PRTY#069500')
+        with open(prty_path, 'wb') as f:
+            f.write(sample_prty_bytes)
+        plrs_data = bytearray(PLRS_FILE_SIZE)
+        plrs_data[:CHAR_RECORD_SIZE] = sample_character_bytes
+        plrs_path = os.path.join(tmp_dir, 'PLRS#069500')
+        with open(plrs_path, 'wb') as f:
+            f.write(plrs_data)
+        args = type('Args', (), {
+            'game_dir': tmp_dir, 'output': None,
+            'backup': False, 'dry_run': False,
+            'transport': None, 'x': None, 'y': None,
+            'party_size': None, 'slot_ids': None,
+            'sentinel': None, 'location': None,
+            'plrs_slot': 0, 'name': None,
+            'str': None, 'dex': None, 'int_': None, 'wis': None,
+            'hp': 200, 'max_hp': 100,
+            'mp': None, 'food': None, 'gold': None, 'exp': None,
+            'gems': None, 'keys': None, 'powders': None,
+            'torches': None, 'status': None, 'race': None,
+            'class_': None, 'gender': None,
+            'weapon': None, 'armor': None,
+            'marks': None, 'cards': None, 'sub_morsels': None,
+            'validate': False,
+        })()
+        cmd_edit(args)
+        with open(plrs_path, 'rb') as f:
+            result = f.read()
+        char = Character(bytearray(result[:CHAR_RECORD_SIZE]))
+        assert char.hp == 200
+        assert char.max_hp >= char.hp, f"max_hp {char.max_hp} < hp {char.hp}"
+
+
+# =============================================================================
+# Fix: shapes cmd_import() KeyError on malformed JSON
+# =============================================================================
+
+class TestShapesImportMalformedJson:
+    """Verify shapes cmd_import() handles missing keys gracefully."""
+
+    def _make_shps(self, tmp_path):
+        data = bytearray(2048)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path, data
+
+    def test_missing_index_in_list(self, tmp_path):
+        """Entries missing 'index' key should be skipped, not crash."""
+        from u3edit.shapes import cmd_import as shapes_cmd_import
+        path, _ = self._make_shps(tmp_path)
+        jdata = [
+            {'raw': [0xFF] * 8},  # missing 'index'
+            {'index': 1, 'raw': [0xAA] * 8},  # valid
+        ]
+        json_path = str(tmp_path / 'glyphs.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_import(args)  # should not raise KeyError
+        with open(path, 'rb') as f:
+            result = f.read()
+        # Glyph 0 untouched (missing index skipped), glyph 1 updated
+        assert list(result[0:8]) == [0] * 8
+        assert list(result[8:16]) == [0xAA] * 8
+
+    def test_missing_raw_in_tiles(self, tmp_path):
+        """Frames missing 'raw' key should be skipped, not crash."""
+        from u3edit.shapes import cmd_import as shapes_cmd_import
+        path, _ = self._make_shps(tmp_path)
+        jdata = {
+            'tiles': [{
+                'frames': [
+                    {'index': 0},  # missing 'raw'
+                    {'index': 1, 'raw': [0xBB] * 8},  # valid
+                ]
+            }]
+        }
+        json_path = str(tmp_path / 'tiles.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_import(args)  # should not raise KeyError
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result[0:8]) == [0] * 8
+        assert list(result[8:16]) == [0xBB] * 8

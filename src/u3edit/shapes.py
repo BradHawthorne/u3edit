@@ -706,22 +706,26 @@ def cmd_import(args) -> None:
     elif isinstance(jdata, dict) and 'tiles' in jdata:
         for tile in jdata['tiles']:
             for frame in tile.get('frames', []):
-                idx = frame['index']
-                raw = frame['raw']
+                idx = frame.get('index')
+                raw = frame.get('raw')
+                if idx is None or raw is None:
+                    continue
                 offset = idx * GLYPH_SIZE
                 if offset + GLYPH_SIZE <= len(data):
                     data[offset:offset + GLYPH_SIZE] = bytes(raw)
-        count = sum(len(t.get('frames', [])) for t in jdata['tiles'])
-        print(f"Import: {count} glyph(s) to update")
+                    count += 1
+        print(f"Import: {count} glyph(s) updated")
     elif isinstance(jdata, list):
         for entry in jdata:
-            idx = entry['index']
-            raw = entry['raw']
+            idx = entry.get('index')
+            raw = entry.get('raw')
+            if idx is None or raw is None:
+                continue
             offset = idx * GLYPH_SIZE
             if offset + GLYPH_SIZE <= len(data):
                 data[offset:offset + GLYPH_SIZE] = bytes(raw)
                 count += 1
-        print(f"Import: {count} glyph(s) to update")
+        print(f"Import: {count} glyph(s) updated")
     else:
         print("Error: Unrecognized JSON format", file=sys.stderr)
         sys.exit(1)
