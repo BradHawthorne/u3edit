@@ -3803,3 +3803,132 @@ class TestHexIntArgParsing:
         parser.add_argument('--offset', type=hex_int)
         args = parser.parse_args(['--offset', '240'])
         assert args.offset == 240
+
+
+# =============================================================================
+# Sound and DDRW import integration tests
+# =============================================================================
+
+class TestSoundImportIntegration:
+    """Integration tests for sound cmd_import()."""
+
+    def test_import_sound_raw(self, tmp_path):
+        """cmd_import() writes raw byte array from JSON."""
+        from u3edit.sound import cmd_import as sound_cmd_import
+        path = str(tmp_path / 'SOSA')
+        original = bytes(range(256)) * 4  # 1024 bytes
+        with open(path, 'wb') as f:
+            f.write(original)
+
+        new_data = list(range(255, -1, -1)) * 4  # Reversed pattern
+        jdata = {'raw': new_data}
+        json_path = str(tmp_path / 'sound.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        sound_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result) == new_data
+
+    def test_import_sound_dry_run(self, tmp_path):
+        """cmd_import() with dry_run does not modify file."""
+        from u3edit.sound import cmd_import as sound_cmd_import
+        path = str(tmp_path / 'SOSA')
+        original = bytes(64)
+        with open(path, 'wb') as f:
+            f.write(original)
+
+        jdata = {'raw': [0xFF] * 64}
+        json_path = str(tmp_path / 'sound.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        sound_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == original
+
+    def test_import_sound_output_file(self, tmp_path):
+        """cmd_import() writes to --output file."""
+        from u3edit.sound import cmd_import as sound_cmd_import
+        path = str(tmp_path / 'SOSA')
+        out_path = str(tmp_path / 'SOSA_OUT')
+        with open(path, 'wb') as f:
+            f.write(bytes(64))
+
+        jdata = {'raw': [0xAB] * 32}
+        json_path = str(tmp_path / 'sound.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': out_path, 'backup': False, 'dry_run': False,
+        })()
+        sound_cmd_import(args)
+
+        with open(out_path, 'rb') as f:
+            result = f.read()
+        assert list(result) == [0xAB] * 32
+
+
+class TestDdrwImportIntegration:
+    """Integration tests for ddrw cmd_import()."""
+
+    def test_import_ddrw_raw(self, tmp_path):
+        """cmd_import() writes raw byte array from JSON."""
+        from u3edit.ddrw import cmd_import as ddrw_cmd_import
+        path = str(tmp_path / 'DDRW')
+        original = bytes(256)
+        with open(path, 'wb') as f:
+            f.write(original)
+
+        new_data = list(range(256))
+        jdata = {'raw': new_data}
+        json_path = str(tmp_path / 'ddrw.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        ddrw_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result) == new_data
+
+    def test_import_ddrw_dry_run(self, tmp_path):
+        """cmd_import() with dry_run does not modify file."""
+        from u3edit.ddrw import cmd_import as ddrw_cmd_import
+        path = str(tmp_path / 'DDRW')
+        original = bytes(128)
+        with open(path, 'wb') as f:
+            f.write(original)
+
+        jdata = {'raw': [0xFF] * 128}
+        json_path = str(tmp_path / 'ddrw.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        ddrw_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == original
