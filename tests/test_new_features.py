@@ -4121,6 +4121,23 @@ class TestShapesEditIntegration:
             result = f.read()
         assert list(result[8:16]) == [1, 2, 3, 4, 5, 6, 7, 8]
 
+    def test_edit_backup_skipped_with_output(self, tmp_path):
+        """cmd_edit() with --output and --backup should NOT create .bak of input."""
+        from u3edit.shapes import cmd_edit as shapes_cmd_edit
+        path, _ = self._make_shps(tmp_path)
+        out_path = str(tmp_path / 'SHPS_OUT')
+
+        args = type('Args', (), {
+            'file': path, 'glyph': 0,
+            'data': 'FF FF FF FF FF FF FF FF',
+            'output': out_path, 'backup': True, 'dry_run': False,
+        })()
+        shapes_cmd_edit(args)
+
+        assert os.path.exists(out_path), "output file should exist"
+        assert not os.path.exists(path + '.bak'), \
+            "backup should not be created when --output is a different file"
+
 
 class TestShapesImportIntegration:
     """Integration tests for shapes cmd_import()."""

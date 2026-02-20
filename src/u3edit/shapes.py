@@ -655,12 +655,11 @@ def cmd_edit(args) -> None:
         print("Dry run — no changes written.")
         return
 
-    if do_backup:
-        backup_file(args.file)
-
     data[offset:offset + GLYPH_SIZE] = new_bytes
 
     output = args.output if args.output else args.file
+    if do_backup and (not args.output or args.output == args.file):
+        backup_file(args.file)
     with open(output, 'wb') as f:
         f.write(bytes(data))
     print(f"Updated glyph {glyph_idx} in {output}")
