@@ -22,7 +22,7 @@ u3edit edit game.po                  # Unified TUI editor (requires prompt_toolk
 
 ### Module-per-data-type pattern
 
-Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tlk, combat, save, special, text, spell, equip, shapes, sound, patch, ddrw). Every module follows the same contract:
+Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tlk, combat, save, special, text, spell, equip, shapes, sound, patch, ddrw, diff, disk). Every module follows the same contract:
 
 - **Data class** (e.g., `Character`, `Monster`): wraps `bytearray` with `@property` accessors
 - **`load_*(path)` / `save_*(path, obj)`**: File I/O
@@ -91,7 +91,7 @@ Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tl
 - **`sound view/edit/import`**: SOSA/SOSM/MBS sound data files — hex dump, AY-3-8910 register parsing and music stream decoding (notes, tempo, loops) for MBS.
 - **`patch view/edit/dump`**: Engine binary patcher for CIDAR-identified offsets in ULT3/EXOD — name table (921 bytes, terrain/monster/weapon/armor/spell names), moongate coordinates, food depletion rate, town/dungeon coords.
 - **`ddrw view/edit/import`**: Dungeon drawing data (1792 bytes) with structured perspective vector and tile record parsing.
-- **`disk audit`**: ProDOS disk space analysis — free blocks, alignment waste, capacity estimates.
+- **`disk info/list/extract/audit`**: ProDOS disk image operations — show volume info, list files, extract all files, audit disk space (free blocks, alignment waste, capacity estimates). Requires external `diskiigs` tool.
 - **`TILE_CHARS_REVERSE` / `DUNGEON_TILE_CHARS_REVERSE`**: Reverse lookups in `constants.py` for char→tile-byte conversion (used by import commands).
 - **CON file layout** (fully resolved via engine code tracing): 0x79-0x7F = unused padding, 0x90-0x9F = runtime monster arrays (saved-tile + status, overwritten at init), 0xA8-0xAF = runtime PC arrays (saved-tile + appearance, overwritten at init), 0xB0-0xBF = unused tail padding. Preserved for round-trip fidelity.
 - **PRTY file layout** (verified against zero-page $E0-$EF): $E0=transport, $E1=party_size, $E2=location_type, $E3=saved_x, $E4=saved_y, $E5=sentinel, $E6-$E9=slot_ids. Constants in `PRTY_OFF_*`.

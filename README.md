@@ -86,18 +86,20 @@ u3edit disk list game.po
 |------|-------------|----------|
 | `roster` | Character roster viewer/editor | `view`, `edit`, `create`, `import`, `check-progress` |
 | `bestiary` | Monster bestiary viewer/editor | `view`, `dump`, `edit`, `import` |
-| `map` | Overworld, town, and dungeon map viewer/editor | `view`, `overview`, `legend`, `set`, `fill`, `replace`, `find`, `import` |
+| `map` | Overworld, town, and dungeon map viewer/editor | `view`, `overview`, `legend`, `edit`, `set`, `fill`, `replace`, `find`, `import` |
 | `tlk` | NPC dialog viewer/editor | `view`, `extract`, `build`, `edit`, `search`, `import` |
 | `combat` | Combat battlefield viewer/editor | `view`, `edit`, `import` |
 | `save` | Save state viewer/editor | `view`, `edit`, `import` |
 | `special` | Special location viewer/editor (shrines, fountains) | `view`, `edit`, `import` |
-| `text` | Game text string viewer | `view`, `edit`, `import` |
+| `text` | Game text string viewer/editor | `view`, `edit`, `import` |
 | `spell` | Spell reference (wizard + cleric) | `view` |
 | `equip` | Equipment stats and class restrictions | `view` |
 | `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `import`, `info` |
 | `sound` | Sound data editor (SOSA, SOSM, MBS) | `view`, `edit`, `import` |
 | `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump` |
 | `ddrw` | Dungeon drawing data editor | `view`, `edit`, `import` |
+| `diff` | Game data comparison tool | (compares two files or directories) |
+| `disk` | ProDOS disk image operations | `info`, `list`, `extract`, `audit` |
 
 Each tool is also available standalone: `u3-roster`, `u3-bestiary`, `u3-map`, etc.
 
@@ -314,10 +316,37 @@ ULT3 regions: `name-table` (921 bytes — terrain, monster, weapon, armor, spell
 
 EXOD regions: `town-coords`, `dungeon-coords` (entrance XY pairs), `moongate-coords` (phase positions).
 
-## Disk Space Analysis
+## Comparing Game Data
 
 ```bash
-# Audit disk image space usage
+# Compare two roster files
+u3edit diff ROST_original#069500 ROST_modified#069500
+
+# Compare two game directories
+u3edit diff path/to/GAME1/ path/to/GAME2/
+
+# Summary counts only
+u3edit diff ROST1 ROST2 --summary
+
+# JSON output
+u3edit diff ROST1 ROST2 --json -o diff.json
+```
+
+Auto-detects file types and compares across all data formats (roster, bestiary, combat, save, maps, special, TLK).
+
+## Disk Image Operations
+
+```bash
+# Show disk image info
+u3edit disk info game.po
+
+# List files on disk image
+u3edit disk list game.po
+
+# Extract all files
+u3edit disk extract game.po -o output_dir/
+
+# Audit disk space usage
 u3edit disk audit game.po
 
 # Detailed per-file allocation
@@ -327,19 +356,22 @@ u3edit disk audit game.po --detail
 u3edit disk audit game.po --json -o audit.json
 ```
 
+Requires [diskiigs](https://github.com/BradHawthorne/rosetta) on your PATH (or set `DISKIIGS_PATH`).
+
 ## File Formats
 
 ### Character Record (ROST, 64 bytes per slot, 20 slots)
 
 | Offset | Size | Field | Encoding |
 |--------|------|-------|----------|
-| 0x00 | 10 | Name | High-bit ASCII |
-| 0x0E | 1 | Marks/Cards | Bitmask (hi=marks, lo=cards) |
+| 0x00-0x0D | 14 | Name | High-bit ASCII, null-terminated (max 13 chars + null at 0x0D) |
+| 0x0E | 1 | Marks/Cards | Bitmask (hi nibble=marks, lo nibble=cards) |
 | 0x0F | 1 | Torches | Count |
+| 0x10 | 1 | In-Party | $FF=active, $00=not |
 | 0x11 | 1 | Status | ASCII: G/P/D/A |
 | 0x12-0x15 | 4 | STR/DEX/INT/WIS | BCD (0-99 each) |
 | 0x16-0x18 | 3 | Race/Class/Gender | ASCII codes |
-| 0x19 | 1 | MP | Raw byte |
+| 0x19 | 1 | MP | BCD (0-99) |
 | 0x1A-0x1B | 2 | HP | BCD16 (0-9999) |
 | 0x1C-0x1D | 2 | Max HP | BCD16 (0-9999) |
 | 0x1E-0x1F | 2 | EXP | BCD16 (0-9999) |
@@ -348,7 +380,9 @@ u3edit disk audit game.po --json -o audit.json
 | 0x23-0x24 | 2 | Gold | BCD16 (0-9999) |
 | 0x25-0x27 | 3 | Gems/Keys/Powders | BCD (0-99 each) |
 | 0x28 | 1 | Worn armor | Index (0-7) |
+| 0x29-0x2F | 7 | Armor inventory | Count of each type (Cloth..Exotic) |
 | 0x30 | 1 | Readied weapon | Index (0-15) |
+| 0x31-0x3F | 15 | Weapon inventory | Count of each type (Dagger..Exotic) |
 
 ### Monster Record (MON, columnar: 16 rows x 16 monsters)
 
