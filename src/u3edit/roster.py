@@ -719,19 +719,22 @@ def cmd_create(args) -> None:
         sys.exit(1)
 
     char = Character(bytearray(CHAR_RECORD_SIZE))
-    char.name = args.name or "HERO"
-    char.race = (args.race or 'H').upper()
-    char.char_class = (args.class_ or 'F').upper()
-    char.gender = (args.gender or 'M').upper()
+    # Set defaults for a new character
+    char.name = "HERO"
+    char.race = 'H'
+    char.char_class = 'F'
+    char.gender = 'M'
     char.raw[CHAR_STATUS] = ord('G')  # Good status
-    char.strength = args.str or 15
-    char.dexterity = args.dex or 15
-    char.intelligence = args.int_ or 15
-    char.wisdom = args.wis or 15
+    char.strength = 15
+    char.dexterity = 15
+    char.intelligence = 15
+    char.wisdom = 15
     char.hp = 150
     char.max_hp = 150
     char.food = 200
     char.gold = 100
+    # Override defaults with any user-specified values
+    _apply_edits(char, args)
 
     chars[args.slot] = char
     print(f"Created character in slot {args.slot}:")
@@ -1034,15 +1037,8 @@ def register_parser(subparsers) -> None:
     p_create.add_argument('--output', '-o', help='Output file (default: overwrite)')
     p_create.add_argument('--backup', action='store_true', help='Create .bak backup before overwrite')
     p_create.add_argument('--dry-run', action='store_true', help='Show changes without writing')
-    p_create.add_argument('--name', help='Character name (default: HERO)')
-    p_create.add_argument('--race', help='Race: H(uman) E(lf) D(warf) B(obbit) F(uzzy)')
-    p_create.add_argument('--class', dest='class_', help='Class: F C W T L I D A R P B')
-    p_create.add_argument('--gender', help='Gender: M(ale) F(emale) O(ther)')
-    p_create.add_argument('--str', type=int, help='Strength')
-    p_create.add_argument('--dex', type=int, help='Dexterity')
-    p_create.add_argument('--int', type=int, dest='int_', help='Intelligence')
-    p_create.add_argument('--wis', type=int, help='Wisdom')
     p_create.add_argument('--force', action='store_true', help='Overwrite existing')
+    _add_edit_args(p_create)
 
     # Import
     p_import = sub.add_parser('import', help='Import characters from JSON')
@@ -1105,15 +1101,8 @@ def main() -> None:
     p_create.add_argument('--output', '-o', help='Output file (default: overwrite)')
     p_create.add_argument('--backup', action='store_true', help='Create .bak backup before overwrite')
     p_create.add_argument('--dry-run', action='store_true', help='Show changes without writing')
-    p_create.add_argument('--name', help='Character name (default: HERO)')
-    p_create.add_argument('--race', help='Race: H(uman) E(lf) D(warf) B(obbit) F(uzzy)')
-    p_create.add_argument('--class', dest='class_', help='Class: F C W T L I D A R P B')
-    p_create.add_argument('--gender', help='Gender: M(ale) F(emale) O(ther)')
-    p_create.add_argument('--str', type=int, help='Strength')
-    p_create.add_argument('--dex', type=int, help='Dexterity')
-    p_create.add_argument('--int', type=int, dest='int_', help='Intelligence')
-    p_create.add_argument('--wis', type=int, help='Wisdom')
     p_create.add_argument('--force', action='store_true', help='Overwrite existing')
+    _add_edit_args(p_create)
 
     p_import = sub.add_parser('import', help='Import characters from JSON')
     p_import.add_argument('file', help='ROST file path')

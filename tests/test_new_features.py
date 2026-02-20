@@ -3100,3 +3100,180 @@ class TestPatchImport:
         strings = parse_text_region(result, 0x397A, 921)
         assert 'WATER' in strings
         assert 'GRASS' in strings
+
+
+# =============================================================================
+# Roster create extended args tests
+# =============================================================================
+
+class TestRosterCreateExtendedArgs:
+    """Verify roster create accepts all edit args (hp, gold, food, etc.)."""
+
+    def test_create_with_hp_and_gold(self, tmp_dir, sample_roster_file):
+        """The Voidborn pattern: create with --hp and --gold."""
+        from u3edit.roster import cmd_create
+        args = type('Args', (), {
+            'file': sample_roster_file,
+            'slot': 5,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+            'force': False,
+            'name': 'KAEL',
+            'race': 'H',
+            'class_': 'R',
+            'gender': 'M',
+            'str': 30,
+            'dex': 45,
+            'int_': None,
+            'wis': None,
+            'hp': 250,
+            'max_hp': None,
+            'mp': None,
+            'gold': 300,
+            'exp': None,
+            'food': None,
+            'gems': None,
+            'keys': None,
+            'powders': None,
+            'torches': None,
+            'status': None,
+            'weapon': None,
+            'armor': None,
+            'give_weapon': None,
+            'give_armor': None,
+            'marks': None,
+            'cards': None,
+            'in_party': None,
+            'not_in_party': None,
+            'sub_morsels': None,
+        })()
+        cmd_create(args)
+
+        chars, _ = load_roster(sample_roster_file)
+        c = chars[5]
+        assert c.name == 'KAEL'
+        assert c.hp == 250
+        assert c.max_hp == 250  # auto-raised to match hp
+        assert c.gold == 300
+        assert c.strength == 30
+        assert c.dexterity == 45
+        # Defaults preserved where not specified
+        assert c.intelligence == 15
+        assert c.wisdom == 15
+        assert c.food == 200  # default
+
+    def test_create_with_equipment(self, tmp_dir, sample_roster_file):
+        """Create with weapon, armor, in-party, food, gems."""
+        from u3edit.roster import cmd_create
+        args = type('Args', (), {
+            'file': sample_roster_file,
+            'slot': 6,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+            'force': False,
+            'name': 'THARN',
+            'race': 'D',
+            'class_': 'F',
+            'gender': 'M',
+            'str': 50,
+            'dex': 25,
+            'int_': None,
+            'wis': None,
+            'hp': 350,
+            'max_hp': None,
+            'mp': None,
+            'gold': None,
+            'exp': None,
+            'food': 500,
+            'gems': 5,
+            'keys': 3,
+            'powders': None,
+            'torches': 10,
+            'status': None,
+            'weapon': 6,
+            'armor': 4,
+            'give_weapon': None,
+            'give_armor': None,
+            'marks': None,
+            'cards': None,
+            'in_party': True,
+            'not_in_party': None,
+            'sub_morsels': 50,
+        })()
+        cmd_create(args)
+
+        chars, _ = load_roster(sample_roster_file)
+        c = chars[6]
+        assert c.name == 'THARN'
+        assert c.hp == 350
+        assert c.food == 500
+        assert c.gems == 5
+        assert c.keys == 3
+        assert c.torches == 10
+        assert c.raw[0x30] == 6  # Sword
+        assert c.raw[0x28] == 4  # Plate
+        assert c.in_party is True
+        assert c.sub_morsels == 50
+
+    def test_create_defaults_without_overrides(self, tmp_dir, sample_roster_file):
+        """Create with minimal args uses sensible defaults."""
+        from u3edit.roster import cmd_create
+        args = type('Args', (), {
+            'file': sample_roster_file,
+            'slot': 7,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+            'force': False,
+            'name': None,
+            'race': None,
+            'class_': None,
+            'gender': None,
+            'str': None,
+            'dex': None,
+            'int_': None,
+            'wis': None,
+            'hp': None,
+            'max_hp': None,
+            'mp': None,
+            'gold': None,
+            'exp': None,
+            'food': None,
+            'gems': None,
+            'keys': None,
+            'powders': None,
+            'torches': None,
+            'status': None,
+            'weapon': None,
+            'armor': None,
+            'give_weapon': None,
+            'give_armor': None,
+            'marks': None,
+            'cards': None,
+            'in_party': None,
+            'not_in_party': None,
+            'sub_morsels': None,
+        })()
+        cmd_create(args)
+
+        chars, _ = load_roster(sample_roster_file)
+        c = chars[7]
+        assert c.name == 'HERO'
+        assert c.hp == 150
+        assert c.max_hp == 150
+        assert c.gold == 100
+        assert c.food == 200
+        assert c.strength == 15
+
+    def test_create_cli_help_shows_hp(self):
+        """Verify --hp appears in create subcommand help."""
+        import subprocess
+        result = subprocess.run(
+            ['python', '-m', 'u3edit.roster', 'create', '--help'],
+            capture_output=True, text=True)
+        assert '--hp' in result.stdout
+        assert '--gold' in result.stdout
+        assert '--food' in result.stdout
+        assert '--in-party' in result.stdout

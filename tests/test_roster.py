@@ -242,6 +242,11 @@ class TestCmdCreate:
             file=sample_roster_file, slot=1, output=out,
             name='WIZARD', race='E', class_='W', gender='F',
             str=10, dex=20, int_=25, wis=15, force=False,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None, marks=None, cards=None,
+            in_party=None, not_in_party=None, sub_morsels=None,
         )
         cmd_create(args)
         chars, _ = load_roster(out)
