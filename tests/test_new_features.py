@@ -1226,7 +1226,8 @@ class TestSound:
 
 from u3edit.patch import (
     identify_binary, get_regions, parse_text_region,
-    parse_coord_region, encode_text_region, PATCHABLE_REGIONS,
+    parse_coord_region, encode_text_region, encode_coord_region,
+    cmd_import as patch_cmd_import, PATCHABLE_REGIONS,
 )
 
 
@@ -2737,3 +2738,365 @@ class TestSpecialJsonKeyConsistency:
             os.unlink(path)
             if os.path.exists(json_out):
                 os.unlink(json_out)
+
+
+# =============================================================================
+# Patch import + round-trip tests
+# =============================================================================
+
+class TestPatchImport:
+    """Tests for patch import command and encode_coord_region."""
+
+    def _make_ult3(self):
+        """Create a synthetic ULT3 binary with known region data."""
+        data = bytearray(17408)
+        # Name table: empty + "WATER" + "GRASS"
+        offset = 0x397A
+        text = b'\x00\xD7\xC1\xD4\xC5\xD2\x00\xC7\xD2\xC1\xD3\xD3\x00'
+        data[offset:offset + len(text)] = text
+        # Moongate X/Y
+        for i in range(8):
+            data[0x29A7 + i] = i * 8
+            data[0x29AF + i] = i * 4
+        # Food rate
+        data[0x272C] = 0x04
+        return data
+
+    def _make_exod(self):
+        """Create a synthetic EXOD binary with known coord data."""
+        data = bytearray(26208)
+        # Town coords: 16 pairs at $35E1
+        for i in range(16):
+            data[0x35E1 + i * 2] = 10 + i
+            data[0x35E1 + i * 2 + 1] = 20 + i
+        return data
+
+    def test_encode_coord_region(self):
+        coords = [{'x': 10, 'y': 20}, {'x': 30, 'y': 40}]
+        encoded = encode_coord_region(coords, 8)
+        assert len(encoded) == 8
+        assert encoded[0] == 10
+        assert encoded[1] == 20
+        assert encoded[2] == 30
+        assert encoded[3] == 40
+        # Padding
+        assert encoded[4:] == b'\x00\x00\x00\x00'
+
+    def test_encode_coord_too_long(self):
+        coords = [{'x': i, 'y': i} for i in range(10)]
+        with pytest.raises(ValueError):
+            encode_coord_region(coords, 4)
+
+    def test_text_round_trip(self, tmp_path):
+        """parse_text_region → encode_text_region preserves content."""
+        data = self._make_ult3()
+        strings = parse_text_region(bytes(data), 0x397A, 921)
+        encoded = encode_text_region(strings, 921)
+        reparsed = parse_text_region(encoded, 0, 921)
+        assert reparsed == strings
+
+    def test_text_round_trip_preserves_empty(self):
+        """Empty strings (consecutive nulls) survive round-trip."""
+        # Build: "" + "HELLO" + "" + "WORLD"
+        raw = bytearray(50)
+        raw[0] = 0x00  # empty string
+        hello = b'\xC8\xC5\xCC\xCC\xCF\x00'  # "HELLO" + null
+        raw[1:1 + len(hello)] = hello
+        pos = 1 + len(hello)
+        raw[pos] = 0x00  # empty string
+        pos += 1
+        world = b'\xD7\xCF\xD2\xCC\xC4\x00'  # "WORLD" + null
+        raw[pos:pos + len(world)] = world
+
+        strings = parse_text_region(bytes(raw), 0, 50)
+        assert strings == ['', 'HELLO', '', 'WORLD']
+
+        encoded = encode_text_region(strings, 50)
+        reparsed = parse_text_region(encoded, 0, 50)
+        assert reparsed == strings
+
+    def test_coord_round_trip(self):
+        """parse_coord_region → encode_coord_region preserves content."""
+        raw = bytes([10, 20, 30, 40, 50, 60, 0, 0])
+        coords = parse_coord_region(raw, 0, 8)
+        encoded = encode_coord_region(coords, 8)
+        assert encoded == raw
+
+    def test_import_text_region(self, tmp_path):
+        """Import name-table from JSON file."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # Build JSON with replacement names
+        jdata = {
+            'regions': {
+                'name-table': {
+                    'data': ['', 'BRINE', 'ASH'],
+                }
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        # Verify the name-table was patched
+        with open(path, 'rb') as f:
+            result = f.read()
+        strings = parse_text_region(result, 0x397A, 921)
+        assert '' in strings
+        assert 'BRINE' in strings
+        assert 'ASH' in strings
+        # Old names should be gone
+        assert 'WATER' not in strings
+        assert 'GRASS' not in strings
+
+    def test_import_bytes_region(self, tmp_path):
+        """Import moongate-x and food-rate byte regions."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        jdata = {
+            'regions': {
+                'moongate-x': {'data': [10, 20, 30, 40, 50, 30, 20, 10]},
+                'food-rate': {'data': [2]},
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result[0x29A7:0x29A7 + 8]) == [10, 20, 30, 40, 50, 30, 20, 10]
+        assert result[0x272C] == 2
+
+    def test_import_coord_region(self, tmp_path):
+        """Import town-coords from JSON."""
+        data = self._make_exod()
+        path = str(tmp_path / 'EXOD')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        new_coords = [{'x': 5, 'y': 10}, {'x': 15, 'y': 20}]
+        jdata = {
+            'regions': {
+                'town-coords': {'data': new_coords},
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[0x35E1] == 5
+        assert result[0x35E2] == 10
+        assert result[0x35E3] == 15
+        assert result[0x35E4] == 20
+
+    def test_import_dry_run(self, tmp_path):
+        """Dry run does not modify file."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        jdata = {
+            'regions': {
+                'food-rate': {'data': [1]},
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': None,
+            'backup': False,
+            'dry_run': True,
+        })()
+        patch_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[0x272C] == 0x04  # Unchanged
+
+    def test_import_region_filter(self, tmp_path):
+        """--region flag limits which regions are imported."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        jdata = {
+            'regions': {
+                'food-rate': {'data': [1]},
+                'moongate-x': {'data': [99, 99, 99, 99, 99, 99, 99, 99]},
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': 'food-rate',
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[0x272C] == 1  # Updated
+        # moongate-x should be unchanged (filtered out)
+        assert list(result[0x29A7:0x29A7 + 8]) == [i * 8 for i in range(8)]
+
+    def test_import_output_file(self, tmp_path):
+        """--output writes to separate file."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        out_path = str(tmp_path / 'ULT3_patched')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        jdata = {
+            'regions': {
+                'food-rate': {'data': [3]},
+            }
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': out_path,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        # Original unchanged
+        with open(path, 'rb') as f:
+            assert f.read()[0x272C] == 0x04
+        # Output has new value
+        with open(out_path, 'rb') as f:
+            assert f.read()[0x272C] == 3
+
+    def test_import_flat_json_format(self, tmp_path):
+        """Accept flat JSON without 'regions' wrapper."""
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # Flat format: region name → data list directly
+        jdata = {
+            'food-rate': [2],
+        }
+        json_path = str(tmp_path / 'patch.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path,
+            'json_file': json_path,
+            'region': None,
+            'output': None,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[0x272C] == 2
+
+    def test_import_full_view_json_round_trip(self, tmp_path):
+        """view --json output can be fed directly back into import."""
+        from u3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+
+        # Export via cmd_view --json
+        json_path = str(tmp_path / 'export.json')
+        view_args = type('Args', (), {
+            'file': path,
+            'region': None,
+            'json': True,
+            'output': json_path,
+        })()
+        cmd_view(view_args)
+
+        # Modify a value in the exported JSON
+        with open(json_path, 'r') as f:
+            jdata = json.load(f)
+        jdata['regions']['food-rate']['data'] = [2]
+
+        modified_json = str(tmp_path / 'modified.json')
+        with open(modified_json, 'w') as f:
+            json.dump(jdata, f)
+
+        # Import back
+        out_path = str(tmp_path / 'ULT3_new')
+        import_args = type('Args', (), {
+            'file': path,
+            'json_file': modified_json,
+            'region': None,
+            'output': out_path,
+            'backup': False,
+            'dry_run': False,
+        })()
+        patch_cmd_import(import_args)
+
+        # Verify food rate changed, name table preserved
+        with open(out_path, 'rb') as f:
+            result = f.read()
+        assert result[0x272C] == 2
+        strings = parse_text_region(result, 0x397A, 921)
+        assert 'WATER' in strings
+        assert 'GRASS' in strings

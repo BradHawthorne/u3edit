@@ -96,7 +96,7 @@ u3edit disk list game.po
 | `equip` | Equipment stats and class restrictions | `view` |
 | `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `edit-string`, `import`, `info` |
 | `sound` | Sound data editor (SOSA, SOSM, MBS) | `view`, `edit`, `import` |
-| `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump` |
+| `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump`, `import` |
 | `ddrw` | Dungeon drawing data editor | `view`, `edit`, `import` |
 | `diff` | Game data comparison tool | (compares two files or directories) |
 | `disk` | ProDOS disk image operations | `info`, `list`, `extract`, `audit` |
@@ -355,6 +355,10 @@ u3edit patch edit ULT3#065000 --region look-text --data "D7C1D4C5D200" --backup
 
 # Raw hex dump of any offset
 u3edit patch dump ULT3#065000 --offset 0x1566 --length 128
+
+# Export regions as JSON, edit, import back (round-trip)
+u3edit patch view ULT3#065000 --json -o regions.json
+u3edit patch import ULT3#065000 regions.json --backup
 ```
 
 Targeted binary patches at CIDAR-identified offsets in ULT3/EXOD engine binaries.
@@ -474,7 +478,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-659 tests covering all modules with synthesized game data (no real game files needed).
+672 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 
