@@ -789,12 +789,16 @@ class TestCombatImport:
 
         with open(out_path, 'rb') as f:
             result = f.read()
-        # Tile data and positions should survive round-trip
+        # All editable data should survive round-trip
         cm2 = CombatMap(result)
+        assert cm2.tiles == cm.tiles, "tile grid mismatch"
         assert cm2.monster_x == cm.monster_x
         assert cm2.monster_y == cm.monster_y
         assert cm2.pc_x == cm.pc_x
         assert cm2.pc_y == cm.pc_y
+        # Padding preserved
+        assert cm2.padding1 == cm.padding1
+        assert cm2.padding2 == cm.padding2
 
 
 # =============================================================================
@@ -2914,8 +2918,12 @@ class TestSaveOutputConflict:
             'weapon': None, 'armor': None,
             'marks': None, 'cards': None, 'sub_morsels': None,
         })()
+        original_plrs = bytes(plrs_data)
         with pytest.raises(SystemExit):
             cmd_edit(args)
+        # PLRS must NOT have been written before the conflict error
+        with open(plrs_file, 'rb') as f:
+            assert f.read() == original_plrs, "PLRS was modified before conflict check"
 
 
 # =============================================================================

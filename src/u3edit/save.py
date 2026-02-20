@@ -380,14 +380,6 @@ def cmd_edit(args) -> None:
             print(f"Modified PLRS slot {plrs_slot}:")
             char.display(plrs_slot)
 
-            if not dry_run:
-                plrs_output = args.output if args.output else plrs_path
-                if do_backup and (not args.output or args.output == plrs_path):
-                    backup_file(plrs_path)
-                with open(plrs_output, 'wb') as f:
-                    f.write(plrs_data)
-                print(f"Saved PLRS to {plrs_output}")
-
     if not prty_modified and not plrs_modified:
         print("No modifications specified.")
         return
@@ -398,6 +390,15 @@ def cmd_edit(args) -> None:
               "write each file in place, or edit them in separate commands.",
               file=sys.stderr)
         sys.exit(1)
+
+    # Write PLRS first (after conflict check above ensures --output is safe)
+    if plrs_modified and not dry_run:
+        plrs_output = args.output if args.output else plrs_path
+        if do_backup and (not args.output or args.output == plrs_path):
+            backup_file(plrs_path)
+        with open(plrs_output, 'wb') as f:
+            f.write(plrs_data)
+        print(f"Saved PLRS to {plrs_output}")
 
     if prty_modified:
         do_validate = getattr(args, 'validate', False)
