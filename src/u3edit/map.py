@@ -382,11 +382,15 @@ def cmd_import(args) -> None:
     if is_dungeon and 'levels' in jdata:
         for level_data in jdata['levels']:
             lvl = level_data.get('level', 1) - 1
+            if lvl < 0 or lvl >= len(data) // 256:
+                continue
             tiles = level_data.get('tiles', [])
             base = lvl * 256
             for y, row in enumerate(tiles[:16]):
                 for x, name in enumerate(row[:16]):
-                    data[base + y * 16 + x] = resolve_tile(name)
+                    offset = base + y * 16 + x
+                    if offset < len(data):
+                        data[offset] = resolve_tile(name)
     else:
         tiles = jdata.get('tiles', [])
         width = jdata.get('width', 64)

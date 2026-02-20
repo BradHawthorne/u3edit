@@ -2748,6 +2748,54 @@ class TestMapJsonRoundTrip:
             result = f.read()
         assert result == sample_dungeon_bytes
 
+    def test_dungeon_import_oob_level_ignored(self, tmp_dir, sample_dungeon_bytes):
+        """Import with out-of-bounds level number should skip, not crash."""
+        from u3edit.map import cmd_import
+        map_file = os.path.join(tmp_dir, 'MAPD#061000')
+        with open(map_file, 'wb') as f:
+            f.write(sample_dungeon_bytes)
+        # JSON with level 9 (out of bounds for 8-level dungeon) and level 1 (valid)
+        jdata = {
+            'type': 'dungeon',
+            'levels': [
+                {'level': 9, 'tiles': [['X'] * 16] * 16},  # OOB, should be skipped
+                {'level': 1, 'tiles': [['#'] * 16] * 16},   # Valid
+            ]
+        }
+        json_path = os.path.join(tmp_dir, 'dung.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': map_file, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        cmd_import(args)  # Should not raise IndexError
+        with open(map_file, 'rb') as f:
+            result = f.read()
+        assert len(result) == len(sample_dungeon_bytes)
+
+    def test_dungeon_import_negative_level_ignored(self, tmp_dir, sample_dungeon_bytes):
+        """Import with negative level number should skip, not corrupt data."""
+        from u3edit.map import cmd_import
+        map_file = os.path.join(tmp_dir, 'MAPD#061000')
+        with open(map_file, 'wb') as f:
+            f.write(sample_dungeon_bytes)
+        jdata = {
+            'type': 'dungeon',
+            'levels': [{'level': -1, 'tiles': [['X'] * 16] * 16}]
+        }
+        json_path = os.path.join(tmp_dir, 'dung.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': map_file, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        cmd_import(args)  # Should not crash or corrupt
+        with open(map_file, 'rb') as f:
+            result = f.read()
+        assert result == sample_dungeon_bytes  # Unchanged — level skipped
+
     def test_resolve_tile_handles_name_strings(self):
         """The resolve_tile function handles multi-char tile names."""
         from u3edit.constants import TILE_NAMES_REVERSE
