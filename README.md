@@ -478,7 +478,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-714 tests covering all modules with synthesized game data (no real game files needed).
+717 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 

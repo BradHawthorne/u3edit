@@ -503,6 +503,70 @@ class TestTlkImport:
             assert r1 == r2
 
 
+class TestTlkExtractBuild:
+    """Integration tests for tlk extract → build round-trip."""
+
+    def test_extract_build_roundtrip(self, tmp_path, sample_tlk_bytes):
+        """extract → build produces identical binary."""
+        from u3edit.tlk import cmd_extract, cmd_build
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(sample_tlk_bytes)
+
+        # Extract to text
+        txt_path = str(tmp_path / 'tlk.txt')
+        args = type('Args', (), {'input': tlk_path, 'output': txt_path})()
+        cmd_extract(args)
+        assert os.path.exists(txt_path)
+
+        # Build back to binary
+        out_path = str(tmp_path / 'TLKA_REBUILT')
+        args = type('Args', (), {'input': txt_path, 'output': out_path})()
+        cmd_build(args)
+
+        # Verify binary matches original
+        with open(out_path, 'rb') as f:
+            rebuilt = f.read()
+        assert rebuilt == sample_tlk_bytes
+
+    def test_extract_format(self, tmp_path, sample_tlk_bytes):
+        """Extract produces readable text with record headers and separators."""
+        from u3edit.tlk import cmd_extract
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(sample_tlk_bytes)
+
+        txt_path = str(tmp_path / 'tlk.txt')
+        args = type('Args', (), {'input': tlk_path, 'output': txt_path})()
+        cmd_extract(args)
+
+        with open(txt_path, 'r') as f:
+            text = f.read()
+        assert '# Record 0' in text
+        assert 'HELLO ADVENTURER' in text
+        assert '---' in text  # Record separator
+        assert 'WELCOME' in text
+        assert 'TO MY SHOP' in text
+
+    def test_build_multiline_records(self, tmp_path):
+        """Build correctly encodes multi-line records with $FF line breaks."""
+        from u3edit.tlk import cmd_build
+        txt_path = str(tmp_path / 'tlk.txt')
+        with open(txt_path, 'w') as f:
+            f.write('# Record 0\nLINE ONE\nLINE TWO\n---\n# Record 1\nSINGLE\n')
+
+        out_path = str(tmp_path / 'TLK_OUT')
+        args = type('Args', (), {'input': txt_path, 'output': out_path})()
+        cmd_build(args)
+
+        with open(out_path, 'rb') as f:
+            data = f.read()
+        # Record 0: "LINE ONE" + $FF + "LINE TWO" + $00
+        assert data[0] == ord('L') | 0x80
+        assert 0xFF in data  # Line break between records
+        assert data[-1] == 0x00  # Final record terminator
+
+
 # =============================================================================
 # Save PLRS editing
 # =============================================================================
