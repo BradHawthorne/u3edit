@@ -75,8 +75,9 @@ class Character:
     @marks.setter
     def marks(self, names: list[str]) -> None:
         b = self.raw[CHAR_MARKS_CARDS] & 0x0F  # Keep cards
+        lower_names = [n.lower() for n in names]
         for bit, name in MARKS_BITS.items():
-            if name in names:
+            if name.lower() in lower_names:
                 b |= (1 << bit)
         self.raw[CHAR_MARKS_CARDS] = b
 
@@ -88,8 +89,9 @@ class Character:
     @cards.setter
     def cards(self, names: list[str]) -> None:
         b = self.raw[CHAR_MARKS_CARDS] & 0xF0  # Keep marks
+        lower_names = [n.lower() for n in names]
         for bit, name in CARDS_BITS.items():
-            if name in names:
+            if name.lower() in lower_names:
                 b |= (1 << bit)
         self.raw[CHAR_MARKS_CARDS] = b
 

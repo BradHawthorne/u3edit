@@ -4435,3 +4435,52 @@ class TestImportMalformedInventory:
             'output': None, 'backup': False, 'dry_run': False,
         })()
         save_cmd_import(args)  # should not raise TypeError/AttributeError
+
+
+# =============================================================================
+# Fix: marks/cards setter case sensitivity (silent data loss)
+# =============================================================================
+
+class TestMarksCaseInsensitive:
+    """Verify marks/cards setters accept any casing."""
+
+    def test_marks_lowercase(self, sample_character_bytes):
+        """Setting marks with lowercase names should work."""
+        from u3edit.roster import Character
+        char = Character(bytearray(sample_character_bytes))
+        char.marks = ['fire', 'force']
+        assert 'Fire' in char.marks
+        assert 'Force' in char.marks
+
+    def test_marks_uppercase(self, sample_character_bytes):
+        """Setting marks with uppercase names should work."""
+        from u3edit.roster import Character
+        char = Character(bytearray(sample_character_bytes))
+        char.marks = ['KINGS', 'SNAKE']
+        assert 'Kings' in char.marks
+        assert 'Snake' in char.marks
+
+    def test_cards_lowercase(self, sample_character_bytes):
+        """Setting cards with lowercase names should work."""
+        from u3edit.roster import Character
+        char = Character(bytearray(sample_character_bytes))
+        char.cards = ['death', 'sol', 'love', 'moons']
+        assert len(char.cards) == 4
+
+    def test_marks_mixed_case(self, sample_character_bytes):
+        """Setting marks with mixed casing should work."""
+        from u3edit.roster import Character
+        char = Character(bytearray(sample_character_bytes))
+        char.marks = ['fIrE', 'FoRcE']
+        assert 'Fire' in char.marks
+        assert 'Force' in char.marks
+
+    def test_marks_preserves_cards(self, sample_character_bytes):
+        """Setting marks should not clear existing cards."""
+        from u3edit.roster import Character
+        char = Character(bytearray(sample_character_bytes))
+        char.cards = ['Death', 'Sol']
+        char.marks = ['kings']
+        assert 'Kings' in char.marks
+        assert 'Death' in char.cards
+        assert 'Sol' in char.cards
