@@ -11,7 +11,7 @@ u3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides CL
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 425 tests
+pytest -v                            # Run all 452 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 u3edit roster view path/to/ROST      # CLI usage pattern
@@ -75,11 +75,12 @@ Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tl
 - **`--backup`**: Creates `.bak` copy before overwriting (edit/import commands). Uses `fileutil.backup_file()`.
 - **`--dry-run`**: Shows changes without writing (edit commands on roster, bestiary, tlk, save, map).
 - **`--validate`**: Roster validation — checks BCD integrity, race stat caps, class equipment limits.
-- **`--all`**: Bulk roster editing — applies edits to all non-empty slots (mutually exclusive with `--slot`).
+- **`--all`**: Bulk editing — applies edits to all non-empty slots/monsters (roster: `--slot`/`--all`, bestiary: `--monster`/`--all`).
 - **`import`**: Every editable module supports `import <binary_file> <json_file>` to apply JSON data.
 - **`map set/fill/replace/find`**: Map CLI editing — set tiles, fill regions, replace tile types, search.
 - **`tlk search`**: Text search across TLK dialog files. Case-insensitive by default, `--regex` for regex patterns.
 - **`roster check-progress`**: Endgame readiness checker — marks, cards, exotic gear, party status.
+- **`bestiary edit`**: Named flag toggles (`--undead`, `--ranged`, `--magic-user`, `--boss`, `--poison`, `--sleep`, `--negate`, `--teleport`, `--divide`, `--resistant` + `--no-*` counterparts), `--type Name` for monster type by name, `--all` for bulk editing.
 - **`save edit --plrs-slot`**: Edit active characters in PLRS file via save subcommand.
 - **`shapes view/export/edit/import`**: SHPS character set tile graphics — glyph rendering, PNG export (stdlib, no Pillow), HGR color logic, SHP overlay inline string extraction, SHPS embedded code guard at $9F9, TEXT detection as HGR bitmap.
 - **`sound view/edit/import`**: SOSA/SOSM/MBS sound data files — hex dump, AY-3-8910 register parsing and music stream decoding (notes, tempo, loops) for MBS.

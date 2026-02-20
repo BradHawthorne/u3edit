@@ -307,6 +307,23 @@ MON_ATTR_NAMES = [
     'Ability 1', 'Ability 2',
 ]
 
+# Flag bitmasks (flags1 byte, row 2)
+# Bits 2-3 encode a 3-way type: 0x04=Undead, 0x08=Ranged, 0x0C=Magic User
+MON_FLAG1_UNDEAD = 0x04
+MON_FLAG1_RANGED = 0x08
+MON_FLAG1_MAGIC_USER = 0x0C  # bits 2+3 both set
+MON_FLAG1_BOSS = 0x80
+
+# Ability bitmasks (ability1 byte, row 8)
+MON_ABIL1_POISON = 0x01
+MON_ABIL1_SLEEP = 0x02
+MON_ABIL1_NEGATE = 0x04
+MON_ABIL1_TELEPORT = 0x40
+MON_ABIL1_DIVIDE = 0x80
+
+# Ability bitmasks (ability2 byte, row 9)
+MON_ABIL2_RESISTANT = 0xC0
+
 # Monster sprite names by tile ID (tile1 value from MON file).
 # In Ultima III, monster identity is determined by the tile sprite index.
 # Encounter groups may share the same sprite for all members.
@@ -336,6 +353,9 @@ MONSTER_NAMES = {
     0x7C: 'Exodus',
     0xFC: 'Devil',
 }
+
+# Reverse lookup: name -> tile1 value (for --type name editing)
+MONSTER_NAMES_REVERSE = {name.lower(): tile for tile, name in MONSTER_NAMES.items()}
 
 # Context-aware monster group names for each MON encounter file.
 # These provide better names when the same sprite tile is used for all
