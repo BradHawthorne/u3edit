@@ -110,17 +110,30 @@ class Character:
     def in_party(self) -> bool:
         return self.raw[CHAR_IN_PARTY] == 0xFF
 
+    @in_party.setter
+    def in_party(self, val: bool) -> None:
+        self.raw[CHAR_IN_PARTY] = 0xFF if val else 0x00
+
     @property
     def status(self) -> str:
         return STATUS_CODES.get(self.raw[CHAR_STATUS], f'?({self.raw[CHAR_STATUS]:02X})')
 
     @status.setter
-    def status(self, code: str) -> None:
-        code = code.upper()
+    def status(self, code) -> None:
+        if isinstance(code, int):
+            self.raw[CHAR_STATUS] = code & 0xFF
+            return
+        code_str = str(code).upper()
         for k, v in STATUS_CODES.items():
-            if v[0].upper() == code or v.upper() == code:
+            if v[0].upper() == code_str or v.upper() == code_str:
                 self.raw[CHAR_STATUS] = k
                 return
+        # Raw int/hex string fallback for total conversions
+        try:
+            self.raw[CHAR_STATUS] = int(str(code), 0) & 0xFF
+            return
+        except ValueError:
+            pass
         raise ValueError(f'Unknown status: {code}')
 
     @property
@@ -160,15 +173,24 @@ class Character:
         return RACES.get(self.raw[CHAR_RACE], f'?({self.raw[CHAR_RACE]:02X})')
 
     @race.setter
-    def race(self, code: str) -> None:
-        code = code.upper()
-        if code in RACE_CODES:
-            self.raw[CHAR_RACE] = RACE_CODES[code]
+    def race(self, code) -> None:
+        if isinstance(code, int):
+            self.raw[CHAR_RACE] = code & 0xFF
+            return
+        code_str = str(code).upper()
+        if code_str in RACE_CODES:
+            self.raw[CHAR_RACE] = RACE_CODES[code_str]
             return
         for k, v in RACES.items():
-            if v.upper() == code:
+            if v.upper() == code_str:
                 self.raw[CHAR_RACE] = k
                 return
+        # Raw int/hex string fallback for total conversions
+        try:
+            self.raw[CHAR_RACE] = int(str(code), 0) & 0xFF
+            return
+        except ValueError:
+            pass
         raise ValueError(f'Unknown race: {code}')
 
     @property
@@ -176,15 +198,24 @@ class Character:
         return CLASSES.get(self.raw[CHAR_CLASS], f'?({self.raw[CHAR_CLASS]:02X})')
 
     @char_class.setter
-    def char_class(self, code: str) -> None:
-        code = code.upper()
-        if code in CLASS_CODES:
-            self.raw[CHAR_CLASS] = CLASS_CODES[code]
+    def char_class(self, code) -> None:
+        if isinstance(code, int):
+            self.raw[CHAR_CLASS] = code & 0xFF
+            return
+        code_str = str(code).upper()
+        if code_str in CLASS_CODES:
+            self.raw[CHAR_CLASS] = CLASS_CODES[code_str]
             return
         for k, v in CLASSES.items():
-            if v.upper() == code:
+            if v.upper() == code_str:
                 self.raw[CHAR_CLASS] = k
                 return
+        # Raw int/hex string fallback for total conversions
+        try:
+            self.raw[CHAR_CLASS] = int(str(code), 0) & 0xFF
+            return
+        except ValueError:
+            pass
         raise ValueError(f'Unknown class: {code}')
 
     @property
@@ -238,6 +269,10 @@ class Character:
     def sub_morsels(self) -> int:
         return bcd_to_int(self.raw[CHAR_SUB_MORSELS])
 
+    @sub_morsels.setter
+    def sub_morsels(self, val: int) -> None:
+        self.raw[CHAR_SUB_MORSELS] = int_to_bcd(val)
+
     @property
     def food(self) -> int:
         return bcd16_to_int(self.raw[CHAR_FOOD_HI], self.raw[CHAR_FOOD_LO])
@@ -286,7 +321,7 @@ class Character:
 
     @equipped_armor.setter
     def equipped_armor(self, val: int) -> None:
-        self.raw[CHAR_WORN_ARMOR] = max(0, min(len(ARMORS) - 1, val))
+        self.raw[CHAR_WORN_ARMOR] = max(0, min(255, val))
 
     @property
     def equipped_weapon(self) -> str:
@@ -295,7 +330,7 @@ class Character:
 
     @equipped_weapon.setter
     def equipped_weapon(self, val: int) -> None:
-        self.raw[CHAR_READIED_WEAPON] = max(0, min(len(WEAPONS) - 1, val))
+        self.raw[CHAR_READIED_WEAPON] = max(0, min(255, val))
 
     @property
     def armor_inventory(self) -> dict[str, int]:
@@ -343,6 +378,7 @@ class Character:
             'gold': self.gold, 'food': self.food,
             'gems': self.gems, 'keys': self.keys,
             'powders': self.powders, 'torches': self.torches,
+            'sub_morsels': self.sub_morsels,
             'marks': self.marks, 'cards': self.cards,
             'weapon': self.equipped_weapon,
             'armor': self.equipped_armor,
@@ -521,6 +557,12 @@ def _apply_edits(char: Character, args) -> bool:
         char.marks = [m.strip() for m in args.marks.split(',')]; modified = True
     if args.cards is not None:
         char.cards = [c.strip() for c in args.cards.split(',')]; modified = True
+    if getattr(args, 'in_party', None):
+        char.in_party = True; modified = True
+    if getattr(args, 'not_in_party', None):
+        char.in_party = False; modified = True
+    if getattr(args, 'sub_morsels', None) is not None:
+        char.sub_morsels = args.sub_morsels; modified = True
     return modified
 
 
@@ -729,6 +771,10 @@ def cmd_import(args) -> None:
             char.marks = entry['marks']
         if 'cards' in entry:
             char.cards = entry['cards']
+        if 'in_party' in entry:
+            char.in_party = entry['in_party']
+        if 'sub_morsels' in entry:
+            char.sub_morsels = entry['sub_morsels']
         if 'weapon' in entry:
             try:
                 char.equipped_weapon = WEAPONS.index(entry['weapon'])
@@ -903,6 +949,12 @@ def _add_edit_args(p) -> None:
                    help='Set armor inventory count (index 1-7, count 0-99)')
     p.add_argument('--marks', help='Marks (comma-separated: Kings,Snake,Fire,Force)')
     p.add_argument('--cards', help='Cards (comma-separated: Death,Sol,Love,Moons)')
+    party_group = p.add_mutually_exclusive_group()
+    party_group.add_argument('--in-party', action='store_true', default=None,
+                             help='Set character as in-party')
+    party_group.add_argument('--not-in-party', action='store_true', default=None,
+                             help='Remove character from party')
+    p.add_argument('--sub-morsels', type=int, help='Sub-morsels food fraction (0-99)')
 
 
 def register_parser(subparsers) -> None:

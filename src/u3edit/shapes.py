@@ -307,6 +307,54 @@ def extract_overlay_strings(data: bytes) -> list[dict]:
     return strings
 
 
+def encode_overlay_string(text: str) -> bytearray:
+    """Encode ASCII text as high-ASCII bytes for SHP overlay inline strings.
+
+    Newlines (\\n) become $FF (Apple II line break).
+    Terminates with $00.
+    """
+    result = bytearray()
+    for ch in text:
+        if ch == '\n':
+            result.append(0xFF)
+        else:
+            result.append(ord(ch.upper()) | 0x80)
+    result.append(0x00)  # null terminator
+    return result
+
+
+def replace_overlay_string(data: bytearray, text_offset: int, text_end: int,
+                           new_text: str) -> bytearray:
+    """Replace an inline string in SHP overlay code.
+
+    The new encoded text (including null terminator) must fit within the
+    original text region [text_offset, text_end]. If shorter, pads with $00.
+    If longer, raises ValueError showing the maximum length.
+
+    Returns the modified data.
+    """
+    # text_end points at the original $00 terminator
+    max_bytes = text_end - text_offset + 1
+    encoded = encode_overlay_string(new_text)
+
+    if len(encoded) > max_bytes:
+        max_chars = max_bytes - 1  # subtract null terminator
+        raise ValueError(
+            f"New text ({len(encoded)} bytes incl. terminator) exceeds "
+            f"available space ({max_bytes} bytes at offset "
+            f"0x{text_offset:04X}). Maximum ~{max_chars} characters."
+        )
+
+    result = bytearray(data)
+    # Write encoded text
+    result[text_offset:text_offset + len(encoded)] = encoded
+    # Null-pad remaining space
+    for i in range(text_offset + len(encoded), text_end + 1):
+        if i < len(result):
+            result[i] = 0x00
+    return result
+
+
 def check_shps_code_region(data: bytes) -> bool:
     """Check if the SHPS embedded code region at $9F9 is non-zero."""
     if len(data) < SHPS_CODE_OFFSET + SHPS_CODE_SIZE:
@@ -619,7 +667,7 @@ def cmd_edit(args) -> None:
 
 
 def cmd_import(args) -> None:
-    """Import glyphs from JSON."""
+    """Import glyphs or overlay strings from JSON."""
     do_backup = getattr(args, 'backup', False)
     dry_run = getattr(args, 'dry_run', False)
 
@@ -630,8 +678,32 @@ def cmd_import(args) -> None:
     with open(args.file, 'rb') as f:
         data = bytearray(f.read())
 
-    # Accept format with 'tiles' list or direct glyph list
-    if 'tiles' in jdata:
+    count = 0
+
+    # Overlay string replacement
+    if isinstance(jdata, dict) and 'strings' in jdata:
+        strings_in_file = extract_overlay_strings(data)
+        offset_map = {s['text_offset']: s for s in strings_in_file}
+        for entry in jdata['strings']:
+            offset = entry.get('offset')
+            new_text = entry.get('text')
+            if offset is None or new_text is None:
+                continue
+            if offset not in offset_map:
+                print(f"Warning: No string at offset 0x{offset:04X}, skipping",
+                      file=sys.stderr)
+                continue
+            s = offset_map[offset]
+            try:
+                data = replace_overlay_string(
+                    data, s['text_offset'], s['text_end'], new_text)
+                count += 1
+            except ValueError as e:
+                print(f"Warning: {e}, skipping", file=sys.stderr)
+        print(f"Import: {count} string(s) updated")
+
+    # Glyph import — 'tiles' list or direct glyph list
+    elif isinstance(jdata, dict) and 'tiles' in jdata:
         for tile in jdata['tiles']:
             for frame in tile.get('frames', []):
                 idx = frame['index']
@@ -640,8 +712,8 @@ def cmd_import(args) -> None:
                 if offset + GLYPH_SIZE <= len(data):
                     data[offset:offset + GLYPH_SIZE] = bytes(raw)
         count = sum(len(t.get('frames', [])) for t in jdata['tiles'])
+        print(f"Import: {count} glyph(s) to update")
     elif isinstance(jdata, list):
-        count = 0
         for entry in jdata:
             idx = entry['index']
             raw = entry['raw']
@@ -649,11 +721,10 @@ def cmd_import(args) -> None:
             if offset + GLYPH_SIZE <= len(data):
                 data[offset:offset + GLYPH_SIZE] = bytes(raw)
                 count += 1
+        print(f"Import: {count} glyph(s) to update")
     else:
         print("Error: Unrecognized JSON format", file=sys.stderr)
         sys.exit(1)
-
-    print(f"Import: {count} glyph(s) to update")
 
     if dry_run:
         print("Dry run - no changes written.")
@@ -666,7 +737,57 @@ def cmd_import(args) -> None:
 
     with open(output, 'wb') as f:
         f.write(bytes(data))
-    print(f"Imported {count} glyphs to {output}")
+    print(f"Imported to {output}")
+
+
+def cmd_edit_string(args) -> None:
+    """Edit an inline string in an SHP overlay file."""
+    with open(args.file, 'rb') as f:
+        data = bytearray(f.read())
+
+    fmt = detect_format(data, args.file)
+    if fmt['type'] != 'overlay':
+        print(f"Error: {os.path.basename(args.file)} is not an SHP overlay file",
+              file=sys.stderr)
+        sys.exit(1)
+
+    strings = extract_overlay_strings(data)
+    target = None
+    for s in strings:
+        if s['text_offset'] == args.offset:
+            target = s
+            break
+
+    if target is None:
+        print(f"Error: No inline string at offset 0x{args.offset:04X}",
+              file=sys.stderr)
+        offsets = ', '.join(f'0x{s["text_offset"]:04X}' for s in strings)
+        print(f"  Available offsets: {offsets}", file=sys.stderr)
+        sys.exit(1)
+
+    old_text = target['text'].replace('\n', ' / ')
+    print(f"String at 0x{args.offset:04X}:")
+    print(f"  Old: {old_text}")
+    print(f"  New: {args.text}")
+
+    try:
+        data = replace_overlay_string(
+            data, target['text_offset'], target['text_end'], args.text)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, 'dry_run', False):
+        print("Dry run - no changes written.")
+        return
+
+    if getattr(args, 'backup', False):
+        backup_file(args.file)
+
+    output = args.output if args.output else args.file
+    with open(output, 'wb') as f:
+        f.write(bytes(data))
+    print(f"Updated string in {output}")
 
 
 def cmd_info(args) -> None:
@@ -748,6 +869,18 @@ def register_parser(subparsers) -> None:
     p_info.add_argument('--json', action='store_true')
     p_info.add_argument('--output', '-o', help='Output file')
 
+    p_estr = sub.add_parser('edit-string',
+                            help='Edit inline string in SHP overlay')
+    p_estr.add_argument('file', help='SHP overlay file (SHP0-SHP7)')
+    p_estr.add_argument('--offset', type=lambda x: int(x, 0), required=True,
+                        help='Text offset (hex OK, e.g., 0x1A)')
+    p_estr.add_argument('--text', required=True, help='New text string')
+    p_estr.add_argument('--output', '-o', help='Output file')
+    p_estr.add_argument('--backup', action='store_true',
+                        help='Create .bak backup before overwrite')
+    p_estr.add_argument('--dry-run', action='store_true',
+                        help='Show changes without writing')
+
 
 def dispatch(args) -> None:
     """Dispatch shapes subcommand."""
@@ -762,8 +895,10 @@ def dispatch(args) -> None:
         cmd_import(args)
     elif cmd == 'info':
         cmd_info(args)
+    elif cmd == 'edit-string':
+        cmd_edit_string(args)
     else:
-        print("Usage: u3edit shapes {view|export|edit|import|info} ...",
+        print("Usage: u3edit shapes {view|export|edit|import|info|edit-string} ...",
               file=sys.stderr)
 
 
@@ -811,6 +946,18 @@ def main() -> None:
     p_info.add_argument('file', help='Shape file')
     p_info.add_argument('--json', action='store_true', help='Output as JSON')
     p_info.add_argument('--output', '-o', help='Output file')
+
+    p_estr = sub.add_parser('edit-string',
+                            help='Edit inline string in SHP overlay')
+    p_estr.add_argument('file', help='SHP overlay file (SHP0-SHP7)')
+    p_estr.add_argument('--offset', type=lambda x: int(x, 0), required=True,
+                        help='Text offset (hex OK, e.g., 0x1A)')
+    p_estr.add_argument('--text', required=True, help='New text string')
+    p_estr.add_argument('--output', '-o', help='Output file')
+    p_estr.add_argument('--backup', action='store_true',
+                        help='Create .bak backup before overwrite')
+    p_estr.add_argument('--dry-run', action='store_true',
+                        help='Show changes without writing')
 
     args = parser.parse_args()
     dispatch(args)

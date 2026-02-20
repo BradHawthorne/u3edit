@@ -16,7 +16,9 @@ from u3edit.constants import (
     CHAR_RACE, CHAR_CLASS, CHAR_STATUS, CHAR_GENDER,
     CHAR_NAME_OFFSET, CHAR_READIED_WEAPON, CHAR_WORN_ARMOR,
     CHAR_HP_HI, CHAR_HP_LO, CHAR_MARKS_CARDS,
+    CHAR_IN_PARTY, CHAR_SUB_MORSELS,
     TILE_CHARS_REVERSE, DUNGEON_TILE_CHARS_REVERSE,
+    PRTY_OFF_SENTINEL, PRTY_OFF_TRANSPORT,
 )
 from u3edit.fileutil import backup_file
 from u3edit.roster import (
@@ -1895,3 +1897,271 @@ class TestTextImportDryRun:
             after = f.read()
         # First bytes should now be "WORLD" in high-ASCII
         assert after[0] == ord('W') | 0x80
+
+
+# =============================================================================
+# Fix 1: roster.py — in_party, sub_morsels setters + total conversion
+# =============================================================================
+
+class TestInPartySetter:
+    def test_set_true(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.in_party = True
+        assert char.raw[CHAR_IN_PARTY] == 0xFF
+        assert char.in_party is True
+
+    def test_set_false(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.raw[CHAR_IN_PARTY] = 0xFF  # start active
+        char.in_party = False
+        assert char.raw[CHAR_IN_PARTY] == 0x00
+        assert char.in_party is False
+
+
+class TestSubMorselsSetter:
+    def test_set_value(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.sub_morsels = 42
+        assert char.sub_morsels == 42
+
+    def test_clamp_to_99(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.sub_morsels = 150
+        assert char.sub_morsels == 99
+
+
+class TestRosterTotalConversion:
+    def test_equipped_armor_beyond_vanilla(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_armor = 20
+        assert char.raw[CHAR_WORN_ARMOR] == 20
+
+    def test_equipped_weapon_beyond_vanilla(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_weapon = 200
+        assert char.raw[CHAR_READIED_WEAPON] == 200
+
+    def test_status_raw_int(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.status = 0x58  # 'X' — non-standard
+        assert char.raw[CHAR_STATUS] == 0x58
+
+    def test_race_raw_int(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.race = 0x5A  # non-standard
+        assert char.raw[CHAR_RACE] == 0x5A
+
+    def test_class_raw_int(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.char_class = 0x5B  # non-standard
+        assert char.raw[CHAR_CLASS] == 0x5B
+
+    def test_status_hex_string(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.status = '0x58'
+        assert char.raw[CHAR_STATUS] == 0x58
+
+
+class TestInPartyCliArgs:
+    def test_in_party_flag(self):
+        import types
+        from u3edit.roster import _apply_edits
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        args = types.SimpleNamespace(
+            name=None, str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            status=None, race=None, class_=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None,
+            in_party=True, not_in_party=False, sub_morsels=None,
+        )
+        changed = _apply_edits(char, args)
+        assert changed
+        assert char.in_party is True
+
+    def test_not_in_party_flag(self):
+        import types
+        from u3edit.roster import _apply_edits
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.raw[CHAR_IN_PARTY] = 0xFF
+        args = types.SimpleNamespace(
+            name=None, str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            status=None, race=None, class_=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None,
+            in_party=False, not_in_party=True, sub_morsels=None,
+        )
+        changed = _apply_edits(char, args)
+        assert changed
+        assert char.in_party is False
+
+
+class TestRosterImportNewFields:
+    def test_round_trip(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.name = 'TEST'
+        char.in_party = True
+        char.sub_morsels = 50
+        d = char.to_dict()
+        assert d['in_party'] is True
+        assert d['sub_morsels'] == 50
+
+
+# =============================================================================
+# Fix 2: save.py — sentinel setter + transport fix
+# =============================================================================
+
+class TestSentinelSetter:
+    def test_set_active(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.sentinel = 0xFF
+        assert party.sentinel == 0xFF
+
+    def test_raw_byte_masking(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.sentinel = 0x1FF  # should mask to 0xFF
+        assert party.sentinel == 0xFF
+
+
+class TestTransportSetterFix:
+    def test_named_value(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.transport = 'horse'
+        assert party.raw[PRTY_OFF_TRANSPORT] == 0x0A
+
+    def test_raw_int(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.transport = 0x0A
+        assert party.raw[PRTY_OFF_TRANSPORT] == 0x0A
+
+    def test_hex_string(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.transport = '0x0B'
+        assert party.raw[PRTY_OFF_TRANSPORT] == 0x0B
+
+    def test_unknown_raises(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        with pytest.raises(ValueError, match='Unknown transport'):
+            party.transport = 'hovercraft'
+
+
+class TestSaveImportSentinel:
+    def test_to_dict_has_sentinel(self):
+        data = bytearray(PRTY_FILE_SIZE)
+        data[PRTY_OFF_SENTINEL] = 0xFF
+        party = PartyState(data)
+        d = party.to_dict()
+        assert d['sentinel'] == 0xFF
+
+
+# =============================================================================
+# Fix 3: shapes.py — SHP overlay string editing
+# =============================================================================
+
+from u3edit.shapes import (
+    encode_overlay_string, replace_overlay_string,
+    extract_overlay_strings,
+)
+
+_JSR_46BA_BYTES = bytes([0x20, 0xBA, 0x46])
+
+
+class TestEncodeOverlayString:
+    def test_basic(self):
+        encoded = encode_overlay_string('HI')
+        assert encoded == bytearray([ord('H') | 0x80, ord('I') | 0x80, 0x00])
+
+    def test_newline(self):
+        encoded = encode_overlay_string('A\nB')
+        assert encoded == bytearray([ord('A') | 0x80, 0xFF, ord('B') | 0x80, 0x00])
+
+
+class TestReplaceOverlayString:
+    def _make_shp(self, text_bytes):
+        """Build minimal SHP-like data with one inline string."""
+        # JSR $46BA + text + $00 + padding code byte
+        data = bytearray(b'\x00\x00')  # prefix
+        data += _JSR_46BA_BYTES
+        data += text_bytes
+        data += bytearray(b'\x00')  # terminator
+        data += bytearray(b'\xEA\xEA')  # NOP code after string
+        return data
+
+    def test_exact_fit(self):
+        original_text = bytearray([ord('H') | 0x80, ord('I') | 0x80])
+        data = self._make_shp(original_text)
+        strings = extract_overlay_strings(data)
+        assert len(strings) == 1
+        s = strings[0]
+        result = replace_overlay_string(data, s['text_offset'], s['text_end'], 'AB')
+        new_strings = extract_overlay_strings(result)
+        assert new_strings[0]['text'] == 'AB'
+
+    def test_shorter_pads_with_null(self):
+        original_text = bytearray([ord('H') | 0x80, ord('E') | 0x80,
+                                   ord('L') | 0x80])
+        data = self._make_shp(original_text)
+        strings = extract_overlay_strings(data)
+        s = strings[0]
+        result = replace_overlay_string(data, s['text_offset'], s['text_end'], 'A')
+        # The original region should have A + nulls, code bytes preserved
+        assert result[s['text_offset']] == ord('A') | 0x80
+        assert result[s['text_offset'] + 1] == 0x00
+        # Code bytes after string region should be untouched
+        assert result[-2:] == bytearray(b'\xEA\xEA')
+
+    def test_too_long_raises(self):
+        original_text = bytearray([ord('H') | 0x80, ord('I') | 0x80])
+        data = self._make_shp(original_text)
+        strings = extract_overlay_strings(data)
+        s = strings[0]
+        with pytest.raises(ValueError, match='exceeds available space'):
+            replace_overlay_string(
+                data, s['text_offset'], s['text_end'], 'TOOLONGTEXT')
+
+
+class TestOverlayStringRoundTrip:
+    def test_extract_replace_extract(self):
+        # Build SHP with "SHOP" inline string
+        data = bytearray(b'\xEA')  # prefix
+        data += _JSR_46BA_BYTES
+        for ch in 'SHOP':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)  # terminator
+        data += bytearray(b'\x60')  # RTS after
+
+        strings = extract_overlay_strings(data)
+        assert strings[0]['text'] == 'SHOP'
+
+        s = strings[0]
+        data = replace_overlay_string(data, s['text_offset'], s['text_end'], 'ARMS')
+        strings2 = extract_overlay_strings(data)
+        assert strings2[0]['text'] == 'ARMS'
+        # RTS preserved
+        assert data[-1] == 0x60
+
+
+# =============================================================================
+# Fix 3: CLI parity for edit-string
+# =============================================================================
+
+class TestCliParityShapesEditString:
+    def test_help_shows_edit_string(self):
+        import subprocess
+        import sys
+        result = subprocess.run(
+            [sys.executable, '-m', 'u3edit.shapes', 'edit-string', '--help'],
+            capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0
+        assert '--offset' in result.stdout
+        assert '--text' in result.stdout

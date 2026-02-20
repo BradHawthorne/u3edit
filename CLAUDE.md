@@ -11,7 +11,7 @@ u3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides CL
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 595 tests
+pytest -v                            # Run all 622 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 u3edit roster view path/to/ROST      # CLI usage pattern
@@ -85,9 +85,10 @@ Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tl
 - **`roster check-progress`**: Endgame readiness checker — marks, cards, exotic gear, party status.
 - **`diff`**: Compare two game files or directories — text/JSON/summary output, auto-detects file types, supports all data formats (roster, bestiary, combat, save, maps, special, TLK).
 - **`bestiary edit`**: Named flag toggles (`--undead`, `--ranged`, `--magic-user`, `--boss`, `--poison`, `--sleep`, `--negate`, `--teleport`, `--divide`, `--resistant` + `--no-*` counterparts), `--type Name` for monster type by name, `--all` for bulk editing.
-- **`save edit --plrs-slot`**: Edit active characters in PLRS file via save subcommand.
+- **`save edit --plrs-slot`**: Edit active characters in PLRS file via save subcommand. `--sentinel` sets the party sentinel byte (0xFF=active). `--transport` accepts named values or raw int/hex for total conversions.
+- **`roster edit --in-party/--not-in-party`**: Toggle character's in-party status. `--sub-morsels` sets food fraction (0-99).
 - **`text edit --record/--text`**: Per-record CLI editing for TEXT game strings (uppercased to match engine). Falls through to TUI when no CLI args provided.
-- **`shapes view/export/edit/import`**: SHPS character set tile graphics — glyph rendering, PNG export (stdlib, no Pillow), HGR color logic, SHP overlay inline string extraction, SHPS embedded code guard at $9F9, TEXT detection as HGR bitmap.
+- **`shapes view/export/edit/edit-string/import`**: SHPS character set tile graphics — glyph rendering, PNG export (stdlib, no Pillow), HGR color logic, SHP overlay inline string extraction and replacement (`edit-string --offset --text`), SHPS embedded code guard at $9F9, TEXT detection as HGR bitmap.
 - **`sound view/edit/import`**: SOSA/SOSM/MBS sound data files — hex dump, AY-3-8910 register parsing and music stream decoding (notes, tempo, loops) for MBS.
 - **`patch view/edit/dump`**: Engine binary patcher for CIDAR-identified offsets in ULT3/EXOD — name table (921 bytes, terrain/monster/weapon/armor/spell names), moongate coordinates, food depletion rate, town/dungeon coords.
 - **`ddrw view/edit/import`**: Dungeon drawing data (1792 bytes) with structured perspective vector and tile record parsing.
@@ -96,6 +97,14 @@ Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tl
 - **CON file layout** (fully resolved via engine code tracing): 0x79-0x7F = unused padding, 0x90-0x9F = runtime monster arrays (saved-tile + status, overwritten at init), 0xA8-0xAF = runtime PC arrays (saved-tile + appearance, overwritten at init), 0xB0-0xBF = unused tail padding. Preserved for round-trip fidelity.
 - **PRTY file layout** (verified against zero-page $E0-$EF): $E0=transport, $E1=party_size, $E2=location_type, $E3=saved_x, $E4=saved_y, $E5=sentinel, $E6-$E9=slot_ids. Constants in `PRTY_OFF_*`.
 - **Special location trailing bytes**: BRND/SHRN/FNTN/TIME files' last 7 bytes are unused disk residue (text fragments), not game data. Preserved for round-trip fidelity.
+
+## Total conversion support
+
+Setters follow a **named-first, raw-fallback** pattern for total conversion scenarios:
+- Named lookups first (e.g., `status='G'`, `transport='horse'`) — friendly for standard play
+- Raw int/hex fallback (e.g., `status=0x47`, `transport=10`) — flexible for mods with custom values
+- Equipment setters accept full byte range (0-255), not just vanilla game indices
+- Validation is advisory (warnings via `--validate`) not enforced (no setter errors on valid bytes)
 
 ## Data integrity rules
 

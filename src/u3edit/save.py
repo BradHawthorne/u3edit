@@ -42,10 +42,24 @@ class PartyState:
                                   f'Unknown(${self.raw[PRTY_OFF_TRANSPORT]:02X})')
 
     @transport.setter
-    def transport(self, name: str) -> None:
+    def transport(self, name_or_code) -> None:
+        if isinstance(name_or_code, int):
+            self.raw[PRTY_OFF_TRANSPORT] = name_or_code & 0xFF
+            return
+        name = str(name_or_code)
         code = PRTY_TRANSPORT_CODES.get(name.lower())
         if code is not None:
             self.raw[PRTY_OFF_TRANSPORT] = code
+            return
+        # Raw int/hex string fallback for total conversions
+        try:
+            self.raw[PRTY_OFF_TRANSPORT] = int(name, 0) & 0xFF
+            return
+        except ValueError:
+            pass
+        raise ValueError(f"Unknown transport: {name_or_code!r} "
+                         f"(valid: {', '.join(PRTY_TRANSPORT_CODES.keys())}, "
+                         f"or raw int/hex)")
 
     @property
     def party_size(self) -> int:
@@ -88,6 +102,10 @@ class PartyState:
     def sentinel(self) -> int:
         return self.raw[PRTY_OFF_SENTINEL]
 
+    @sentinel.setter
+    def sentinel(self, val: int) -> None:
+        self.raw[PRTY_OFF_SENTINEL] = val & 0xFF
+
     @property
     def slot_ids(self) -> list[int]:
         return [self.raw[PRTY_OFF_SLOT_IDS + i] for i in range(4)]
@@ -103,6 +121,7 @@ class PartyState:
             'party_size': self.party_size,
             'location_type': self.location_type,
             'x': self.x, 'y': self.y,
+            'sentinel': self.sentinel,
             'slot_ids': self.slot_ids,
         }
 
@@ -111,6 +130,10 @@ class PartyState:
         print(f"  Party size:    {self.party_size}")
         print(f"  Location:      {self.location_type}")
         print(f"  Coordinates:   ({self.x}, {self.y})")
+        sentinel_note = (" (active)" if self.sentinel == 0xFF else
+                         " (inactive)" if self.sentinel == 0x00 else
+                         " (non-standard)")
+        print(f"  Sentinel:      ${self.sentinel:02X}{sentinel_note}")
         print(f"  Roster slots:  {self.slot_ids}")
 
 
@@ -239,7 +262,11 @@ def cmd_edit(args) -> None:
 
     prty_modified = False
     if args.transport is not None:
-        party.transport = args.transport; prty_modified = True
+        try:
+            party.transport = args.transport; prty_modified = True
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
     if args.x is not None:
         party.x = args.x; prty_modified = True
     if args.y is not None:
@@ -248,6 +275,8 @@ def cmd_edit(args) -> None:
         party.party_size = args.party_size; prty_modified = True
     if args.slot_ids is not None:
         party.slot_ids = args.slot_ids; prty_modified = True
+    if getattr(args, 'sentinel', None) is not None:
+        party.sentinel = args.sentinel; prty_modified = True
 
     # PLRS character editing
     plrs_modified = False
@@ -345,13 +374,18 @@ def cmd_import(args) -> None:
         party = PartyState(data)
 
         if 'transport' in party_data:
-            party.transport = party_data['transport']
+            try:
+                party.transport = party_data['transport']
+            except ValueError as e:
+                print(f"Warning: {e}", file=sys.stderr)
         if 'party_size' in party_data:
             party.party_size = party_data['party_size']
         if 'x' in party_data:
             party.x = party_data['x']
         if 'y' in party_data:
             party.y = party_data['y']
+        if 'sentinel' in party_data:
+            party.sentinel = party_data['sentinel']
         if 'slot_ids' in party_data:
             party.slot_ids = party_data['slot_ids']
 
@@ -448,11 +482,14 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Edit party state')
     p_edit.add_argument('game_dir', help='GAME directory')
-    p_edit.add_argument('--transport', help='Transport: horse, ship, foot')
+    p_edit.add_argument('--transport',
+                        help='Transport: horse, ship, foot, or raw hex (0x0A)')
     p_edit.add_argument('--x', type=int, help='X coordinate (0-63)')
     p_edit.add_argument('--y', type=int, help='Y coordinate (0-63)')
     p_edit.add_argument('--party-size', type=int, help='Party size (0-4)')
     p_edit.add_argument('--slot-ids', type=int, nargs='+', help='Roster slot IDs (e.g., 0 1 2 3)')
+    p_edit.add_argument('--sentinel', type=int,
+                        help='Party sentinel byte (0xFF=active, 0x00=inactive)')
     p_edit.add_argument('--output', '-o', help='Output file (default: overwrite)')
     p_edit.add_argument('--backup', action='store_true', help='Create .bak backup before overwrite')
     p_edit.add_argument('--dry-run', action='store_true', help='Show changes without writing')
@@ -492,12 +529,15 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Edit party state')
     p_edit.add_argument('game_dir', help='GAME directory')
-    p_edit.add_argument('--transport', help='Transport: horse, ship, foot')
+    p_edit.add_argument('--transport',
+                        help='Transport: horse, ship, foot, or raw hex (0x0A)')
     p_edit.add_argument('--x', type=int, help='X coordinate (0-63)')
     p_edit.add_argument('--y', type=int, help='Y coordinate (0-63)')
     p_edit.add_argument('--party-size', type=int, help='Party size (0-4)')
     p_edit.add_argument('--slot-ids', type=int, nargs='+',
                         help='Roster slot IDs (e.g., 0 1 2 3)')
+    p_edit.add_argument('--sentinel', type=int,
+                        help='Party sentinel byte (0xFF=active, 0x00=inactive)')
     p_edit.add_argument('--output', '-o', help='Output file (default: overwrite)')
     p_edit.add_argument('--backup', action='store_true',
                         help='Create .bak backup before overwrite')

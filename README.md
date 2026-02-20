@@ -94,7 +94,7 @@ u3edit disk list game.po
 | `text` | Game text string viewer/editor | `view`, `edit`, `import` |
 | `spell` | Spell reference (wizard + cleric) | `view` |
 | `equip` | Equipment stats and class restrictions | `view` |
-| `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `import`, `info` |
+| `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `edit-string`, `import`, `info` |
 | `sound` | Sound data editor (SOSA, SOSM, MBS) | `view`, `edit`, `import` |
 | `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump` |
 | `ddrw` | Dungeon drawing data editor | `view`, `edit`, `import` |
@@ -123,6 +123,13 @@ u3edit roster view ROST#069500 --validate
 
 # Check endgame readiness
 u3edit roster check-progress ROST#069500
+
+# Toggle party membership
+u3edit roster edit ROST#069500 --slot 0 --in-party
+u3edit roster edit ROST#069500 --slot 0 --not-in-party
+
+# Set sub-morsels (food fraction)
+u3edit roster edit ROST#069500 --slot 0 --sub-morsels 50
 ```
 
 ## Editing Monsters
@@ -218,6 +225,12 @@ u3edit save edit path/to/GAME/ --x 32 --y 32 --transport horse
 
 # Edit active party characters
 u3edit save edit path/to/GAME/ --plrs-slot 0 --hp 9999 --gold 9999
+
+# Set party sentinel (0xFF=active, 0x00=inactive)
+u3edit save edit path/to/GAME/ --sentinel 255
+
+# Transport accepts names or raw hex (for total conversions)
+u3edit save edit path/to/GAME/ --transport 0x0A
 ```
 
 ## JSON Import/Export
@@ -268,6 +281,9 @@ u3edit shapes export SHPS#060800 --output-dir tiles/ --scale 4 --sheet
 
 # Edit a glyph's raw bytes
 u3edit shapes edit SHPS#060800 --glyph 0 --data "55 2A 55 2A 55 2A 55 2A"
+
+# Edit an inline string in SHP overlay files
+u3edit shapes edit-string SHP#060800 --offset 0x100 --text "NEW TEXT"
 
 # Show file format info
 u3edit shapes info SHPS#060800
@@ -427,7 +443,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-595 tests covering all modules with synthesized game data (no real game files needed).
+622 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 
