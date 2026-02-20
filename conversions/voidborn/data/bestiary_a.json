@@ -1,0 +1,63 @@
+[
+  {
+    "index": 0,
+    "hp": 60,
+    "attack": 35,
+    "defense": 25,
+    "speed": 20
+  },
+  {
+    "index": 1,
+    "hp": 80,
+    "attack": 45,
+    "defense": 30,
+    "speed": 15
+  },
+  {
+    "index": 2,
+    "hp": 45,
+    "attack": 25,
+    "defense": 15,
+    "speed": 30
+  },
+  {
+    "index": 3,
+    "hp": 120,
+    "attack": 60,
+    "defense": 40,
+    "speed": 10
+  },
+  {
+    "index": 4,
+    "hp": 200,
+    "attack": 80,
+    "defense": 55,
+    "speed": 25,
+    "flags1": 128
+  },
+  {
+    "index": 5,
+    "hp": 150,
+    "attack": 50,
+    "defense": 35,
+    "speed": 35,
+    "ability1": 1
+  },
+  {
+    "index": 6,
+    "hp": 100,
+    "attack": 40,
+    "defense": 20,
+    "speed": 40,
+    "ability1": 2
+  },
+  {
+    "index": 7,
+    "hp": 250,
+    "attack": 90,
+    "defense": 60,
+    "speed": 20,
+    "flags1": 128,
+    "ability1": 64
+  }
+]

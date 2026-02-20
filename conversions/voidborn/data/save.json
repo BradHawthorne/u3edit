@@ -1,0 +1,11 @@
+{
+  "party": {
+    "transport": "foot",
+    "party_size": 4,
+    "location_type": "Sosaria",
+    "x": 28,
+    "y": 35,
+    "sentinel": 255,
+    "slot_ids": [0, 1, 2, 3]
+  }
+}
