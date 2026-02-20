@@ -545,14 +545,14 @@ def cmd_import(args) -> None:
                     except ValueError:
                         print(f"  Warning: Unknown armor '{entry['armor']}' in PLRS slot {i}",
                               file=sys.stderr)
-                if 'weapons' in entry:
+                if isinstance(entry.get('weapons'), dict):
                     for wname, wcount in entry['weapons'].items():
                         try:
                             char.set_weapon_count(WEAPONS.index(wname), wcount)
                         except ValueError:
                             print(f"  Warning: Unknown weapon '{wname}' in PLRS slot {i} inventory",
                                   file=sys.stderr)
-                if 'armors' in entry:
+                if isinstance(entry.get('armors'), dict):
                     for aname, acount in entry['armors'].items():
                         try:
                             char.set_armor_count(ARMORS.index(aname), acount)

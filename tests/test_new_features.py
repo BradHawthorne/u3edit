@@ -4369,3 +4369,69 @@ class TestShapesImportMalformedJson:
             result = f.read()
         assert list(result[0:8]) == [0] * 8
         assert list(result[8:16]) == [0xBB] * 8
+
+
+# =============================================================================
+# Fix: weapons/armors .items() crash on non-dict JSON values
+# =============================================================================
+
+class TestImportMalformedInventory:
+    """Verify cmd_import handles non-dict weapons/armors gracefully."""
+
+    def test_roster_import_null_weapons(self, tmp_dir, sample_roster_bytes):
+        """roster cmd_import: weapons=null should not crash."""
+        from u3edit.roster import cmd_import as roster_cmd_import
+        path = os.path.join(tmp_dir, 'ROST#069500')
+        with open(path, 'wb') as f:
+            f.write(sample_roster_bytes)
+        jdata = [{'slot': 0, 'name': 'TEST', 'weapons': None, 'armors': None}]
+        json_path = os.path.join(tmp_dir, 'roster.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        roster_cmd_import(args)  # should not raise TypeError/AttributeError
+
+    def test_roster_import_list_weapons(self, tmp_dir, sample_roster_bytes):
+        """roster cmd_import: weapons as list should not crash."""
+        from u3edit.roster import cmd_import as roster_cmd_import
+        path = os.path.join(tmp_dir, 'ROST#069500')
+        with open(path, 'wb') as f:
+            f.write(sample_roster_bytes)
+        jdata = [{'slot': 0, 'name': 'TEST', 'weapons': ['Dagger'], 'armors': []}]
+        json_path = os.path.join(tmp_dir, 'roster.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        roster_cmd_import(args)  # should not raise TypeError/AttributeError
+
+    def test_save_import_null_weapons(self, tmp_dir, sample_prty_bytes,
+                                       sample_character_bytes):
+        """save cmd_import: PLRS entry with weapons=null should not crash."""
+        from u3edit.save import cmd_import as save_cmd_import
+        from u3edit.constants import PLRS_FILE_SIZE, CHAR_RECORD_SIZE
+        prty_path = os.path.join(tmp_dir, 'PRTY#069500')
+        with open(prty_path, 'wb') as f:
+            f.write(sample_prty_bytes)
+        plrs_data = bytearray(PLRS_FILE_SIZE)
+        plrs_data[:CHAR_RECORD_SIZE] = sample_character_bytes
+        plrs_path = os.path.join(tmp_dir, 'PLRS#069500')
+        with open(plrs_path, 'wb') as f:
+            f.write(plrs_data)
+        jdata = {
+            'transport': 'On Foot',
+            'characters': [{'slot': 0, 'name': 'TEST', 'weapons': None, 'armors': None}]
+        }
+        json_path = os.path.join(tmp_dir, 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = type('Args', (), {
+            'game_dir': tmp_dir, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        save_cmd_import(args)  # should not raise TypeError/AttributeError
