@@ -5,6 +5,15 @@ import os
 import shutil
 
 
+def hex_int(x: str) -> int:
+    """Parse an integer from string, accepting both decimal and hex (0x) prefix.
+
+    Use as argparse type= for arguments where hex input is natural
+    (tile values, byte offsets, raw flag bytes).
+    """
+    return int(x, 0)
+
+
 def resolve_game_file(directory: str, prefix: str, letter: str) -> str | None:
     """Find a game file by prefix and letter, handling ProDOS #hash suffixes.
 

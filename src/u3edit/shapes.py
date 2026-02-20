@@ -18,7 +18,7 @@ import zlib
 from pathlib import Path
 
 from .constants import TILES
-from .fileutil import resolve_single_file, backup_file
+from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
 # ============================================================================
@@ -836,7 +836,7 @@ def register_parser(subparsers) -> None:
 
     p_view = sub.add_parser('view', help='View tile shapes')
     p_view.add_argument('path', help='SHPS file or GAME directory')
-    p_view.add_argument('--tile', type=int, help='View specific tile ID (hex OK)')
+    p_view.add_argument('--tile', type=hex_int, help='View specific tile ID (hex OK)')
     p_view.add_argument('--json', action='store_true', help='Output as JSON')
     p_view.add_argument('--output', '-o', help='Output file (for --json)')
 
@@ -849,7 +849,7 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a glyph')
     p_edit.add_argument('file', help='SHPS file')
-    p_edit.add_argument('--glyph', type=int, required=True,
+    p_edit.add_argument('--glyph', type=hex_int, required=True,
                         help='Glyph index (0-255)')
     p_edit.add_argument('--data', required=True,
                         help='New glyph data as hex bytes (8 bytes)')
@@ -872,7 +872,7 @@ def register_parser(subparsers) -> None:
     p_estr = sub.add_parser('edit-string',
                             help='Edit inline string in SHP overlay')
     p_estr.add_argument('file', help='SHP overlay file (SHP0-SHP7)')
-    p_estr.add_argument('--offset', type=lambda x: int(x, 0), required=True,
+    p_estr.add_argument('--offset', type=hex_int, required=True,
                         help='Text offset (hex OK, e.g., 0x1A)')
     p_estr.add_argument('--text', required=True, help='New text string')
     p_estr.add_argument('--output', '-o', help='Output file')
@@ -910,7 +910,7 @@ def main() -> None:
 
     p_view = sub.add_parser('view', help='View tile shapes')
     p_view.add_argument('path', help='SHPS file or GAME directory')
-    p_view.add_argument('--tile', type=int, help='View specific tile ID (hex OK)')
+    p_view.add_argument('--tile', type=hex_int, help='View specific tile ID (hex OK)')
     p_view.add_argument('--json', action='store_true', help='Output as JSON')
     p_view.add_argument('--output', '-o', help='Output file (for --json)')
 
@@ -923,7 +923,7 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a glyph')
     p_edit.add_argument('file', help='SHPS file')
-    p_edit.add_argument('--glyph', type=int, required=True,
+    p_edit.add_argument('--glyph', type=hex_int, required=True,
                         help='Glyph index (0-255)')
     p_edit.add_argument('--data', required=True,
                         help='New glyph data as hex bytes (8 bytes)')
@@ -950,7 +950,7 @@ def main() -> None:
     p_estr = sub.add_parser('edit-string',
                             help='Edit inline string in SHP overlay')
     p_estr.add_argument('file', help='SHP overlay file (SHP0-SHP7)')
-    p_estr.add_argument('--offset', type=lambda x: int(x, 0), required=True,
+    p_estr.add_argument('--offset', type=hex_int, required=True,
                         help='Text offset (hex OK, e.g., 0x1A)')
     p_estr.add_argument('--text', required=True, help='New text string')
     p_estr.add_argument('--output', '-o', help='Output file')

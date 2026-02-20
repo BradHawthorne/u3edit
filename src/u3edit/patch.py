@@ -14,7 +14,7 @@ import json
 import os
 import sys
 
-from .fileutil import backup_file
+from .fileutil import backup_file, hex_int
 from .json_export import export_json
 
 # ============================================================================
@@ -502,8 +502,8 @@ def register_parser(subparsers) -> None:
 
     p_dump = sub.add_parser('dump', help='Hex dump of any offset')
     p_dump.add_argument('file', help='Engine binary')
-    p_dump.add_argument('--offset', type=int, default=0, help='Start offset')
-    p_dump.add_argument('--length', type=int, default=256, help='Bytes to show')
+    p_dump.add_argument('--offset', type=hex_int, default=0, help='Start offset')
+    p_dump.add_argument('--length', type=hex_int, default=256, help='Bytes to show')
 
     p_import = sub.add_parser('import', help='Import region data from JSON')
     p_import.add_argument('file', help='Engine binary')
@@ -556,8 +556,8 @@ def main() -> None:
 
     p_dump = sub.add_parser('dump', help='Hex dump of any offset')
     p_dump.add_argument('file', help='Engine binary')
-    p_dump.add_argument('--offset', type=int, default=0, help='Start offset')
-    p_dump.add_argument('--length', type=int, default=256, help='Bytes to show')
+    p_dump.add_argument('--offset', type=hex_int, default=0, help='Start offset')
+    p_dump.add_argument('--length', type=hex_int, default=256, help='Bytes to show')
 
     p_import = sub.add_parser('import', help='Import region data from JSON')
     p_import.add_argument('file', help='Engine binary')

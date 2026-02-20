@@ -3531,3 +3531,97 @@ class TestSaveEditValidate:
             ['python', '-m', 'u3edit.save', 'edit', '--help'],
             capture_output=True, text=True)
         assert '--validate' in result.stdout
+
+
+# =============================================================================
+# hex_int acceptance: tile/offset/byte args accept 0x prefix
+# =============================================================================
+
+class TestHexIntArgParsing:
+    """Verify that CLI args for tiles, offsets, and flags accept hex (0x) prefix."""
+
+    def test_hex_int_helper(self):
+        from u3edit.fileutil import hex_int
+        assert hex_int('10') == 10
+        assert hex_int('0x0A') == 10
+        assert hex_int('0xFF') == 255
+        assert hex_int('0') == 0
+
+    def test_hex_int_rejects_garbage(self):
+        from u3edit.fileutil import hex_int
+        with pytest.raises(ValueError):
+            hex_int('xyz')
+
+    def test_map_tile_accepts_hex(self, tmp_dir):
+        """map set --tile 0x01 should parse without error."""
+        import argparse
+        path = os.path.join(tmp_dir, 'MAP')
+        data = bytes(MAP_OVERWORLD_SIZE)
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, x=0, y=0, tile=0x01,
+            output=None, backup=False, dry_run=True)
+        cmd_set(args)  # Should not raise
+
+    def test_combat_tile_accepts_hex(self, tmp_dir):
+        """combat edit --tile 0x08 should parse without error."""
+        from u3edit.combat import cmd_edit as combat_cmd_edit
+        path = os.path.join(tmp_dir, 'CON')
+        data = bytearray(CON_FILE_SIZE)
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = type('Args', (), {
+            'file': path, 'tile': [0, 0, 0x08],
+            'monster_pos': None, 'pc_pos': None,
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        combat_cmd_edit(args)  # Should not raise
+
+    def test_bestiary_flags_accept_hex(self, tmp_dir):
+        """bestiary edit --flags1 0x80 should parse without error."""
+        from u3edit.bestiary import cmd_edit as bestiary_cmd_edit
+        path = os.path.join(tmp_dir, 'MON')
+        data = bytearray(MON_FILE_SIZE)
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = type('Args', (), {
+            'file': path, 'monster': 0,
+            'tile1': None, 'tile2': None,
+            'flags1': 0x80, 'flags2': None,
+            'hp': None, 'attack': None, 'defense': None, 'speed': None,
+            'ability1': None, 'ability2': None,
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        bestiary_cmd_edit(args)  # Should not raise
+
+    def test_special_tile_accepts_hex(self, tmp_dir):
+        """special edit --tile 0x00 0x00 0x08 should parse without error."""
+        from u3edit.special import cmd_edit as special_cmd_edit
+        path = os.path.join(tmp_dir, 'BRND')
+        data = bytearray(SPECIAL_FILE_SIZE)
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = type('Args', (), {
+            'file': path, 'tile': [0, 0, 0x08],
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        special_cmd_edit(args)  # Should not raise
+
+    def test_argparser_accepts_hex_string(self):
+        """Verify argparse actually parses '0x0A' string to 10 via hex_int type."""
+        import argparse
+        from u3edit.fileutil import hex_int
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--tile', type=hex_int)
+        args = parser.parse_args(['--tile', '0x0A'])
+        assert args.tile == 10
+
+    def test_argparser_accepts_decimal_string(self):
+        """hex_int still works with plain decimal strings."""
+        import argparse
+        from u3edit.fileutil import hex_int
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--offset', type=hex_int)
+        args = parser.parse_args(['--offset', '240'])
+        assert args.offset == 240

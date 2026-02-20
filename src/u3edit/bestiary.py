@@ -25,7 +25,7 @@ from .constants import (
     MON_TERRAIN, MON_LETTERS, MONSTER_NAMES, MONSTER_NAMES_REVERSE,
     MON_GROUP_NAMES, TILES,
 )
-from .fileutil import resolve_game_file, backup_file
+from .fileutil import resolve_game_file, backup_file, hex_int
 from .json_export import export_json
 
 
@@ -461,12 +461,12 @@ def _add_mon_edit_args(p) -> None:
     p.add_argument('--attack', type=int, help='Attack value (0-255)')
     p.add_argument('--defense', type=int, help='Defense value (0-255)')
     p.add_argument('--speed', type=int, help='Speed value (0-255)')
-    p.add_argument('--tile1', type=int, help='Tile/sprite byte 1 (0-255)')
-    p.add_argument('--tile2', type=int, help='Tile/sprite byte 2 (0-255)')
-    p.add_argument('--flags1', type=int, help='Flags byte 1 raw (0-255)')
-    p.add_argument('--flags2', type=int, help='Flags byte 2 raw (0-255)')
-    p.add_argument('--ability1', type=int, help='Ability byte 1 raw (0-255)')
-    p.add_argument('--ability2', type=int, help='Ability byte 2 raw (0-255)')
+    p.add_argument('--tile1', type=hex_int, help='Tile/sprite byte 1 (0-255)')
+    p.add_argument('--tile2', type=hex_int, help='Tile/sprite byte 2 (0-255)')
+    p.add_argument('--flags1', type=hex_int, help='Flags byte 1 raw (0-255)')
+    p.add_argument('--flags2', type=hex_int, help='Flags byte 2 raw (0-255)')
+    p.add_argument('--ability1', type=hex_int, help='Ability byte 1 raw (0-255)')
+    p.add_argument('--ability2', type=hex_int, help='Ability byte 2 raw (0-255)')
     p.add_argument('--type', help='Monster type by name (e.g., Dragon, Skeleton)')
 
 

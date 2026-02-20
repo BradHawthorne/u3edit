@@ -9,7 +9,7 @@ import json
 import os
 import sys
 
-from .fileutil import resolve_single_file, backup_file
+from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
 # ============================================================================
@@ -234,7 +234,7 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Patch bytes')
     p_edit.add_argument('file', help='DDRW file')
-    p_edit.add_argument('--offset', type=int, required=True, help='Byte offset')
+    p_edit.add_argument('--offset', type=hex_int, required=True, help='Byte offset')
     p_edit.add_argument('--data', required=True, help='New data as hex bytes')
     p_edit.add_argument('--output', '-o', help='Output file')
     p_edit.add_argument('--backup', action='store_true',
@@ -278,7 +278,7 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Patch bytes')
     p_edit.add_argument('file', help='DDRW file')
-    p_edit.add_argument('--offset', type=int, required=True, help='Byte offset')
+    p_edit.add_argument('--offset', type=hex_int, required=True, help='Byte offset')
     p_edit.add_argument('--data', required=True, help='New data as hex bytes')
     p_edit.add_argument('--output', '-o', help='Output file')
     p_edit.add_argument('--backup', action='store_true',

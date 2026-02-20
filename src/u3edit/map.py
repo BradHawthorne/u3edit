@@ -19,7 +19,7 @@ from .constants import (
     TILE_CHARS_REVERSE, DUNGEON_TILE_CHARS_REVERSE,
     TILE_NAMES_REVERSE, DUNGEON_TILE_NAMES_REVERSE,
 )
-from .fileutil import resolve_game_file, backup_file
+from .fileutil import resolve_game_file, backup_file, hex_int
 from .json_export import export_json
 
 
@@ -442,7 +442,7 @@ def register_parser(subparsers) -> None:
     p_set.add_argument('file', help='MAP file path')
     p_set.add_argument('--x', type=int, required=True, help='X coordinate')
     p_set.add_argument('--y', type=int, required=True, help='Y coordinate')
-    p_set.add_argument('--tile', type=int, required=True, help='Tile byte value')
+    p_set.add_argument('--tile', type=hex_int, required=True, help='Tile byte value')
     _add_map_write_args(p_set)
 
     p_fill = sub.add_parser('fill', help='Fill a rectangular region')
@@ -451,18 +451,18 @@ def register_parser(subparsers) -> None:
     p_fill.add_argument('--y1', type=int, required=True, help='Start Y')
     p_fill.add_argument('--x2', type=int, required=True, help='End X')
     p_fill.add_argument('--y2', type=int, required=True, help='End Y')
-    p_fill.add_argument('--tile', type=int, required=True, help='Tile byte value')
+    p_fill.add_argument('--tile', type=hex_int, required=True, help='Tile byte value')
     _add_map_write_args(p_fill)
 
     p_replace = sub.add_parser('replace', help='Replace all occurrences of a tile')
     p_replace.add_argument('file', help='MAP file path')
-    p_replace.add_argument('--from', type=int, required=True, dest='from_tile', help='Tile to replace')
-    p_replace.add_argument('--to', type=int, required=True, dest='to_tile', help='Replacement tile')
+    p_replace.add_argument('--from', type=hex_int, required=True, dest='from_tile', help='Tile to replace')
+    p_replace.add_argument('--to', type=hex_int, required=True, dest='to_tile', help='Replacement tile')
     _add_map_write_args(p_replace)
 
     p_find = sub.add_parser('find', help='Find all locations of a tile type')
     p_find.add_argument('file', help='MAP file path')
-    p_find.add_argument('--tile', type=int, required=True, help='Tile byte value to find')
+    p_find.add_argument('--tile', type=hex_int, required=True, help='Tile byte value to find')
     p_find.add_argument('--level', type=int, help='Dungeon level (0-7)')
     p_find.add_argument('--json', action='store_true', help='Output as JSON')
     p_find.add_argument('--output', '-o', help='Output file (for --json)')
@@ -528,7 +528,7 @@ def main() -> None:
     p_set.add_argument('file', help='MAP file path')
     p_set.add_argument('--x', type=int, required=True, help='X coordinate')
     p_set.add_argument('--y', type=int, required=True, help='Y coordinate')
-    p_set.add_argument('--tile', type=int, required=True, help='Tile byte value')
+    p_set.add_argument('--tile', type=hex_int, required=True, help='Tile byte value')
     _add_map_write_args(p_set)
 
     p_fill = sub.add_parser('fill', help='Fill a rectangular region')
@@ -537,20 +537,20 @@ def main() -> None:
     p_fill.add_argument('--y1', type=int, required=True, help='Start Y')
     p_fill.add_argument('--x2', type=int, required=True, help='End X')
     p_fill.add_argument('--y2', type=int, required=True, help='End Y')
-    p_fill.add_argument('--tile', type=int, required=True, help='Tile byte value')
+    p_fill.add_argument('--tile', type=hex_int, required=True, help='Tile byte value')
     _add_map_write_args(p_fill)
 
     p_replace = sub.add_parser('replace', help='Replace all occurrences of a tile')
     p_replace.add_argument('file', help='MAP file path')
-    p_replace.add_argument('--from', type=int, required=True, dest='from_tile',
+    p_replace.add_argument('--from', type=hex_int, required=True, dest='from_tile',
                            help='Tile to replace')
-    p_replace.add_argument('--to', type=int, required=True, dest='to_tile',
+    p_replace.add_argument('--to', type=hex_int, required=True, dest='to_tile',
                            help='Replacement tile')
     _add_map_write_args(p_replace)
 
     p_find = sub.add_parser('find', help='Find all locations of a tile type')
     p_find.add_argument('file', help='MAP file path')
-    p_find.add_argument('--tile', type=int, required=True, help='Tile byte value to find')
+    p_find.add_argument('--tile', type=hex_int, required=True, help='Tile byte value to find')
     p_find.add_argument('--level', type=int, help='Dungeon level (0-7)')
     p_find.add_argument('--json', action='store_true', help='Output as JSON')
     p_find.add_argument('--output', '-o', help='Output file (for --json)')

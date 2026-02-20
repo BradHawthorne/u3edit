@@ -12,7 +12,7 @@ import os
 import sys
 
 from .constants import SOSA_FILE_SIZE, SOSM_FILE_SIZE
-from .fileutil import resolve_single_file, backup_file
+from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
 # ============================================================================
@@ -409,7 +409,7 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Patch sound data bytes')
     p_edit.add_argument('file', help='Sound file')
-    p_edit.add_argument('--offset', type=int, required=True,
+    p_edit.add_argument('--offset', type=hex_int, required=True,
                         help='Byte offset to patch')
     p_edit.add_argument('--data', required=True,
                         help='New data as hex bytes')
@@ -455,7 +455,7 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Patch sound data bytes')
     p_edit.add_argument('file', help='Sound file')
-    p_edit.add_argument('--offset', type=int, required=True,
+    p_edit.add_argument('--offset', type=hex_int, required=True,
                         help='Byte offset to patch')
     p_edit.add_argument('--data', required=True,
                         help='New data as hex bytes')

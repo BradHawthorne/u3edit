@@ -21,7 +21,7 @@ from .constants import (
     SPECIAL_MAP_WIDTH, SPECIAL_MAP_HEIGHT, SPECIAL_MAP_TILES,
     tile_char, TILE_CHARS_REVERSE,
 )
-from .fileutil import resolve_single_file, backup_file
+from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
 
@@ -248,7 +248,7 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a special location (CLI or TUI)')
     p_edit.add_argument('file', help='Special location file path')
-    p_edit.add_argument('--tile', type=int, nargs=3, metavar=('X', 'Y', 'VALUE'),
+    p_edit.add_argument('--tile', type=hex_int, nargs=3, metavar=('X', 'Y', 'VALUE'),
                         help='Set tile at (X, Y) to VALUE')
     _add_special_write_args(p_edit)
 
@@ -284,7 +284,7 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a special location (CLI or TUI)')
     p_edit.add_argument('file', help='Special location file path')
-    p_edit.add_argument('--tile', type=int, nargs=3, metavar=('X', 'Y', 'VALUE'),
+    p_edit.add_argument('--tile', type=hex_int, nargs=3, metavar=('X', 'Y', 'VALUE'),
                         help='Set tile at (X, Y) to VALUE')
     _add_special_write_args(p_edit)
 

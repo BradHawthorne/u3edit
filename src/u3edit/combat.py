@@ -31,7 +31,7 @@ from .constants import (
     CON_PADDING2_OFFSET, CON_PADDING2_SIZE,
     tile_char, TILE_CHARS_REVERSE,
 )
-from .fileutil import resolve_game_file, backup_file
+from .fileutil import resolve_game_file, backup_file, hex_int
 from .json_export import export_json
 
 
@@ -438,7 +438,7 @@ def register_parser(subparsers) -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a combat map (CLI or TUI)')
     p_edit.add_argument('file', help='CON file path')
-    p_edit.add_argument('--tile', type=int, nargs=3, metavar=('X', 'Y', 'VALUE'),
+    p_edit.add_argument('--tile', type=hex_int, nargs=3, metavar=('X', 'Y', 'VALUE'),
                         help='Set tile at (X, Y) to VALUE')
     p_edit.add_argument('--monster-pos', type=int, nargs=3, metavar=('INDEX', 'X', 'Y'),
                         help='Set monster INDEX start position to (X, Y)')
@@ -480,7 +480,7 @@ def main() -> None:
 
     p_edit = sub.add_parser('edit', help='Edit a combat map (CLI or TUI)')
     p_edit.add_argument('file', help='CON file path')
-    p_edit.add_argument('--tile', type=int, nargs=3, metavar=('X', 'Y', 'VALUE'),
+    p_edit.add_argument('--tile', type=hex_int, nargs=3, metavar=('X', 'Y', 'VALUE'),
                         help='Set tile at (X, Y) to VALUE')
     p_edit.add_argument('--monster-pos', type=int, nargs=3,
                         metavar=('INDEX', 'X', 'Y'),
