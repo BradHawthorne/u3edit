@@ -3932,3 +3932,158 @@ class TestDdrwImportIntegration:
         with open(path, 'rb') as f:
             result = f.read()
         assert result == original
+
+
+# =============================================================================
+# Shapes cmd_edit and cmd_import integration tests
+# =============================================================================
+
+class TestShapesEditIntegration:
+    """Integration tests for shapes cmd_edit()."""
+
+    def _make_shps(self, tmp_path):
+        """Create a synthetic 2048-byte SHPS file."""
+        data = bytearray(2048)
+        # Fill glyph 0 with a known pattern
+        for i in range(8):
+            data[i] = 0x55
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path, data
+
+    def test_edit_glyph(self, tmp_path):
+        """cmd_edit() updates a glyph's raw bytes."""
+        from u3edit.shapes import cmd_edit as shapes_cmd_edit
+        path, original = self._make_shps(tmp_path)
+
+        args = type('Args', (), {
+            'file': path, 'glyph': 0,
+            'data': 'FF FF FF FF FF FF FF FF',
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_edit(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result[0:8]) == [0xFF] * 8
+
+    def test_edit_glyph_dry_run(self, tmp_path):
+        """cmd_edit() with dry_run does not modify file."""
+        from u3edit.shapes import cmd_edit as shapes_cmd_edit
+        path, original = self._make_shps(tmp_path)
+
+        args = type('Args', (), {
+            'file': path, 'glyph': 0,
+            'data': 'AA AA AA AA AA AA AA AA',
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        shapes_cmd_edit(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(original)
+
+    def test_edit_glyph_output_file(self, tmp_path):
+        """cmd_edit() writes to --output file."""
+        from u3edit.shapes import cmd_edit as shapes_cmd_edit
+        path, _ = self._make_shps(tmp_path)
+        out_path = str(tmp_path / 'SHPS_OUT')
+
+        args = type('Args', (), {
+            'file': path, 'glyph': 1,
+            'data': '01 02 03 04 05 06 07 08',
+            'output': out_path, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_edit(args)
+
+        with open(out_path, 'rb') as f:
+            result = f.read()
+        assert list(result[8:16]) == [1, 2, 3, 4, 5, 6, 7, 8]
+
+
+class TestShapesImportIntegration:
+    """Integration tests for shapes cmd_import()."""
+
+    def _make_shps(self, tmp_path):
+        """Create a synthetic 2048-byte SHPS file."""
+        data = bytearray(2048)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path, data
+
+    def test_import_glyph_list(self, tmp_path):
+        """cmd_import() updates glyphs from flat list format."""
+        from u3edit.shapes import cmd_import as shapes_cmd_import
+        path, _ = self._make_shps(tmp_path)
+
+        jdata = [
+            {'index': 0, 'raw': [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]},
+            {'index': 2, 'raw': [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]},
+        ]
+        json_path = str(tmp_path / 'glyphs.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result[0:8]) == [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
+        assert list(result[16:24]) == [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]
+        # Glyph 1 should be unchanged (zeros)
+        assert list(result[8:16]) == [0] * 8
+
+    def test_import_tiles_format(self, tmp_path):
+        """cmd_import() updates glyphs from tiles dict format."""
+        from u3edit.shapes import cmd_import as shapes_cmd_import
+        path, _ = self._make_shps(tmp_path)
+
+        jdata = {
+            'tiles': [{
+                'tile_id': 0,
+                'frames': [
+                    {'index': 0, 'raw': [0xFF] * 8},
+                    {'index': 1, 'raw': [0xAA] * 8},
+                ]
+            }]
+        }
+        json_path = str(tmp_path / 'tiles.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        shapes_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert list(result[0:8]) == [0xFF] * 8
+        assert list(result[8:16]) == [0xAA] * 8
+
+    def test_import_dry_run(self, tmp_path):
+        """cmd_import() with dry_run does not modify file."""
+        from u3edit.shapes import cmd_import as shapes_cmd_import
+        path, original = self._make_shps(tmp_path)
+
+        jdata = [{'index': 0, 'raw': [0xFF] * 8}]
+        json_path = str(tmp_path / 'glyphs.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': True,
+        })()
+        shapes_cmd_import(args)
+
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(original)
