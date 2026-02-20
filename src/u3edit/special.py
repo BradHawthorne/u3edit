@@ -119,7 +119,7 @@ def cmd_view(args) -> None:
                             for x in range(SPECIAL_MAP_WIDTH)]
                            for y in range(SPECIAL_MAP_HEIGHT)
                            if y * SPECIAL_MAP_WIDTH < len(data)],
-                'metadata': get_metadata(data),
+                'trailing_bytes': get_trailing_bytes(data),
             }
             export_json(result, args.output)
             return

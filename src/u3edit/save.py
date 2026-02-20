@@ -522,13 +522,13 @@ def cmd_import(args) -> None:
                     char.cards = entry['cards']
                 if 'weapon' in entry:
                     try:
-                        char.equipped_weapon = WEAPONS.index(entry['weapon'])
+                        char.equipped_weapon = entry['weapon']
                     except ValueError:
                         print(f"  Warning: Unknown weapon '{entry['weapon']}' in PLRS slot {i}",
                               file=sys.stderr)
                 if 'armor' in entry:
                     try:
-                        char.equipped_armor = ARMORS.index(entry['armor'])
+                        char.equipped_armor = entry['armor']
                     except ValueError:
                         print(f"  Warning: Unknown armor '{entry['armor']}' in PLRS slot {i}",
                               file=sys.stderr)

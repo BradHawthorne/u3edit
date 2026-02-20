@@ -359,16 +359,18 @@ def register_parser(subparsers) -> None:
     p_view = sub.add_parser('view', help='Show patchable regions')
     p_view.add_argument('file', help='Engine binary (ULT3, EXOD, SUBS)')
     p_view.add_argument('--region', help='Show specific region only')
-    p_view.add_argument('--json', action='store_true')
-    p_view.add_argument('--output', '-o')
+    p_view.add_argument('--json', action='store_true', help='Output as JSON')
+    p_view.add_argument('--output', '-o', help='Output file (for --json)')
 
     p_edit = sub.add_parser('edit', help='Patch a data region')
     p_edit.add_argument('file', help='Engine binary')
     p_edit.add_argument('--region', required=True, help='Region name')
     p_edit.add_argument('--data', required=True, help='New data as hex')
-    p_edit.add_argument('--output', '-o')
-    p_edit.add_argument('--backup', action='store_true')
-    p_edit.add_argument('--dry-run', action='store_true')
+    p_edit.add_argument('--output', '-o', help='Output file')
+    p_edit.add_argument('--backup', action='store_true',
+                        help='Create .bak backup before overwrite')
+    p_edit.add_argument('--dry-run', action='store_true',
+                        help='Show changes without writing')
 
     p_dump = sub.add_parser('dump', help='Hex dump of any offset')
     p_dump.add_argument('file', help='Engine binary')

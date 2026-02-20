@@ -113,8 +113,7 @@ class CombatMap:
                        for y in range(CON_MAP_HEIGHT)
                        if y * CON_MAP_WIDTH < len(self.tiles)],
             'monsters': [{'x': self.monster_x[i], 'y': self.monster_y[i]}
-                         for i in range(CON_MONSTER_COUNT)
-                         if self.monster_x[i] or self.monster_y[i]],
+                         for i in range(CON_MONSTER_COUNT)],
             'pcs': [{'x': self.pc_x[i], 'y': self.pc_y[i]}
                     for i in range(CON_PC_COUNT)],
             'padding': {

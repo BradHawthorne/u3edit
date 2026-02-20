@@ -329,8 +329,22 @@ class Character:
         return ARMORS[idx] if idx < len(ARMORS) else f'?({idx})'
 
     @equipped_armor.setter
-    def equipped_armor(self, val: int) -> None:
-        self.raw[CHAR_WORN_ARMOR] = max(0, min(255, val))
+    def equipped_armor(self, val) -> None:
+        if isinstance(val, int):
+            self.raw[CHAR_WORN_ARMOR] = max(0, min(255, val))
+            return
+        name = str(val)
+        for i, a in enumerate(ARMORS):
+            if a.upper() == name.upper():
+                self.raw[CHAR_WORN_ARMOR] = i
+                return
+        # Raw hex string fallback for total conversions
+        try:
+            self.raw[CHAR_WORN_ARMOR] = max(0, min(255, int(name, 0)))
+            return
+        except ValueError:
+            pass
+        raise ValueError(f'Unknown armor: {val}')
 
     @property
     def equipped_weapon(self) -> str:
@@ -338,8 +352,22 @@ class Character:
         return WEAPONS[idx] if idx < len(WEAPONS) else f'?({idx})'
 
     @equipped_weapon.setter
-    def equipped_weapon(self, val: int) -> None:
-        self.raw[CHAR_READIED_WEAPON] = max(0, min(255, val))
+    def equipped_weapon(self, val) -> None:
+        if isinstance(val, int):
+            self.raw[CHAR_READIED_WEAPON] = max(0, min(255, val))
+            return
+        name = str(val)
+        for i, w in enumerate(WEAPONS):
+            if w.upper() == name.upper():
+                self.raw[CHAR_READIED_WEAPON] = i
+                return
+        # Raw hex string fallback for total conversions
+        try:
+            self.raw[CHAR_READIED_WEAPON] = max(0, min(255, int(name, 0)))
+            return
+        except ValueError:
+            pass
+        raise ValueError(f'Unknown weapon: {val}')
 
     @property
     def armor_inventory(self) -> dict[str, int]:
@@ -790,13 +818,13 @@ def cmd_import(args) -> None:
             char.sub_morsels = entry['sub_morsels']
         if 'weapon' in entry:
             try:
-                char.equipped_weapon = WEAPONS.index(entry['weapon'])
+                char.equipped_weapon = entry['weapon']
             except ValueError:
                 print(f"  Warning: Unknown weapon '{entry['weapon']}' in slot {slot}, skipping",
                       file=sys.stderr)
         if 'armor' in entry:
             try:
-                char.equipped_armor = ARMORS.index(entry['armor'])
+                char.equipped_armor = entry['armor']
             except ValueError:
                 print(f"  Warning: Unknown armor '{entry['armor']}' in slot {slot}, skipping",
                       file=sys.stderr)

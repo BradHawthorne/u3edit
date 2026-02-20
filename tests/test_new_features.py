@@ -2414,3 +2414,119 @@ class TestLocationTypeImport:
                 result = f.read()
             party = PartyState(result)
             assert party.raw[PRTY_OFF_LOCATION] == 0x02  # Town
+
+
+# =============================================================================
+# Fix: Combat monster (0,0) round-trip
+# =============================================================================
+
+class TestCombatMonsterZeroZero:
+    def test_to_dict_includes_zero_zero_monster(self):
+        from u3edit.combat import CombatMap
+        from u3edit.constants import CON_FILE_SIZE
+        data = bytearray(CON_FILE_SIZE)
+        cmap = CombatMap(data)
+        # Monster 0 at (0,0), monster 1 at (5,3)
+        cmap.monster_x[0] = 0
+        cmap.monster_y[0] = 0
+        cmap.monster_x[1] = 5
+        cmap.monster_y[1] = 3
+        d = cmap.to_dict()
+        assert len(d['monsters']) == 8  # All 8 slots exported
+        assert d['monsters'][0] == {'x': 0, 'y': 0}
+        assert d['monsters'][1] == {'x': 5, 'y': 3}
+
+    def test_roundtrip_preserves_positions(self):
+        from u3edit.combat import CombatMap
+        from u3edit.constants import CON_FILE_SIZE, CON_MONSTER_COUNT
+        data = bytearray(CON_FILE_SIZE)
+        cmap = CombatMap(data)
+        cmap.monster_x[0] = 0
+        cmap.monster_y[0] = 0
+        cmap.monster_x[1] = 5
+        cmap.monster_y[1] = 3
+        d = cmap.to_dict()
+        # Simulate import into fresh map
+        data2 = bytearray(CON_FILE_SIZE)
+        cmap2 = CombatMap(data2)
+        for i, m in enumerate(d['monsters'][:CON_MONSTER_COUNT]):
+            cmap2.monster_x[i] = m['x']
+            cmap2.monster_y[i] = m['y']
+        assert cmap2.monster_x[0] == 0
+        assert cmap2.monster_y[0] == 0
+        assert cmap2.monster_x[1] == 5
+        assert cmap2.monster_y[1] == 3
+
+
+# =============================================================================
+# Fix: Equipment setters accept name strings
+# =============================================================================
+
+class TestEquipmentSetterNames:
+    def test_weapon_by_name(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_weapon = 'Dagger'
+        assert char.raw[CHAR_READIED_WEAPON] == 1
+
+    def test_weapon_by_name_case_insensitive(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_weapon = 'dagger'
+        assert char.raw[CHAR_READIED_WEAPON] == 1
+
+    def test_weapon_by_int(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_weapon = 5
+        assert char.raw[CHAR_READIED_WEAPON] == 5
+
+    def test_weapon_by_hex_string(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_weapon = '0x0F'
+        assert char.raw[CHAR_READIED_WEAPON] == 15
+
+    def test_weapon_unknown_raises(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        with pytest.raises(ValueError, match='Unknown weapon'):
+            char.equipped_weapon = 'Lightsaber'
+
+    def test_armor_by_name(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_armor = 'Leather'
+        assert char.raw[CHAR_WORN_ARMOR] == 2
+
+    def test_armor_by_name_case_insensitive(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_armor = 'leather'
+        assert char.raw[CHAR_WORN_ARMOR] == 2
+
+    def test_armor_unknown_raises(self):
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        with pytest.raises(ValueError, match='Unknown armor'):
+            char.equipped_armor = 'Forcefield'
+
+
+# =============================================================================
+# Fix: Special JSON key consistency
+# =============================================================================
+
+class TestSpecialJsonKeyConsistency:
+    def test_single_file_uses_trailing_bytes_key(self):
+        from u3edit.special import cmd_view
+        from u3edit.constants import SPECIAL_FILE_SIZE
+        data = bytearray(SPECIAL_FILE_SIZE)
+        with tempfile.NamedTemporaryFile(suffix='SHRN#069900', delete=False) as f:
+            f.write(data)
+            path = f.name
+        json_out = os.path.join(tempfile.gettempdir(), 'special_test.json')
+        try:
+            args = type('Args', (), {
+                'path': path, 'json': True, 'output': json_out,
+            })()
+            cmd_view(args)
+            with open(json_out, 'r') as f:
+                result = json.load(f)
+            assert 'trailing_bytes' in result
+            assert 'metadata' not in result
+        finally:
+            os.unlink(path)
+            if os.path.exists(json_out):
+                os.unlink(json_out)

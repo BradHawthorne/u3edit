@@ -404,8 +404,8 @@ def register_parser(subparsers) -> None:
 
     p_view = sub.add_parser('view', help='View sound data')
     p_view.add_argument('path', help='Sound file or GAME directory')
-    p_view.add_argument('--json', action='store_true')
-    p_view.add_argument('--output', '-o')
+    p_view.add_argument('--json', action='store_true', help='Output as JSON')
+    p_view.add_argument('--output', '-o', help='Output file (for --json)')
 
     p_edit = sub.add_parser('edit', help='Patch sound data bytes')
     p_edit.add_argument('file', help='Sound file')
@@ -413,16 +413,20 @@ def register_parser(subparsers) -> None:
                         help='Byte offset to patch')
     p_edit.add_argument('--data', required=True,
                         help='New data as hex bytes')
-    p_edit.add_argument('--output', '-o')
-    p_edit.add_argument('--backup', action='store_true')
-    p_edit.add_argument('--dry-run', action='store_true')
+    p_edit.add_argument('--output', '-o', help='Output file')
+    p_edit.add_argument('--backup', action='store_true',
+                        help='Create .bak backup before overwrite')
+    p_edit.add_argument('--dry-run', action='store_true',
+                        help='Show changes without writing')
 
     p_import = sub.add_parser('import', help='Import sound from JSON')
     p_import.add_argument('file', help='Sound file path')
     p_import.add_argument('json_file', help='JSON file to import')
-    p_import.add_argument('--output', '-o')
-    p_import.add_argument('--backup', action='store_true')
-    p_import.add_argument('--dry-run', action='store_true', help='Show changes without writing')
+    p_import.add_argument('--output', '-o', help='Output file')
+    p_import.add_argument('--backup', action='store_true',
+                          help='Create .bak backup before overwrite')
+    p_import.add_argument('--dry-run', action='store_true',
+                          help='Show changes without writing')
 
 
 def dispatch(args) -> None:
