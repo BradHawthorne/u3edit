@@ -134,7 +134,8 @@ class PartyState:
 
     @slot_ids.setter
     def slot_ids(self, ids: list[int]) -> None:
-        for i, sid in enumerate(ids[:4]):
+        for i in range(4):
+            sid = ids[i] if i < len(ids) else 0
             self.raw[PRTY_OFF_SLOT_IDS + i] = max(0, min(19, sid))
 
     def to_dict(self) -> dict:

@@ -6383,3 +6383,75 @@ class TestMapImportWidthValidation:
             'output': None, 'backup': False, 'dry_run': False
         })()
         map_import(args)  # Should succeed without warning
+
+    def test_import_with_zero_width_uses_default(self, tmp_path):
+        """Width=0 in JSON falls back to 64 instead of corrupting data."""
+        from u3edit.map import cmd_import as map_import
+        data = bytearray(4096)
+        map_path = str(tmp_path / 'MAPA')
+        with open(map_path, 'wb') as f:
+            f.write(data)
+
+        # Two rows — with width=0, row 1 would overwrite row 0
+        jdata = {
+            "tiles": [
+                ['*'] * 64,  # row 0: all lava (0x84)
+                ['!'] * 64,  # row 1: all force field (0x80)
+            ],
+            "width": 0
+        }
+        json_path = str(tmp_path / 'map.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': map_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        map_import(args)
+
+        # With the fix, width=0 falls back to 64
+        # Row 0 at offset 0 (lava=0x84), row 1 at offset 64 (force=0x80)
+        with open(map_path, 'rb') as f:
+            result = bytearray(f.read())
+        assert result[0] == 0x84, "Row 0 should be lava"
+        assert result[64] == 0x80, "Row 1 at offset 64, not overwriting row 0"
+
+
+# =============================================================================
+# PRTY slot_ids partial write fix
+# =============================================================================
+
+class TestPrtySlotIdsPartialWrite:
+    """Verify slot_ids setter zero-fills unused slots."""
+
+    def test_partial_slot_ids_zeros_remainder(self):
+        """Setting 2 slot IDs zeros out slots 2 and 3."""
+        from u3edit.save import PartyState, PRTY_OFF_SLOT_IDS
+        raw = bytearray(16)
+        # Pre-fill with garbage
+        raw[PRTY_OFF_SLOT_IDS] = 0xFF
+        raw[PRTY_OFF_SLOT_IDS + 1] = 0xAA
+        raw[PRTY_OFF_SLOT_IDS + 2] = 0xBB
+        raw[PRTY_OFF_SLOT_IDS + 3] = 0xCC
+        party = PartyState(raw)
+        party.slot_ids = [5, 10]
+        assert party.slot_ids == [5, 10, 0, 0], \
+            "Unused slots should be zeroed"
+
+    def test_empty_slot_ids_zeros_all(self):
+        """Setting empty slot_ids zeros all 4 slots."""
+        from u3edit.save import PartyState, PRTY_OFF_SLOT_IDS
+        raw = bytearray(16)
+        raw[PRTY_OFF_SLOT_IDS:PRTY_OFF_SLOT_IDS + 4] = b'\xFF\xFF\xFF\xFF'
+        party = PartyState(raw)
+        party.slot_ids = []
+        assert party.slot_ids == [0, 0, 0, 0]
+
+    def test_full_slot_ids_still_works(self):
+        """Setting all 4 slot IDs still works correctly."""
+        from u3edit.save import PartyState
+        raw = bytearray(16)
+        party = PartyState(raw)
+        party.slot_ids = [1, 3, 7, 15]
+        assert party.slot_ids == [1, 3, 7, 15]
