@@ -116,17 +116,22 @@ def cmd_import(args) -> None:
 
     # Rebuild file: pack strings sequentially
     offset = 0
+    count = 0
     for entry in records:
         text = entry.get('text', '') if isinstance(entry, dict) else str(entry)
         encoded = encode_high_ascii(text, len(text))
         end = offset + len(encoded) + 1  # +1 for null terminator
         if end > len(data):
+            if count < len(records):
+                print(f"  Warning: file too small for all records, "
+                      f"wrote {count} of {len(records)}", file=sys.stderr)
             break
         data[offset:offset + len(encoded)] = encoded
         data[offset + len(encoded)] = 0x00
         offset = end
+        count += 1
 
-    print(f"Import: {len(records)} text record(s)")
+    print(f"Import: {count} text record(s)")
     if dry_run:
         print("Dry run - no changes written.")
         return
@@ -136,7 +141,7 @@ def cmd_import(args) -> None:
         backup_file(args.file)
     with open(output, 'wb') as f:
         f.write(data)
-    print(f"Imported {len(records)} text records to {output}")
+    print(f"Imported {count} text records to {output}")
 
 
 def register_parser(subparsers) -> None:

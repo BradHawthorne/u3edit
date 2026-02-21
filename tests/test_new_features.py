@@ -6524,3 +6524,45 @@ class TestSoundImportSizeValidation:
         err = capsys.readouterr().err
         assert 'Warning' in err
         assert '999' in err
+
+
+class TestTextImportOverflow:
+    """Text import should report actual records written, not total in JSON."""
+
+    def test_reports_actual_count(self, tmp_path, capsys):
+        """When file is too small, report count of records actually written."""
+        from u3edit.text import cmd_import
+        # Create a tiny 20-byte TEXT file
+        text_file = tmp_path / 'TEXT'
+        text_file.write_bytes(b'\x00' * 20)
+        # Create JSON with many long records that won't all fit
+        records = [{'text': 'ABCDEFGHIJ'} for _ in range(10)]  # 10 records, ~11 bytes each
+        json_file = tmp_path / 'text.json'
+        json_file.write_text(json.dumps(records))
+        args = type('A', (), {
+            'file': str(text_file), 'json_file': str(json_file),
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        cmd_import(args)
+        out = capsys.readouterr()
+        # Should report fewer than 10 records
+        assert 'Import: 1 text record(s)' in out.out
+        assert 'Warning' in out.err
+        assert 'wrote 1 of 10' in out.err
+
+    def test_all_fit_no_warning(self, tmp_path, capsys):
+        """When all records fit, report total count and no warning."""
+        from u3edit.text import cmd_import
+        text_file = tmp_path / 'TEXT'
+        text_file.write_bytes(b'\x00' * 200)
+        records = [{'text': 'HI'}, {'text': 'BYE'}]  # 3+4=7 bytes
+        json_file = tmp_path / 'text.json'
+        json_file.write_text(json.dumps(records))
+        args = type('A', (), {
+            'file': str(text_file), 'json_file': str(json_file),
+            'output': None, 'backup': False, 'dry_run': False,
+        })()
+        cmd_import(args)
+        out = capsys.readouterr()
+        assert 'Import: 2 text record(s)' in out.out
+        assert 'Warning' not in out.err
