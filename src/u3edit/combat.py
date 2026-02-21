@@ -366,17 +366,23 @@ def cmd_import(args) -> None:
                 tile_changes += 1
             data[offset] = new_val
 
-    # Import monster positions
+    # Import monster positions (accept list or dict-of-dicts format)
     pos_changes = 0
-    for i, m in enumerate(jdata.get('monsters', [])[:CON_MONSTER_COUNT]):
+    raw_mons = jdata.get('monsters', [])
+    if isinstance(raw_mons, dict):
+        raw_mons = [raw_mons[str(i)] for i in sorted(int(k) for k in raw_mons)]
+    for i, m in enumerate(raw_mons[:CON_MONSTER_COUNT]):
         nx, ny = m.get('x', 0), m.get('y', 0)
         if data[CON_MONSTER_X_OFFSET + i] != nx or data[CON_MONSTER_Y_OFFSET + i] != ny:
             pos_changes += 1
         data[CON_MONSTER_X_OFFSET + i] = nx
         data[CON_MONSTER_Y_OFFSET + i] = ny
 
-    # Import PC positions
-    for i, p in enumerate(jdata.get('pcs', [])[:CON_PC_COUNT]):
+    # Import PC positions (accept list or dict-of-dicts format)
+    raw_pcs = jdata.get('pcs', [])
+    if isinstance(raw_pcs, dict):
+        raw_pcs = [raw_pcs[str(i)] for i in sorted(int(k) for k in raw_pcs)]
+    for i, p in enumerate(raw_pcs[:CON_PC_COUNT]):
         nx, ny = p.get('x', 0), p.get('y', 0)
         if data[CON_PC_X_OFFSET + i] != nx or data[CON_PC_Y_OFFSET + i] != ny:
             pos_changes += 1

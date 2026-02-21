@@ -478,7 +478,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-731 tests covering all modules with synthesized game data (no real game files needed).
+816 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 
@@ -499,6 +499,99 @@ pytest -v
 | C-1 | combat | Fixed to_dict() filtering out monsters at position (0,0) |
 | R-5 | roster | Fixed gender setter crash on raw int input |
 | R-6 | roster | Added HP > max_hp validation check |
+
+## Total Conversion Pipeline
+
+u3edit includes a complete framework for building total game conversions — replacing every asset (graphics, maps, dialog, monsters, sound) with original content.
+
+### Getting Started
+
+```bash
+# Copy the template to start a new conversion
+cp -r conversions/TEMPLATE conversions/my-game
+
+# Follow the checklist
+cat conversions/TEMPLATE/CHECKLIST.md
+
+# Write your story using the template
+cat conversions/TEMPLATE/STORY_TEMPLATE.md
+```
+
+### Pipeline Tools
+
+**Tile Compiler** — text-art tile definitions to SHPS binary:
+
+```bash
+# Decompile existing tiles to editable text-art
+python conversions/tools/tile_compiler.py decompile SHPS#060800 --output tiles.tiles
+
+# Edit tiles.tiles (7x8 pixel grids, '#'=on '.'=off)
+# Compile back to import commands
+python conversions/tools/tile_compiler.py compile tiles.tiles --format json > tiles.json
+u3edit shapes import SHPS#060800 tiles.json
+```
+
+**Map Compiler** — text-art maps to game binary:
+
+```bash
+# Decompile a map to editable text-art
+python conversions/tools/map_compiler.py decompile MAPA#061000 --output mapa.map
+
+# Edit mapa.map (single-char tiles: ~=water .=grass ^=mountain etc.)
+# Compile back
+python conversions/tools/map_compiler.py compile mapa.map --output mapa.json
+u3edit map import MAPA#061000 mapa.json
+```
+
+**Dialog** — round-trip text editing:
+
+```bash
+u3edit tlk extract TLKA tlka.txt    # Decompile to plain text
+# Edit tlka.txt with any editor
+u3edit tlk build tlka.txt TLKA      # Compile back to binary
+```
+
+**Name Compiler** — text-first name table editor:
+
+```bash
+# Decompile current names from engine binary
+python conversions/tools/name_compiler.py decompile ULT3 --output names.names
+
+# Edit names.names (one name per line, # comments for groups)
+# Validate budget (891 usable bytes)
+python conversions/tools/name_compiler.py validate names.names
+
+# Compile and apply
+python conversions/tools/name_compiler.py compile names.names | \
+  xargs u3edit patch edit ULT3 --region name-table --data
+```
+
+**Verification** — confirm all assets were replaced:
+
+```bash
+python conversions/tools/verify.py path/to/GAME/ --vanilla path/to/ORIGINAL/
+```
+
+### Applying a Conversion
+
+Each conversion includes an `apply.sh` script that runs all phases:
+
+```bash
+bash conversions/voidborn/apply.sh path/to/game.po
+```
+
+### Voidborn Reference Implementation
+
+`conversions/voidborn/` contains a complete total conversion ("Voidborn: Ashes of Sosaria") with text-first source files for every game asset:
+
+- **13 bestiary** JSON files (monsters for all encounter zones)
+- **9 combat** JSON files (themed 11x11 battlefields)
+- **19 dialog** TXT files (town + dungeon NPC text)
+- **20 map** files (13 surface 64x64 + 7 dungeon 8x16x16)
+- **256 tile** pixel art definitions
+- **Name table** with all custom terrain/monster/weapon/armor/spell names
+- **4 special** location JSON files (shrines, fountains)
+- **Title** screen text
 
 ## License
 

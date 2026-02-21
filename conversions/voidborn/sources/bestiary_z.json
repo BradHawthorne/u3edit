@@ -1,0 +1,145 @@
+{
+  "description": "Voidborn Bosses (MONZ)",
+  "monsters": {
+    "0": {
+      "hp": 200,
+      "attack": 90,
+      "defense": 65,
+      "speed": 20,
+      "boss": true,
+      "description": "Spore Colossus"
+    },
+    "1": {
+      "hp": 203,
+      "attack": 95,
+      "defense": 70,
+      "speed": 18,
+      "boss": true,
+      "negate": true,
+      "description": "Null Behemoth"
+    },
+    "2": {
+      "hp": 207,
+      "attack": 98,
+      "defense": 72,
+      "speed": 22,
+      "boss": true,
+      "description": "Rift Warden"
+    },
+    "3": {
+      "hp": 211,
+      "attack": 100,
+      "defense": 75,
+      "speed": 16,
+      "boss": true,
+      "negate": true,
+      "description": "The Drowned King"
+    },
+    "4": {
+      "hp": 214,
+      "attack": 105,
+      "defense": 78,
+      "speed": 20,
+      "boss": true,
+      "description": "Abyss Guardian"
+    },
+    "5": {
+      "hp": 218,
+      "attack": 108,
+      "defense": 80,
+      "speed": 14,
+      "boss": true,
+      "negate": true,
+      "description": "Void Colossus"
+    },
+    "6": {
+      "hp": 222,
+      "attack": 110,
+      "defense": 82,
+      "speed": 18,
+      "boss": true,
+      "negate": true,
+      "description": "The Eyeless Throne"
+    },
+    "7": {
+      "hp": 225,
+      "attack": 115,
+      "defense": 85,
+      "speed": 15,
+      "boss": true,
+      "description": "Breach Titan"
+    },
+    "8": {
+      "hp": 229,
+      "attack": 118,
+      "defense": 88,
+      "speed": 20,
+      "boss": true,
+      "negate": true,
+      "description": "Entropy Lord"
+    },
+    "9": {
+      "hp": 233,
+      "attack": 120,
+      "defense": 90,
+      "speed": 12,
+      "boss": true,
+      "negate": true,
+      "description": "The Hungering Maw"
+    },
+    "10": {
+      "hp": 236,
+      "attack": 125,
+      "defense": 92,
+      "speed": 18,
+      "boss": true,
+      "negate": true,
+      "description": "Void Wyrm"
+    },
+    "11": {
+      "hp": 240,
+      "attack": 130,
+      "defense": 95,
+      "speed": 16,
+      "boss": true,
+      "negate": true,
+      "description": "The Silence"
+    },
+    "12": {
+      "hp": 244,
+      "attack": 135,
+      "defense": 98,
+      "speed": 14,
+      "boss": true,
+      "negate": true,
+      "description": "Shard Keeper"
+    },
+    "13": {
+      "hp": 247,
+      "attack": 140,
+      "defense": 99,
+      "speed": 12,
+      "boss": true,
+      "negate": true,
+      "description": "Herald of the Breach"
+    },
+    "14": {
+      "hp": 251,
+      "attack": 145,
+      "defense": 99,
+      "speed": 15,
+      "boss": true,
+      "negate": true,
+      "description": "Void Avatar"
+    },
+    "15": {
+      "hp": 255,
+      "attack": 150,
+      "defense": 99,
+      "speed": 20,
+      "boss": true,
+      "negate": true,
+      "description": "The Voidborn"
+    }
+  }
+}

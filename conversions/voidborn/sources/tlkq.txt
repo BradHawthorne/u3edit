@@ -1,0 +1,39 @@
+# TLKQ - Abyss of Time
+# NPCs: Temporal echo, frozen adventurer
+# Theme: Time distortion, loops, entropy
+
+# Record 0 - Temporal Echo
+You have been here
+before. You will
+be here again. The
+loop tightens with
+each passage.
+---
+# Record 1 - Temporal Echo
+I am you. Or I was
+you. Or I will be.
+The tenses break
+down this deep.
+It does not matter.
+---
+# Record 2 - Frozen Adventurer
+I reached for the
+Shard and time
+stopped. I have
+watched centuries
+pass in stillness.
+---
+# Record 3 - Frozen Adventurer
+The Shard of Hours
+freezes what it
+touches. Do not
+grasp it with bare
+hands. Wrap it.
+---
+# Record 4 - Carved Warning
+TIME IS THE FIRST
+THING THE VOID
+CONSUMES. IF YOU
+FORGET THE SUN
+YOU ARE ALREADY
+LOST.

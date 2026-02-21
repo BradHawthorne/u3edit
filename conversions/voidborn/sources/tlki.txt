@@ -1,0 +1,76 @@
+# TLKI - Ironhold East
+# NPCs: Mine Boss, Gem Dealer, Engineer, Miners
+# Theme: Mining gems, underground trade, tunnels
+
+# Record 0 - Mine Boss
+The eastern shafts
+still produce but
+we lose miners to
+cave-ins weekly.
+The stone is wrong.
+---
+# Record 1 - Mine Boss (gems)
+Void crystals fetch
+a high price. They
+resonate near rift
+energy. Dangerous
+to mine though.
+---
+# Record 2 - Mine Boss (warning)
+Shaft seven is
+sealed. Something
+lives down there
+now. We hear it
+scratching.
+---
+# Record 3 - Gem Dealer
+I buy raw and sell
+cut. Void crystals
+are unstable but
+they amplify any
+enchantment.
+---
+# Record 4 - Gem Dealer (trade)
+Bring me uncut
+stones from the
+deep shafts and I
+will pay double
+what the surface
+traders offer.
+---
+# Record 5 - Engineer
+The tunnels connect
+to something older.
+Pre-Breach ruins
+carved by hands
+that were not human.
+---
+# Record 6 - Engineer (discovery)
+I found markings
+in the deep tunnels
+that match the
+Sigil patterns.
+Someone sealed
+something here.
+---
+# Record 7 - Miner
+The deeper we dig
+the warmer it gets.
+Not natural warmth.
+It feels like
+being watched.
+---
+# Record 8 - Miner (rumor)
+Old Gareth says he
+found a passage to
+an Abyss entrance
+in the lowest
+shaft. He drinks
+though.
+---
+# Record 9 - Ore Sorter
+I sort the rubble.
+Sometimes I find
+teeth in the ore.
+Not animal teeth.
+Something else.

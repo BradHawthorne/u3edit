@@ -1,0 +1,76 @@
+# TLKL - Deep Reef
+# NPCs: Coral Sage, Shell Trader, Diver, Reef folk
+# Theme: Ancient lore, underwater trade, exploration
+
+# Record 0 - Coral Sage
+The reef predates
+the Breach by eons.
+It remembers a
+time before even
+the old kingdoms.
+---
+# Record 1 - Coral Sage (lore)
+The coral sings at
+night. Not music.
+Warnings. It knows
+the void touches
+the deep waters.
+---
+# Record 2 - Coral Sage (knowledge)
+A Shard rests in
+the deepest trench.
+The reef grew
+around it as if
+protecting it.
+---
+# Record 3 - Shell Trader
+Shells from the
+deep glow faintly.
+They ward against
+minor void energy.
+Not cheap though.
+---
+# Record 4 - Shell Trader (wares)
+I have diving bells
+and pressure salves.
+The deep trenches
+crush the careless.
+Come prepared.
+---
+# Record 5 - Diver
+I have seen things
+in the deep that
+have no name. They
+watch from crevices
+with too many eyes.
+---
+# Record 6 - Diver (route)
+The trench entrance
+is south of the
+main reef shelf.
+Follow the biolum
+coral. It marks
+the safe path.
+---
+# Record 7 - Diver (warning)
+The creatures that
+divide in two when
+struck infest the
+lower depths. Fire
+does not work
+underwater.
+---
+# Record 8 - Reef Elder
+Our ancestors built
+on the reef because
+the void cannot
+easily reach
+through salt water.
+---
+# Record 9 - Fisher
+The fish have
+changed. Extra
+fins. Wrong colors.
+I still eat them.
+What choice is
+there?

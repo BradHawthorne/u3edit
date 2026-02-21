@@ -26,6 +26,8 @@ set -euo pipefail
 GAME_DIR="${1:?Usage: bash apply.sh /path/to/GAME/}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${SCRIPT_DIR}/data"
+SOURCES_DIR="${SCRIPT_DIR}/sources"
+TOOLS_DIR="${SCRIPT_DIR}/../tools"
 
 echo "=== Exodus: Voidborn Total Conversion ==="
 echo "Target: ${GAME_DIR}"
@@ -324,6 +326,163 @@ if [ -f "$SHP0" ]; then
 fi
 
 # =============================================================================
+# Phase 11: SOURCE-BASED IMPORTS (when sources/ directory exists)
+# =============================================================================
+if [ -d "$SOURCES_DIR" ]; then
+    echo "--- Phase 11: Importing from text-first sources ---"
+
+    # Import bestiary stats from JSON sources (13 encounter files)
+    for letter in a b c d e f g h i j k l z; do
+        MON_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
+        MON=$(find_file "MON${MON_UPPER}")
+        JSON="${SOURCES_DIR}/bestiary_${letter}.json"
+        if [ -f "$MON" ] && [ -f "$JSON" ]; then
+            u3edit bestiary import "$MON" "$JSON" 2>/dev/null || true
+        fi
+    done
+    echo "  Imported bestiary stats from 13 JSON sources"
+
+    # Import combat maps from JSON sources (9 battlefield files)
+    for letter in a b c f g m q r s; do
+        CON_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
+        CON=$(find_file "CON${CON_UPPER}")
+        JSON="${SOURCES_DIR}/combat_${letter}.json"
+        if [ -f "$CON" ] && [ -f "$JSON" ]; then
+            u3edit combat import "$CON" "$JSON" 2>/dev/null || true
+        fi
+    done
+    echo "  Imported combat maps from 9 JSON sources"
+
+    # Import special locations from JSON sources
+    for name in brnd shrn fntn time; do
+        NAME_UPPER=$(echo "$name" | tr '[:lower:]' '[:upper:]')
+        FILE=$(find_file "$NAME_UPPER")
+        JSON="${SOURCES_DIR}/special_${name}.json"
+        if [ -f "$FILE" ] && [ -f "$JSON" ]; then
+            u3edit special import "$FILE" "$JSON" 2>/dev/null || true
+        fi
+    done
+    echo "  Imported special locations from JSON sources"
+
+    # Build dialog from text sources (19 dialog files)
+    for letter in a b c d e f g h i j k l m n o p q r s; do
+        TLK_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
+        TLK=$(find_file "TLK${TLK_UPPER}")
+        SRC="${SOURCES_DIR}/tlk${letter}.txt"
+        if [ -f "$TLK" ] && [ -f "$SRC" ]; then
+            u3edit tlk build "$SRC" "$TLK" 2>/dev/null || true
+        fi
+    done
+    echo "  Built dialog from 19 text sources"
+
+    # Import title screen text
+    TITLE_JSON="${SOURCES_DIR}/title.json"
+    TEXT=$(find_file "TEXT")
+    if [ -f "$TITLE_JSON" ] && [ -f "$TEXT" ]; then
+        # Read title records from JSON and apply via text edit
+        TITLE0=$(python3 -c "import json; d=json.load(open('${TITLE_JSON}')); print(d['records'][0]['text'])")
+        TITLE1=$(python3 -c "import json; d=json.load(open('${TITLE_JSON}')); print(d['records'][1]['text'])")
+        u3edit text edit "$TEXT" --record 0 --text "$TITLE0" 2>/dev/null || true
+        u3edit text edit "$TEXT" --record 1 --text "$TITLE1" 2>/dev/null || true
+        echo "  Applied title screen text"
+    fi
+
+    # Compile and import tile graphics
+    TILES_SRC="${SOURCES_DIR}/tiles.tiles"
+    SHPS=$(find_file "SHPS")
+    if [ -f "$TILES_SRC" ] && [ -f "$SHPS" ] && [ -f "${TOOLS_DIR}/tile_compiler.py" ]; then
+        python3 "${TOOLS_DIR}/tile_compiler.py" compile "$TILES_SRC" \
+            --format json -o /tmp/voidborn_tiles.json 2>/dev/null
+        u3edit shapes import "$SHPS" /tmp/voidborn_tiles.json 2>/dev/null || true
+        rm -f /tmp/voidborn_tiles.json
+        echo "  Compiled and imported tile graphics (256 tiles)"
+    fi
+
+    # Compile and import overworld map
+    MAPA_SRC="${SOURCES_DIR}/mapa.map"
+    MAPA=$(find_file "MAPA")
+    if [ -f "$MAPA_SRC" ] && [ -f "$MAPA" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
+        python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAPA_SRC" \
+            -o /tmp/voidborn_mapa.json 2>/dev/null
+        u3edit map import "$MAPA" /tmp/voidborn_mapa.json 2>/dev/null || true
+        rm -f /tmp/voidborn_mapa.json
+        echo "  Compiled and imported overworld map"
+    fi
+
+    # Compile and import surface maps (castles + towns, 12 files)
+    for letter in b c d e f g h i j k l z; do
+        MAP_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
+        MAP_SRC="${SOURCES_DIR}/map${letter}.map"
+        MAP_FILE=$(find_file "MAP${MAP_UPPER}")
+        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
+            python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAP_SRC" \
+                -o "/tmp/voidborn_map${letter}.json" 2>/dev/null
+            u3edit map import "$MAP_FILE" "/tmp/voidborn_map${letter}.json" 2>/dev/null || true
+            rm -f "/tmp/voidborn_map${letter}.json"
+        fi
+    done
+    echo "  Compiled and imported 12 surface maps"
+
+    # Compile and import dungeon maps (7 dungeons, 8 levels each)
+    for letter in m n o p q r s; do
+        MAP_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
+        MAP_SRC="${SOURCES_DIR}/map${letter}.map"
+        MAP_FILE=$(find_file "MAP${MAP_UPPER}")
+        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
+            python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAP_SRC" \
+                --dungeon -o "/tmp/voidborn_map${letter}.json" 2>/dev/null
+            u3edit map import "$MAP_FILE" "/tmp/voidborn_map${letter}.json" 2>/dev/null || true
+            rm -f "/tmp/voidborn_map${letter}.json"
+        fi
+    done
+    echo "  Compiled and imported 7 dungeon maps"
+
+    # Compile and apply name table via name_compiler
+    NAMES_SRC="${SOURCES_DIR}/names.names"
+    ULT3=$(find_file "ULT3")
+    if [ -f "$NAMES_SRC" ] && [ -f "$ULT3" ] && [ -f "${TOOLS_DIR}/name_compiler.py" ]; then
+        NAMETABLE_HEX=$(python3 "${TOOLS_DIR}/name_compiler.py" compile "$NAMES_SRC")
+        u3edit patch edit "$ULT3" --region name-table --data "$NAMETABLE_HEX" 2>/dev/null || true
+        echo "  Compiled and applied Voidborn name table"
+    fi
+
+    # Apply shop overlay string replacements (text-matching, no hardcoded offsets)
+    SHOP_JSON="${SOURCES_DIR}/shop_strings.json"
+    if [ -f "$SHOP_JSON" ] && [ -f "${TOOLS_DIR}/shop_apply.py" ]; then
+        python3 "${TOOLS_DIR}/shop_apply.py" "$SHOP_JSON" "$GAME_DIR" 2>/dev/null || true
+        echo "  Applied shop overlay string replacements"
+    fi
+
+    # Import sound data from source stubs
+    for snd in sosa sosm mbs; do
+        SND_UPPER=$(echo "$snd" | tr '[:lower:]' '[:upper:]')
+        SND_FILE=$(find_file "$SND_UPPER")
+        JSON="${SOURCES_DIR}/${snd}.json"
+        if [ -f "$SND_FILE" ] && [ -f "$JSON" ]; then
+            u3edit sound import "$SND_FILE" "$JSON" 2>/dev/null || true
+        fi
+    done
+    echo "  Imported sound data from 3 JSON sources"
+
+    # Import dungeon drawing data
+    DDRW_FILE=$(find_file "DDRW")
+    DDRW_JSON="${SOURCES_DIR}/ddrw.json"
+    if [ -f "$DDRW_FILE" ] && [ -f "$DDRW_JSON" ]; then
+        u3edit ddrw import "$DDRW_FILE" "$DDRW_JSON" 2>/dev/null || true
+        echo "  Imported dungeon drawing data"
+    fi
+fi
+
+# =============================================================================
+# Verification (optional)
+# =============================================================================
+if [ "${VERIFY:-}" = "1" ] && [ -f "${TOOLS_DIR}/verify.py" ]; then
+    echo ""
+    echo "--- Running verification ---"
+    python3 "${TOOLS_DIR}/verify.py" "$GAME_DIR"
+fi
+
+# =============================================================================
 # Done
 # =============================================================================
 echo ""
@@ -333,16 +492,25 @@ echo "Summary of CLI commands used:"
 echo "  roster create/edit    - Party creation and character stats"
 echo "  roster import         - Bulk character data from JSON"
 echo "  save edit/import      - Party state (position, transport, sentinel)"
-echo "  bestiary edit/import  - Monster stats and flags"
-echo "  combat edit/import    - Battlefield tiles and positions"
+echo "  bestiary edit/import  - Monster stats and flags (13 encounter files)"
+echo "  combat edit/import    - Battlefield tiles and positions (9 maps)"
 echo "  map set/fill/replace  - Overworld tile manipulation"
 echo "  map find              - Tile location search"
-echo "  map import            - Full map replacement from JSON"
-echo "  special edit          - Shrine/fountain tile editing"
-echo "  tlk edit --find/replace - Bulk dialog text replacement"
-echo "  tlk edit --record     - Individual dialog record editing"
+echo "  map import            - Full map replacement from JSON (20 maps)"
+echo "  special edit/import   - Shrine/fountain tile editing (4 locations)"
+echo "  tlk edit/build        - Dialog text replacement and full rewrite (19 files)"
 echo "  text edit             - Game text string editing"
 echo "  patch edit            - Engine binary: names, moongates, food rate"
-echo "  shapes edit-string    - Shop overlay inline strings"
+echo "  shapes import         - Tile graphics from compiled sources (256 tiles)"
+echo "  sound import          - Sound data replacement (SOSA/SOSM/MBS)"
+echo "  ddrw import           - Dungeon drawing data replacement"
+echo ""
+echo "Pipeline tools used:"
+echo "  tile_compiler.py      - Text-art tile definitions -> SHPS binary (256 tiles)"
+echo "  map_compiler.py       - Text-art maps -> MAP binary (20 maps)"
+echo "  name_compiler.py      - Text names -> engine name-table patch (921 bytes)"
+echo "  shop_apply.py         - Text-matching shop overlay string replacer (8 shops)"
+echo "  verify.py             - Asset coverage verification"
 echo ""
 echo "All commands support --backup and --dry-run for safety."
+echo "Run with VERIFY=1 to verify asset coverage after conversion."

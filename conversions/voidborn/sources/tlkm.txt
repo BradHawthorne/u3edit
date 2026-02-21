@@ -1,0 +1,38 @@
+# TLKM - Abyss of Flame
+# NPCs: Trapped explorer, dying adventurer
+# Theme: Magma warnings, heat madness, desperation
+
+# Record 0 - Trapped Explorer
+Turn back. The
+magma rises when
+it senses you.
+This place is
+alive and hungry.
+---
+# Record 1 - Trapped Explorer (plea)
+I cannot feel my
+legs. The heat
+fused my armor to
+my skin. Leave me.
+Find the Shard.
+---
+# Record 2 - Dying Adventurer
+The Shard of Flame
+burns in the lowest
+chamber. I touched
+it. It showed me
+the Breach opening.
+---
+# Record 3 - Dying Adventurer (vision)
+In the vision I
+saw four seals
+breaking. The
+Voidborn poured
+through like water.
+---
+# Record 4 - Echo in Stone
+Fire cannot kill
+what was never
+alive. The void
+laughs at your
+flames.

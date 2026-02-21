@@ -1,0 +1,38 @@
+# TLKP - Abyss of Chains
+# NPCs: Chained prisoner, spectral guard
+# Theme: Bondage, forgotten prisoners, inescapable duty
+
+# Record 0 - Chained Prisoner
+They chained me
+here as a warning.
+I stole from the
+Cult. Now I feed
+what lives below.
+---
+# Record 1 - Chained Prisoner (info)
+The guard is dead
+but does not know
+it. His duty binds
+him past death.
+Pity him.
+---
+# Record 2 - Spectral Guard
+None shall pass.
+I guard this gate
+as I have for...
+how long has it
+been? I forget.
+---
+# Record 3 - Spectral Guard (lament)
+The Shard of Bonds
+holds me here. Take
+it if you can. Free
+me from this
+endless watch.
+---
+# Record 4 - Inscription
+The chains that
+bind the willing
+are the strongest.
+The void offers
+chains gladly.

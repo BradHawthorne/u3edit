@@ -1,0 +1,74 @@
+# TLKG - Riftwatch
+# NPCs: Rift Scholar, Merchant, Refugee, Watcher
+# Theme: Rift behavior, trade, danger warnings
+
+# Record 0 - Rift Scholar
+The rifts pulse in
+cycles. I have
+mapped their rhythm
+but cannot explain
+what drives them.
+---
+# Record 1 - Rift Scholar (theory)
+Each Sigil sealed
+corresponds to a
+weakening in the
+Breach. Four Sigils
+four wounds.
+---
+# Record 2 - Rift Scholar (warning)
+When a rift turns
+from violet to
+black it is about
+to discharge. Run.
+Do not look back.
+---
+# Record 3 - Merchant
+Trade is thin but
+I stock what the
+scavengers bring.
+Potions and blades
+mostly.
+---
+# Record 4 - Merchant (rumor)
+A caravan from the
+Deep Reef brought
+coral that glows
+near void energy.
+Useful for finding
+rifts.
+---
+# Record 5 - Refugee
+We came from the
+eastern bastions.
+The Void Cult
+overran them in
+a single night.
+---
+# Record 6 - Refugee (plea)
+If you venture
+east beware the
+Cult patrols. They
+take prisoners for
+their rituals.
+---
+# Record 7 - Watcher
+I stand here every
+night and count
+the rifts. There
+were twelve last
+month. Now thirty.
+---
+# Record 8 - Watcher (observation)
+The moongates
+flicker when the
+rifts open. They
+are connected
+somehow.
+---
+# Record 9 - Guard
+Riftwatch holds
+because we watch.
+The moment we stop
+looking is the
+moment we fall.

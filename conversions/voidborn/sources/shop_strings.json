@@ -1,0 +1,55 @@
+{
+  "description": "Voidborn shop overlay string replacements (SHP0-SHP7)",
+  "note": "Offsets must be discovered from real game files: u3edit shapes view SHP0 --strings",
+  "shops": {
+    "SHP0": {
+      "name": "Weapons",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "WEAPONS", "voidborn": "VOID ARMS"}
+      ]
+    },
+    "SHP1": {
+      "name": "Armor",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "ARMOUR", "voidborn": "WARD SHOP"}
+      ]
+    },
+    "SHP2": {
+      "name": "Food",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "FOOD", "voidborn": "RATIONS"}
+      ]
+    },
+    "SHP3": {
+      "name": "Tavern",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "TAVERN", "voidborn": "REFUGE"}
+      ]
+    },
+    "SHP4": {
+      "name": "Guild",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "GUILD", "voidborn": "SHADOWS"}
+      ]
+    },
+    "SHP5": {
+      "name": "Healer",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "HEALER", "voidborn": "MENDER"}
+      ]
+    },
+    "SHP6": {
+      "name": "Inn",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "INN", "voidborn": "HAVEN"}
+      ]
+    },
+    "SHP7": {
+      "name": "Oracle",
+      "strings": [
+        {"offset": "DISCOVER", "vanilla": "ORACLE", "voidborn": "ORACLE"}
+      ]
+    }
+  },
+  "discovery_workflow": "Run 'u3edit shapes view SHPn --strings' on each overlay file to find inline text offsets, then replace 'DISCOVER' with actual hex offsets."
+}

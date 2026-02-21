@@ -11,7 +11,7 @@ u3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides CL
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 731 tests
+pytest -v                            # Run all 816 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 u3edit roster view path/to/ROST      # CLI usage pattern
@@ -76,7 +76,7 @@ Each game data type lives in `src/u3edit/{module}.py` (roster, bestiary, map, tl
 - **`--dry-run`**: Shows changes without writing. Available on all `edit` and `import` commands across all modules.
 - **`--validate`**: Data validation — checks for out-of-range values, invalid codes, rule violations. Available on `view` and `edit` for roster (BCD integrity, race stat caps, class equipment limits, HP > max HP), bestiary (tile validity, flag bits), save (transport, party size, coordinates, sentinel), and combat (tile alignment, position bounds, overlapping starts).
 - **`--all`**: Bulk editing — applies edits to all non-empty slots/monsters (roster: `--slot`/`--all`, bestiary: `--monster`/`--all`).
-- **`import`**: Every editable module supports `import <binary_file> <json_file>` to apply JSON data. Roster import handles equipment (weapon/armor names) and inventory counts. Save import handles both PRTY party state and PLRS active characters.
+- **`import`**: Every editable module supports `import <binary_file> <json_file>` to apply JSON data. Roster import handles equipment (weapon/armor names) and inventory counts. Save import handles both PRTY party state and PLRS active characters. Bestiary import accepts dict-of-dicts JSON (`{"monsters": {"0": {...}}}`) with flag shortcuts (`boss`, `poison`, `sleep`, etc.) and warns when values are clamped to byte range (0-255).
 - **`map set/fill/replace/find`**: Map CLI editing — set tiles, fill regions, replace tile types, search.
 - **`combat edit`**: CLI editing — `--tile X Y VALUE`, `--monster-pos INDEX X Y`, `--pc-pos INDEX X Y`. Falls through to TUI when no CLI args provided.
 - **`special edit`**: CLI editing — `--tile X Y VALUE`. Falls through to TUI when no CLI args provided.
@@ -105,6 +105,20 @@ Setters follow a **named-first, raw-fallback** pattern for total conversion scen
 - Raw int/hex fallback (e.g., `status=0x47`, `transport=10`) — flexible for mods with custom values
 - Equipment setters accept full byte range (0-255), not just vanilla game indices
 - Validation is advisory (warnings via `--validate`) not enforced (no setter errors on valid bytes)
+
+### Total conversion pipeline (`conversions/`)
+
+Reusable framework for building full game replacements:
+
+- **`conversions/TEMPLATE/`**: Starter templates — `CHECKLIST.md` (every replaceable asset with u3edit command), `STORY_TEMPLATE.md` (narrative structure), `apply_template.sh` (11-phase skeleton script)
+- **`conversions/tools/tile_compiler.py`**: Text-art tile definitions (`.tiles` files) → SHPS binary. `#`=pixel on, `.`=off, 8 rows × 7 columns per glyph. Supports compile (to JSON/script) and decompile (binary→text-art) for round-trip editing.
+- **`conversions/tools/map_compiler.py`**: Text-art maps (`.map` files) → game binary. Uses `TILE_CHARS_REVERSE` / `DUNGEON_TILE_CHARS_REVERSE` from constants.py. Handles overworld (64×64) and dungeon (16×16 × 8 levels) formats. Compile and decompile modes.
+- **`conversions/tools/name_compiler.py`**: Text-first name table editor (`.names` files) → engine name-table patch hex. Compile, decompile, validate modes. Budget: 921 bytes total, 30 reserved for BLOAD DDRW tail = 891 usable.
+- **`conversions/tools/gen_maps.py`**: Programmatic map generator for guaranteed-dimension surface (64×64) and dungeon (8×16×16) maps.
+- **`conversions/tools/shop_apply.py`**: Text-matching shop overlay string replacer. Discovers inline strings via `extract_overlay_strings()` at runtime, matches by vanilla text, replaces with new text. No hardcoded offsets needed.
+- **`conversions/tools/verify.py`**: Post-conversion verification — checks file presence, sizes, and optionally compares hashes against vanilla to confirm all assets were replaced.
+- **`conversions/tools/MUSIC_FORMAT.md`**: MBS (AY-3-8910) byte format reference for sound editing.
+- **`conversions/voidborn/`**: Complete reference total conversion ("Voidborn") with full narrative (`VOIDBORN.md`), `apply.sh` (full pipeline), and text-first source files in `sources/`: 13 bestiary JSON, 9 combat JSON, 4 special JSON, 19 dialog TXT, 20 map text-art (13 surface + 7 dungeon), 256-tile pixel art, name table `.names`, title text JSON, shop overlay strings JSON, 3 sound JSONs (SOSA/SOSM/MBS), DDRW JSON.
 
 ## Data integrity rules
 

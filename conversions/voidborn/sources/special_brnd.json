@@ -1,0 +1,17 @@
+{
+  "description": "Shrine of Immolation (BRND) — Sigil of Flame",
+  "tiles": [
+    "***********",
+    "*.........*",
+    "*..*.*.*..*",
+    "*.........*",
+    "*..*..!..*.",
+    "*....%....*",
+    "*..*..!..*.",
+    "*.........*",
+    "*..*.*.*..*",
+    "*.........*",
+    "***********"
+  ],
+  "notes": "Ichor border, ankh at center, force fields guard access"
+}

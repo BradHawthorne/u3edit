@@ -1,0 +1,75 @@
+# TLKF - Grimwall (Grey equivalent)
+# NPCs: Commander Hask, Watchman, Healer, soldiers
+# Theme: Fortification, paranoia, the spreading corruption
+
+# Record 0 - Commander Hask
+Grimwall holds. We
+are the shield
+between the havens
+and what comes from
+the north.
+---
+# Record 1 - Commander Hask (paranoia)
+Trust no one who
+comes from beyond
+the wall after
+dark. The Thralls
+wear familiar faces.
+---
+# Record 2 - Commander Hask (intel)
+The corruption
+spreads from the
+spires. We burn
+what we can but it
+grows back faster.
+---
+# Record 3 - Watchman
+I stand the night
+watch. Last week I
+saw something in
+the ash. Tall.
+Thin. Too many
+limbs.
+---
+# Record 4 - Watchman (warning)
+The null fields
+flicker at dawn.
+That is when they
+test our walls.
+Stay alert.
+---
+# Record 5 - Healer
+I treat wounds the
+old way now. Magic
+draws the Voidborn's
+attention. Needles
+and herbs suffice.
+---
+# Record 6 - Healer (lore)
+The corruption
+enters through open
+wounds. If the
+ichor touches blood
+you have minutes.
+---
+# Record 7 - Soldier
+We lost the eastern
+tower last month.
+Something nests
+there now. Command
+says leave it.
+---
+# Record 8 - Soldier (rumor)
+The Last Wall to
+the south still
+stands. If Grimwall
+falls, that is our
+only retreat.
+---
+# Record 9 - Refugee
+I came from
+Riftwatch. The rift
+there pulses like
+a heartbeat now.
+The town won't
+last.

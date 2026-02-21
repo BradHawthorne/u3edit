@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Brine Sea encounters (MOND)",
+  "monsters": {
+    "0":  {"hp": 65,  "attack": 35, "defense": 25, "speed": 22},
+    "1":  {"hp": 75,  "attack": 40, "defense": 28, "speed": 18},
+    "2":  {"hp": 60,  "attack": 38, "defense": 22, "speed": 30},
+    "3":  {"hp": 90,  "attack": 48, "defense": 35, "speed": 15, "boss": true},
+    "4":  {"hp": 70,  "attack": 42, "defense": 26, "speed": 20},
+    "5":  {"hp": 80,  "attack": 45, "defense": 30, "speed": 16},
+    "6":  {"hp": 68,  "attack": 40, "defense": 24, "speed": 25},
+    "7":  {"hp": 100, "attack": 52, "defense": 38, "speed": 12, "boss": true},
+    "8":  {"hp": 62,  "attack": 36, "defense": 22, "speed": 24},
+    "9":  {"hp": 72,  "attack": 40, "defense": 26, "speed": 20},
+    "10": {"hp": 78,  "attack": 42, "defense": 28, "speed": 18},
+    "11": {"hp": 82,  "attack": 44, "defense": 30, "speed": 16},
+    "12": {"hp": 88,  "attack": 46, "defense": 32, "speed": 14},
+    "13": {"hp": 92,  "attack": 48, "defense": 34, "speed": 12},
+    "14": {"hp": 98,  "attack": 50, "defense": 36, "speed": 10},
+    "15": {"hp": 110, "attack": 55, "defense": 40, "speed": 15, "boss": true}
+  }
+}

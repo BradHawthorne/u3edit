@@ -1,0 +1,17 @@
+{
+  "description": "Ichor Wells (FNTN) — Risk/reward stat modification",
+  "tiles": [
+    "...........",
+    "...........",
+    "..***.***..",
+    "..*~*.*~*..",
+    "..***.***..",
+    "...........",
+    "..***.***..",
+    "..*~*.*~*..",
+    "..***.***..",
+    "...........",
+    "..........."
+  ],
+  "notes": "Four ichor pools (water tiles) surrounded by lava borders"
+}

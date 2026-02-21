@@ -1,0 +1,133 @@
+{
+  "description": "Voidborn Abyss L7-8 encounters (MONI)",
+  "monsters": {
+    "0": {
+      "hp": 200,
+      "attack": 80,
+      "defense": 55,
+      "speed": 20,
+      "description": "Abyssal Lurker"
+    },
+    "1": {
+      "hp": 203,
+      "attack": 84,
+      "defense": 58,
+      "speed": 18,
+      "description": "Rift Stalker"
+    },
+    "2": {
+      "hp": 207,
+      "attack": 88,
+      "defense": 60,
+      "speed": 22,
+      "poison": true,
+      "description": "Venom Wraith"
+    },
+    "3": {
+      "hp": 211,
+      "attack": 90,
+      "defense": 62,
+      "speed": 16,
+      "negate": true,
+      "description": "Null Devourer"
+    },
+    "4": {
+      "hp": 214,
+      "attack": 92,
+      "defense": 65,
+      "speed": 20,
+      "description": "Abyss Fiend"
+    },
+    "5": {
+      "hp": 218,
+      "attack": 95,
+      "defense": 68,
+      "speed": 14,
+      "boss": true,
+      "negate": true,
+      "description": "Void Sentinel"
+    },
+    "6": {
+      "hp": 222,
+      "attack": 98,
+      "defense": 70,
+      "speed": 18,
+      "description": "Breach Crawler"
+    },
+    "7": {
+      "hp": 225,
+      "attack": 100,
+      "defense": 72,
+      "speed": 15,
+      "negate": true,
+      "description": "Entropy Shade"
+    },
+    "8": {
+      "hp": 229,
+      "attack": 102,
+      "defense": 75,
+      "speed": 20,
+      "boss": true,
+      "description": "Pit Warden"
+    },
+    "9": {
+      "hp": 233,
+      "attack": 105,
+      "defense": 78,
+      "speed": 12,
+      "negate": true,
+      "description": "Null Tyrant"
+    },
+    "10": {
+      "hp": 236,
+      "attack": 108,
+      "defense": 80,
+      "speed": 18,
+      "sleep": true,
+      "description": "Dream Eater"
+    },
+    "11": {
+      "hp": 240,
+      "attack": 110,
+      "defense": 82,
+      "speed": 16,
+      "boss": true,
+      "negate": true,
+      "description": "Abyssal Overseer"
+    },
+    "12": {
+      "hp": 244,
+      "attack": 112,
+      "defense": 85,
+      "speed": 14,
+      "description": "Rift Colossus"
+    },
+    "13": {
+      "hp": 247,
+      "attack": 115,
+      "defense": 88,
+      "speed": 12,
+      "boss": true,
+      "negate": true,
+      "description": "Void Eater"
+    },
+    "14": {
+      "hp": 251,
+      "attack": 118,
+      "defense": 90,
+      "speed": 10,
+      "boss": true,
+      "negate": true,
+      "description": "Abyss Lord"
+    },
+    "15": {
+      "hp": 255,
+      "attack": 120,
+      "defense": 95,
+      "speed": 15,
+      "boss": true,
+      "negate": true,
+      "description": "The Unmaker"
+    }
+  }
+}

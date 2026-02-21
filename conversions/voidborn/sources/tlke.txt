@@ -1,0 +1,67 @@
+# TLKE - Duskhollow (Fawn equivalent)
+# NPCs: Elder Syl, Scout Brynn, Smith, townsfolk
+# Theme: Hints about the Flame Sigil location
+
+# Record 0 - Elder Syl
+Duskhollow endures
+because we remember
+the old ways. Fire
+still holds power
+here.
+---
+# Record 1 - Elder Syl (Sigil hint)
+The Shrine of
+Immolation lies
+where Brand once
+stood. Only flame
+can purify the
+corruption there.
+---
+# Record 2 - Elder Syl (warning)
+Pyric Horrors guard
+the shrine. They
+burn with stolen
+fire. Bring wards
+or perish.
+---
+# Record 3 - Scout Brynn
+I mapped a path
+through the ash
+plains to the
+shrine. Avoid the
+ichor pools.
+---
+# Record 4 - Scout Brynn (tactical)
+The Horrors are
+blind but sense
+heat. Approach from
+downwind if you
+can.
+---
+# Record 5 - Smith
+I forge what I can.
+The old steel rusts
+fast now. Only
+void-touched metal
+holds its edge.
+---
+# Record 6 - Smith (trade)
+Bring me crystal
+from the spires and
+I will forge you
+something worth
+carrying.
+---
+# Record 7 - Townsfolk
+They say the Flame
+Sigil burns so
+bright that even
+the Voidborn flinch
+from it.
+---
+# Record 8 - Townsfolk (rumor)
+A scout went to
+the shrine alone.
+Came back changed.
+Won't speak. Just
+stares at fire.

@@ -1,0 +1,73 @@
+# TLKH - Thornhaven
+# NPCs: Forager Wyn, Mycologist, Guide, Locals
+# Theme: Mushrooms, spore lore, forest paths
+
+# Record 0 - Forager Wyn
+The forest feeds us
+and poisons us in
+equal measure. You
+learn which is
+which or you die.
+---
+# Record 1 - Forager Wyn (mushrooms)
+The blue caps heal.
+The red caps kill.
+The black caps...
+those are not
+mushrooms at all.
+---
+# Record 2 - Forager Wyn (warning)
+Never eat anything
+that pulses. If it
+has a heartbeat it
+is not food. It is
+a lure.
+---
+# Record 3 - Mycologist
+The spores carry
+information. The
+fungal network is
+alive and it
+remembers.
+---
+# Record 4 - Mycologist (lore)
+Before the Breach
+these were normal
+woods. The void
+energy mutated
+everything.
+---
+# Record 5 - Mycologist (discovery)
+I have found spore
+patterns that match
+the Sigil glyphs.
+The forest knows
+the old seals.
+---
+# Record 6 - Guide
+Stay on the marked
+paths. The mycelium
+shifts overnight
+and opens sinkholes
+without warning.
+---
+# Record 7 - Guide (route)
+The northern path
+leads to the Spire
+ruins. The southern
+fork reaches the
+Ash Plains border.
+---
+# Record 8 - Local Elder
+Thornhaven has
+stood since before
+the Breach. The
+thorns protect us.
+They always have.
+---
+# Record 9 - Child Forager
+I found a glowing
+stone in the deep
+woods. Mama says
+it is a Shard
+fragment. Is it?

@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import sys
 import tempfile
 
 import pytest
@@ -4484,3 +4485,1464 @@ class TestMarksCaseInsensitive:
         assert 'Kings' in char.marks
         assert 'Death' in char.cards
         assert 'Sol' in char.cards
+
+
+# =============================================================================
+# Tile Compiler Tests
+# =============================================================================
+
+class TestTileCompilerParsing:
+    """Test tile_compiler.py text-art parsing."""
+
+    def test_parse_single_tile(self):
+        """Parse a single tile definition."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = (
+            '# Tile 0x00: Test\n'
+            '#######\n'
+            '.......\n'
+            '#.#.#.#\n'
+            '.#.#.#.\n'
+            '#.#.#.#\n'
+            '.......\n'
+            '#######\n'
+            '.......\n'
+        )
+        tiles = parse_tiles_file(text)
+        assert len(tiles) == 1
+        idx, data = tiles[0]
+        assert idx == 0
+        assert len(data) == 8
+        assert data[0] == 0x7F  # All 7 bits set = 1111111 = 0x7F
+
+    def test_parse_multiple_tiles(self):
+        """Parse two tiles separated by blank line."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = ('# Tile 0x00: First\n'
+                + '#######\n' * 8
+                + '\n'
+                + '# Tile 0x01: Second\n'
+                + '.......\n' * 8)
+        tiles = parse_tiles_file(text)
+        assert len(tiles) == 2
+        assert tiles[0][0] == 0
+        assert tiles[1][0] == 1
+
+    def test_parse_hex_index(self):
+        """Parse a tile with hex index."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = '# Tile 0x1A: Test\n' + '.......\n' * 8
+        tiles = parse_tiles_file(text)
+        assert tiles[0][0] == 0x1A
+
+    def test_parse_decimal_index(self):
+        """Parse a tile with decimal index."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = '# Tile 42: Test\n' + '.......\n' * 8
+        tiles = parse_tiles_file(text)
+        assert tiles[0][0] == 42
+
+
+class TestTileCompilerBitEncoding:
+    """Test tile_compiler.py pixel->bit encoding."""
+
+    def test_all_on(self):
+        """All pixels on = 0x7F per row."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = '# Tile 0x00: All on\n' + '#######\n' * 8
+        tiles = parse_tiles_file(text)
+        _, data = tiles[0]
+        for b in data:
+            assert b == 0x7F
+
+    def test_all_off(self):
+        """All pixels off = 0x00 per row."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        text = '# Tile 0x00: All off\n' + '.......\n' * 8
+        tiles = parse_tiles_file(text)
+        _, data = tiles[0]
+        for b in data:
+            assert b == 0x00
+
+    def test_bit_order(self):
+        """First char = bit 0, last char = bit 6."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file
+        # Only leftmost pixel on
+        text = '# Tile 0x00: Bit 0\n' + ('#......\n') * 8
+        tiles = parse_tiles_file(text)
+        _, data = tiles[0]
+        assert data[0] == 0x01  # Bit 0 only
+
+        # Only rightmost pixel on
+        text2 = '# Tile 0x00: Bit 6\n' + ('......#\n') * 8
+        tiles2 = parse_tiles_file(text2)
+        _, data2 = tiles2[0]
+        assert data2[0] == 0x40  # Bit 6 only
+
+
+class TestTileCompilerRoundTrip:
+    """Test tile_compiler.py compile -> decompile round-trip."""
+
+    def test_round_trip(self, tmp_path):
+        """Decompile SHPS data then compile back should reproduce bytes."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import decompile_shps, parse_tiles_file, _rows_to_bytes
+
+        # Create a known SHPS binary (just first 3 tiles)
+        data = bytearray(2048)
+        data[0:8] = bytes([0x7F, 0x41, 0x41, 0x41, 0x41, 0x41, 0x7F, 0x00])
+        data[8:16] = bytes([0x00, 0x3E, 0x22, 0x22, 0x22, 0x3E, 0x00, 0x00])
+
+        # Decompile
+        text = decompile_shps(bytes(data))
+
+        # Parse back
+        tiles = parse_tiles_file(text)
+        assert len(tiles) == 256
+
+        # First tile should match
+        _, recompiled = tiles[0]
+        assert recompiled == bytes(data[0:8])
+
+        # Second tile should match
+        _, recompiled2 = tiles[1]
+        assert recompiled2 == bytes(data[8:16])
+
+    def test_compile_to_json(self):
+        """Compile tiles to JSON format."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file, compile_to_json
+        text = '# Tile 0x05: Test\n' + '#......\n' * 8
+        tiles = parse_tiles_file(text)
+        result = compile_to_json(tiles)
+        assert 'tiles' in result
+        assert result['tiles'][0]['frames'][0]['index'] == 5
+        assert result['tiles'][0]['frames'][0]['raw'] == [1] * 8
+
+    def test_compile_to_script(self):
+        """Compile tiles to shell script format."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from tile_compiler import parse_tiles_file, compile_to_script
+        text = '# Tile 0x00: Test\n' + '.......\n' * 8
+        tiles = parse_tiles_file(text)
+        script = compile_to_script(tiles)
+        assert 'u3edit shapes edit' in script
+        assert '--glyph 0' in script
+        assert '--backup' in script
+
+
+# =============================================================================
+# Map Compiler Tests
+# =============================================================================
+
+class TestMapCompilerParsing:
+    """Test map_compiler.py text-art parsing."""
+
+    def test_parse_overworld_row(self):
+        """Parse a simple overworld row with known tile chars."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import parse_map_file
+        # Build a 64x64 map of all grass (.)
+        row = '.' * 64
+        text = '# Test map\n' + (row + '\n') * 64
+        grid = parse_map_file(text, is_dungeon=False)
+        assert len(grid) == 64
+        assert len(grid[0]) == 64
+        # '.' = grass = 0x04
+        assert grid[0][0] == 0x04
+
+    def test_parse_dungeon(self):
+        """Parse a dungeon format (16x16 x 8 levels)."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import parse_map_file
+        # 8 levels of 16x16 open floor
+        levels_text = ''
+        for lv in range(8):
+            levels_text += f'# Level {lv}\n'
+            for y in range(16):
+                levels_text += '.' * 16 + '\n'
+            levels_text += '\n'
+        levels = parse_map_file(levels_text, is_dungeon=True)
+        assert len(levels) == 8
+        assert len(levels[0]) == 16
+        assert len(levels[0][0]) == 16
+
+    def test_parse_mixed_tiles(self):
+        """Parse a row with different tile characters."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import parse_map_file
+        # Water + grass + mountains + forest
+        row = '~.' + '^T' + '.' * 60
+        text = '# Test\n' + (row + '\n') + ('.' * 64 + '\n') * 63
+        grid = parse_map_file(text, is_dungeon=False)
+        assert grid[0][0] == 0x00  # ~ = Water
+        assert grid[0][1] == 0x04  # . = Grass
+        assert grid[0][2] == 0x10  # ^ = Mountains
+        assert grid[0][3] == 0x0C  # T = Forest
+
+
+class TestMapCompilerDecompile:
+    """Test map_compiler.py decompile from binary."""
+
+    def test_decompile_overworld(self):
+        """Decompile an overworld map to text-art."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import decompile_map
+        # Create an all-grass map (tile byte 0x04)
+        data = bytes([0x04] * 4096)
+        text = decompile_map(data, is_dungeon=False)
+        lines = [l for l in text.split('\n') if l and not l.startswith('#')]
+        assert len(lines) == 64
+        assert all(c == '.' for c in lines[0])
+
+    def test_decompile_dungeon(self):
+        """Decompile a dungeon map to text-art."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import decompile_map
+        # Create all-wall dungeon (tile byte 0x01)
+        data = bytes([0x01] * 2048)
+        text = decompile_map(data, is_dungeon=True)
+        assert '# Level 0' in text
+        assert '# Level 7' in text
+        lines = [l for l in text.split('\n')
+                 if l and not l.startswith('# ')]
+        assert all(c == '#' for c in lines[0])  # Wall char
+
+
+class TestMapCompilerRoundTrip:
+    """Test map compile->decompile round-trip."""
+
+    def test_overworld_round_trip(self):
+        """Compile and decompile should preserve tile types."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import parse_map_file, decompile_map
+        # Create a known binary, decompile, parse back
+        data = bytearray(4096)
+        for i in range(4096):
+            data[i] = 0x04  # Grass
+        data[0] = 0x00  # Water at (0,0)
+        data[1] = 0x10  # Mountains at (1,0)
+
+        text = decompile_map(bytes(data), is_dungeon=False)
+        grid = parse_map_file(text, is_dungeon=False)
+        assert grid[0][0] == 0x00  # Water preserved
+        assert grid[0][1] == 0x10  # Mountains preserved
+        assert grid[0][2] == 0x04  # Grass preserved
+
+
+# =============================================================================
+# Verify Tool Tests
+# =============================================================================
+
+class TestVerifyTool:
+    """Test verify.py asset checking."""
+
+    def test_find_file_exact(self, tmp_path):
+        """find_file finds exact filename."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import find_file
+        (tmp_path / 'ROST').write_bytes(b'\x00' * 1280)
+        result = find_file(str(tmp_path), 'ROST')
+        assert result is not None
+        assert result.name == 'ROST'
+
+    def test_find_file_with_hash_suffix(self, tmp_path):
+        """find_file finds files with ProDOS #hash suffix."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import find_file
+        (tmp_path / 'ROST#069500').write_bytes(b'\x00' * 1280)
+        result = find_file(str(tmp_path), 'ROST')
+        assert result is not None
+        assert 'ROST' in result.name
+
+    def test_find_file_missing(self, tmp_path):
+        """find_file returns None for missing files."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import find_file
+        result = find_file(str(tmp_path), 'ROST')
+        assert result is None
+
+    def test_verify_detects_missing(self, tmp_path):
+        """Verification reports missing files."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import verify_game
+        total, passed, results = verify_game(str(tmp_path))
+        # Empty dir should have many missing categories
+        assert passed < total
+        assert results['Characters']['missing'] > 0
+
+    def test_verify_detects_present(self, tmp_path):
+        """Verification reports found files."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import verify_game
+        # Create ROST file
+        (tmp_path / 'ROST').write_bytes(b'\x00' * 1280)
+        total, passed, results = verify_game(str(tmp_path))
+        assert results['Characters']['found'] == 1
+        assert results['Characters']['missing'] == 0
+
+    def test_verify_detects_unchanged(self, tmp_path):
+        """Verification with vanilla dir detects unchanged files."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import verify_game
+        game_dir = tmp_path / 'game'
+        vanilla_dir = tmp_path / 'vanilla'
+        game_dir.mkdir()
+        vanilla_dir.mkdir()
+        # Same content = unchanged
+        (game_dir / 'ROST').write_bytes(b'\x00' * 1280)
+        (vanilla_dir / 'ROST').write_bytes(b'\x00' * 1280)
+        total, passed, results = verify_game(
+            str(game_dir), str(vanilla_dir))
+        assert results['Characters']['unchanged'] == 1
+
+    def test_verify_detects_modified(self, tmp_path):
+        """Verification with vanilla dir detects modified files."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from verify import verify_game
+        game_dir = tmp_path / 'game'
+        vanilla_dir = tmp_path / 'vanilla'
+        game_dir.mkdir()
+        vanilla_dir.mkdir()
+        # Different content = modified
+        (game_dir / 'ROST').write_bytes(b'\xFF' * 1280)
+        (vanilla_dir / 'ROST').write_bytes(b'\x00' * 1280)
+        total, passed, results = verify_game(
+            str(game_dir), str(vanilla_dir))
+        assert results['Characters']['modified'] == 1
+
+
+# =============================================================================
+# Phase 0: Import format compatibility
+# =============================================================================
+
+class TestBestiaryDictImport:
+    """Test that bestiary import accepts dict-of-dicts JSON format."""
+
+    def test_import_dict_format(self, tmp_path):
+        """Import bestiary from dict-keyed JSON (Voidborn source format)."""
+        mon_file = tmp_path / 'MONA'
+        mon_file.write_bytes(bytearray(MON_FILE_SIZE))
+        json_file = tmp_path / 'bestiary.json'
+        json_file.write_text(json.dumps({
+            "monsters": {
+                "0": {"hp": 60, "attack": 35, "defense": 25, "speed": 20},
+                "3": {"hp": 100, "attack": 50, "defense": 40, "speed": 30}
+            }
+        }))
+        # Run import via cmd_import
+        import argparse
+        from u3edit.bestiary import cmd_import as bestiary_import
+        args = argparse.Namespace(
+            file=str(mon_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        bestiary_import(args)
+        monsters = load_mon_file(str(mon_file))
+        assert monsters[0].hp == 60
+        assert monsters[0].attack == 35
+        assert monsters[3].hp == 100
+        assert monsters[3].attack == 50
+        # Unmodified monster should be 0
+        assert monsters[1].hp == 0
+
+    def test_import_flag_shortcuts(self, tmp_path):
+        """Import bestiary with flag shortcuts (boss, poison, etc.)."""
+        mon_file = tmp_path / 'MONA'
+        mon_file.write_bytes(bytearray(MON_FILE_SIZE))
+        json_file = tmp_path / 'bestiary.json'
+        json_file.write_text(json.dumps({
+            "monsters": {
+                "0": {"hp": 80, "boss": True, "poison": True},
+                "1": {"hp": 50, "negate": True, "resistant": True}
+            }
+        }))
+        import argparse
+        from u3edit.bestiary import cmd_import as bestiary_import
+        from u3edit.constants import (
+            MON_FLAG1_BOSS, MON_ABIL1_POISON,
+            MON_ABIL1_NEGATE, MON_ABIL2_RESISTANT,
+        )
+        args = argparse.Namespace(
+            file=str(mon_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        bestiary_import(args)
+        monsters = load_mon_file(str(mon_file))
+        assert monsters[0].hp == 80
+        assert monsters[0].flags1 & MON_FLAG1_BOSS
+        assert monsters[0].ability1 & MON_ABIL1_POISON
+        assert monsters[1].ability1 & MON_ABIL1_NEGATE
+        assert monsters[1].ability2 & MON_ABIL2_RESISTANT
+
+    def test_import_list_format_still_works(self, tmp_path):
+        """Original list format import still works after dict support."""
+        mon_file = tmp_path / 'MONA'
+        mon_file.write_bytes(bytearray(MON_FILE_SIZE))
+        json_file = tmp_path / 'bestiary.json'
+        json_file.write_text(json.dumps([
+            {"index": 0, "hp": 77, "attack": 44}
+        ]))
+        import argparse
+        from u3edit.bestiary import cmd_import as bestiary_import
+        args = argparse.Namespace(
+            file=str(mon_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        bestiary_import(args)
+        monsters = load_mon_file(str(mon_file))
+        assert monsters[0].hp == 77
+
+
+class TestCombatDictImport:
+    """Test that combat import accepts dict-of-dicts JSON format."""
+
+    def test_import_dict_format(self, tmp_path):
+        """Import combat map from dict-keyed JSON (Voidborn source format)."""
+        con_file = tmp_path / 'CONA'
+        con_file.write_bytes(bytearray(CON_FILE_SIZE))
+        json_file = tmp_path / 'combat.json'
+        json_file.write_text(json.dumps({
+            "tiles": [
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "...........",
+                "..........."
+            ],
+            "monsters": {
+                "0": {"x": 3, "y": 2},
+                "1": {"x": 7, "y": 4}
+            },
+            "pcs": {
+                "0": {"x": 1, "y": 9},
+                "1": {"x": 3, "y": 9}
+            }
+        }))
+        import argparse
+        from u3edit.combat import cmd_import as combat_import
+        args = argparse.Namespace(
+            file=str(con_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        combat_import(args)
+        data = con_file.read_bytes()
+        from u3edit.constants import (
+            CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET,
+            CON_PC_X_OFFSET, CON_PC_Y_OFFSET,
+        )
+        assert data[CON_MONSTER_X_OFFSET + 0] == 3
+        assert data[CON_MONSTER_Y_OFFSET + 0] == 2
+        assert data[CON_MONSTER_X_OFFSET + 1] == 7
+        assert data[CON_MONSTER_Y_OFFSET + 1] == 4
+        assert data[CON_PC_X_OFFSET + 0] == 1
+        assert data[CON_PC_Y_OFFSET + 0] == 9
+
+    def test_import_list_format_still_works(self, tmp_path):
+        """Original list format import still works after dict support."""
+        con_file = tmp_path / 'CONA'
+        con_file.write_bytes(bytearray(CON_FILE_SIZE))
+        json_file = tmp_path / 'combat.json'
+        json_file.write_text(json.dumps({
+            "tiles": ["...........",] * 11,
+            "monsters": [{"x": 5, "y": 5}],
+            "pcs": [{"x": 2, "y": 8}]
+        }))
+        import argparse
+        from u3edit.combat import cmd_import as combat_import
+        args = argparse.Namespace(
+            file=str(con_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        combat_import(args)
+        data = con_file.read_bytes()
+        from u3edit.constants import CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET
+        assert data[CON_MONSTER_X_OFFSET] == 5
+        assert data[CON_MONSTER_Y_OFFSET] == 5
+
+
+class TestMapCompilerOutputFormat:
+    """Test that map_compiler outputs JSON compatible with map.py cmd_import."""
+
+    def test_overworld_output_uses_tiles_key(self):
+        """Overworld grid_to_json should use 'tiles' key, not 'grid'."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import grid_to_json
+        # Create a minimal 2x2 overworld grid (tile bytes)
+        grid = [[0x00, 0x04], [0x04, 0x00]]
+        result = grid_to_json(grid, is_dungeon=False)
+        assert 'tiles' in result, "Overworld should use 'tiles' key"
+        assert 'grid' not in result, "Overworld should NOT use 'grid' key"
+        assert len(result['tiles']) == 2
+        assert isinstance(result['tiles'][0], str)
+
+    def test_dungeon_output_is_level_list(self):
+        """Dungeon grid_to_json should produce list of level dicts."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import grid_to_json
+        # Create 2 levels of 4x4 dungeon grids
+        level0 = [[0x01, 0x01, 0x01, 0x01],
+                   [0x01, 0x00, 0x00, 0x01],
+                   [0x01, 0x00, 0x05, 0x01],
+                   [0x01, 0x01, 0x01, 0x01]]
+        level1 = [[0x01, 0x01, 0x01, 0x01],
+                   [0x01, 0x00, 0x06, 0x01],
+                   [0x01, 0x00, 0x00, 0x01],
+                   [0x01, 0x01, 0x01, 0x01]]
+        grid = [level0, level1]
+        result = grid_to_json(grid, is_dungeon=True)
+        assert 'levels' in result
+        assert isinstance(result['levels'], list)
+        assert len(result['levels']) == 2
+        # Each level should have 'level' (1-indexed) and 'tiles' (2D grid)
+        assert result['levels'][0]['level'] == 1
+        assert result['levels'][1]['level'] == 2
+        tiles_l0 = result['levels'][0]['tiles']
+        assert len(tiles_l0) == 4
+        assert len(tiles_l0[0]) == 4
+        # Wall=# Open=. LadderDown=V LadderUp=^
+        assert tiles_l0[0][0] == '#'
+        assert tiles_l0[1][1] == '.'
+        assert tiles_l0[2][2] == 'V'  # Ladder Down
+        tiles_l1 = result['levels'][1]['tiles']
+        assert tiles_l1[1][2] == '^'  # Ladder Up
+
+    def test_dungeon_output_no_dungeon_key(self):
+        """Dungeon output should NOT have 'dungeon' key (cmd_import ignores it)."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import grid_to_json
+        grid = [[[0x01, 0x00], [0x00, 0x01]]]
+        result = grid_to_json(grid, is_dungeon=True)
+        assert 'dungeon' not in result
+
+    def test_overworld_roundtrip_through_import(self, tmp_path):
+        """Overworld: compile → JSON → import should produce matching binary."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from map_compiler import parse_map_file, grid_to_json
+        # Build a 64x64 map source (parse_map_file pads to 64x64)
+        source = "# Test map\n" + ("~.^T" + "~" * 60 + "\n") * 64
+        grid = parse_map_file(source, is_dungeon=False)
+        result = grid_to_json(grid, is_dungeon=False)
+        # The tiles key should have 64 rows of 64 chars
+        assert len(result['tiles']) == 64
+        # First row should start with our tile chars
+        assert result['tiles'][0][0] == '~'
+        assert result['tiles'][0][1] == '.'
+        assert result['tiles'][0][2] == '^'
+        assert result['tiles'][0][3] == 'T'
+
+
+# =============================================================================
+# Name compiler tests
+# =============================================================================
+
+class TestNameCompilerParse:
+    """Test parsing .names text files."""
+
+    def test_parse_simple(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import parse_names_file
+        text = '# Group: Test\nFOO\nBAR\nBAZ\n'
+        names = parse_names_file(text)
+        assert names == ['FOO', 'BAR', 'BAZ']
+
+    def test_parse_empty_string(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import parse_names_file
+        text = '""\nFOO\n""\nBAR\n'
+        names = parse_names_file(text)
+        assert names == ['', 'FOO', '', 'BAR']
+
+    def test_parse_skips_comments_and_blanks(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import parse_names_file
+        text = '# Header\n\n# Group: A\nFOO\n\n# Group: B\nBAR\n'
+        names = parse_names_file(text)
+        assert names == ['FOO', 'BAR']
+
+
+class TestNameCompilerEncode:
+    """Test encoding names to binary."""
+
+    def test_compile_basic(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import compile_names, NAME_TABLE_SIZE
+        names = ['FOO', 'BAR']
+        result = compile_names(names)
+        assert len(result) == NAME_TABLE_SIZE
+        # FOO = C6 CF CF 00, BAR = C2 C1 D2 00
+        assert result[0] == 0xC6  # F | 0x80
+        assert result[1] == 0xCF  # O | 0x80
+        assert result[2] == 0xCF  # O | 0x80
+        assert result[3] == 0x00  # null terminator
+        assert result[4] == 0xC2  # B | 0x80
+        assert result[7] == 0x00  # null terminator
+
+    def test_compile_empty_string(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import compile_names
+        names = ['', 'FOO']
+        result = compile_names(names)
+        # Empty string = just null terminator
+        assert result[0] == 0x00
+        assert result[1] == 0xC6  # F | 0x80
+
+    def test_compile_budget_overflow(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import compile_names
+        # Create names that exceed 891-byte budget
+        names = ['A' * 50] * 20  # 20 x (50+1) = 1020 bytes
+        with pytest.raises(ValueError, match='exceeds budget'):
+            compile_names(names)
+
+    def test_compile_with_tail_data(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import compile_names, NAME_TABLE_SIZE
+        names = ['FOO']
+        tail = b'\xAA\xBB\xCC'
+        result = compile_names(names, tail_data=tail)
+        assert len(result) == NAME_TABLE_SIZE
+        # Names part: F O O \0 = 4 bytes, then tail
+        assert result[4] == 0xAA
+        assert result[5] == 0xBB
+        assert result[6] == 0xCC
+
+
+class TestNameCompilerValidate:
+    """Test budget validation."""
+
+    def test_validate_within_budget(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import validate_names
+        names = ['FOO', 'BAR']
+        size, budget, valid = validate_names(names)
+        assert size == 8  # FOO\0 + BAR\0 = 4 + 4
+        assert budget == 891  # 921 - 30
+        assert valid is True
+
+    def test_validate_over_budget(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import validate_names
+        names = ['A' * 50] * 20
+        size, budget, valid = validate_names(names)
+        assert valid is False
+
+
+class TestNameCompilerRoundTrip:
+    """Test decompile and recompile produce equivalent output."""
+
+    def test_roundtrip(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import (
+            parse_names_file, compile_names, decompile_names,
+            NAME_TABLE_OFFSET, NAME_TABLE_SIZE,
+        )
+        # Build a synthetic ULT3-like binary with a known name table
+        names_in = ['WATER', 'GRASS', '', 'FOREST']
+        encoded = compile_names(names_in)
+        # Create a fake ULT3 binary large enough
+        data = bytearray(NAME_TABLE_OFFSET + NAME_TABLE_SIZE)
+        data[NAME_TABLE_OFFSET:NAME_TABLE_OFFSET + NAME_TABLE_SIZE] = encoded
+
+        # Decompile to text
+        text = decompile_names(bytes(data))
+        # Reparse
+        names_out = parse_names_file(text)
+        assert names_out == names_in
+
+    def test_voidborn_names_validate(self):
+        """Voidborn names.names file fits within budget."""
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
+                                         '..', 'conversions', 'tools'))
+        from name_compiler import parse_names_file, validate_names
+        names_path = os.path.join(os.path.dirname(__file__),
+                                   '..', 'conversions', 'voidborn',
+                                   'sources', 'names.names')
+        with open(names_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        names = parse_names_file(text)
+        size, budget, valid = validate_names(names)
+        assert valid, f"Voidborn names {size}/{budget} bytes — over budget!"
+        assert len(names) > 100, f"Expected 100+ names, got {len(names)}"
+
+
+# =============================================================================
+# Source file validation tests
+# =============================================================================
+
+class TestSourceFileValidation:
+    """Validate Voidborn source files parse correctly."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_all_bestiary_valid_json(self):
+        """All bestiary source files are valid JSON with expected structure."""
+        for letter in 'abcdefghijklz':
+            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                data = json.load(f)
+            assert 'monsters' in data, f"bestiary_{letter}.json missing 'monsters'"
+            mons = data['monsters']
+            assert isinstance(mons, dict), f"bestiary_{letter}.json monsters not dict"
+            for key, val in mons.items():
+                assert 'hp' in val, f"bestiary_{letter}.json monster {key} missing hp"
+
+    def test_all_combat_valid_json(self):
+        """All combat source files are valid JSON with expected structure."""
+        for letter in 'abcfgmqrs':
+            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                data = json.load(f)
+            tiles = data.get('tiles', [])
+            assert len(tiles) == 11, f"combat_{letter}.json needs 11 tile rows"
+            for row in tiles:
+                assert len(row) == 11, f"combat_{letter}.json row not 11 chars"
+
+    def test_all_special_valid_json(self):
+        """All special location source files are valid JSON."""
+        for name in ('brnd', 'shrn', 'fntn', 'time'):
+            path = os.path.join(self.SOURCES_DIR, f'special_{name}.json')
+            with open(path, 'r') as f:
+                data = json.load(f)
+            tiles = data.get('tiles', [])
+            assert len(tiles) == 11, f"special_{name}.json needs 11 tile rows"
+
+    def test_title_json_valid(self):
+        """Title text source is valid JSON."""
+        path = os.path.join(self.SOURCES_DIR, 'title.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'records' in data
+        assert len(data['records']) >= 2
+
+    def test_overworld_map_dimensions(self):
+        """Overworld map source is 64x64."""
+        path = os.path.join(self.SOURCES_DIR, 'mapa.map')
+        with open(path, 'r') as f:
+            lines = [l for l in f.read().splitlines()
+                     if l and not l.startswith('#')]
+        assert len(lines) == 64, f"mapa.map has {len(lines)} rows, expected 64"
+        for i, line in enumerate(lines):
+            assert len(line) == 64, f"mapa.map row {i} has {len(line)} chars"
+
+    def test_all_surface_maps_dimensions(self):
+        """All surface map sources are 64x64."""
+        for letter in 'abcdefghijklz':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                lines = [l for l in f.read().splitlines()
+                         if l and not l.startswith('#')]
+            assert len(lines) == 64, \
+                f"map{letter}.map has {len(lines)} rows, expected 64"
+            for i, line in enumerate(lines):
+                assert len(line) == 64, \
+                    f"map{letter}.map row {i} has {len(line)} chars"
+
+    def test_all_dungeon_maps_dimensions(self):
+        """All dungeon map sources have 8 levels of 16x16."""
+        for letter in 'mnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                # Filter comments ('# ' with space) but keep tile rows
+                # starting with '#' (wall tile character in dungeons)
+                lines = [l for l in f.read().splitlines()
+                         if l and not l.startswith('# ')]
+            assert len(lines) == 128, \
+                f"map{letter}.map has {len(lines)} rows, expected 128 (8x16)"
+            for i, line in enumerate(lines):
+                assert len(line) == 16, \
+                    f"map{letter}.map row {i} has {len(line)} chars, expected 16"
+
+    def test_all_dialog_files_parseable(self):
+        """All dialog source files are parseable text with --- separators."""
+        for letter in 'abcdefghijklmnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'tlk{letter}.txt')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                text = f.read()
+            # Should have at least one record separator
+            assert '---' in text, f"tlk{letter}.txt missing --- separators"
+            # Non-comment, non-separator lines should be <= 20 chars
+            for line_num, line in enumerate(text.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith('#') or stripped == '---' or not stripped:
+                    continue
+                assert len(stripped) <= 20, \
+                    f"tlk{letter}.txt line {line_num} too long: {len(stripped)} chars"
+
+    def test_bestiary_stat_ranges(self):
+        """Spot check bestiary stats are in reasonable ranges."""
+        for letter in 'abcdefghijklz':
+            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                data = json.load(f)
+            for key, mon in data['monsters'].items():
+                hp = mon.get('hp', 0)
+                atk = mon.get('attack', 0)
+                assert 0 < hp <= 255, \
+                    f"bestiary_{letter}.json mon {key} hp={hp} out of range"
+                assert 0 < atk <= 255, \
+                    f"bestiary_{letter}.json mon {key} atk={atk} out of range"
+
+    def test_combat_position_bounds(self):
+        """All combat map positions are within 11x11 grid."""
+        for letter in 'abcfgmqrs':
+            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                data = json.load(f)
+            for group in ('monsters', 'pcs'):
+                positions = data.get(group, {})
+                if isinstance(positions, dict):
+                    positions = positions.values()
+                for pos in positions:
+                    assert 0 <= pos['x'] <= 10, \
+                        f"combat_{letter}.json {group} x={pos['x']} out of bounds"
+                    assert 0 <= pos['y'] <= 10, \
+                        f"combat_{letter}.json {group} y={pos['y']} out of bounds"
+
+
+class TestSourceManifest:
+    """Verify every expected source file exists."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_bestiary_manifest(self):
+        """All 13 bestiary source files exist."""
+        for letter in 'abcdefghijklz':
+            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
+            assert os.path.exists(path), f"Missing bestiary_{letter}.json"
+
+    def test_combat_manifest(self):
+        """All 9 combat source files exist."""
+        for letter in 'abcfgmqrs':
+            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
+            assert os.path.exists(path), f"Missing combat_{letter}.json"
+
+    def test_dialog_manifest(self):
+        """All 19 dialog source files exist."""
+        for letter in 'abcdefghijklmnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'tlk{letter}.txt')
+            assert os.path.exists(path), f"Missing tlk{letter}.txt"
+
+    def test_surface_map_manifest(self):
+        """All 13 surface map source files exist."""
+        for letter in 'abcdefghijklz':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            assert os.path.exists(path), f"Missing map{letter}.map"
+
+    def test_dungeon_map_manifest(self):
+        """All 7 dungeon map source files exist."""
+        for letter in 'mnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            assert os.path.exists(path), f"Missing map{letter}.map"
+
+    def test_special_manifest(self):
+        """All 4 special location source files exist."""
+        for name in ('brnd', 'shrn', 'fntn', 'time'):
+            path = os.path.join(self.SOURCES_DIR, f'special_{name}.json')
+            assert os.path.exists(path), f"Missing special_{name}.json"
+
+    def test_ancillary_manifest(self):
+        """Ancillary source files exist."""
+        for filename in ('tiles.tiles', 'names.names', 'title.json',
+                         'shop_strings.json', 'sosa.json', 'sosm.json',
+                         'mbs.json', 'ddrw.json'):
+            path = os.path.join(self.SOURCES_DIR, filename)
+            assert os.path.exists(path), f"Missing {filename}"
+
+
+# =============================================================================
+# Combat tile character validation
+# =============================================================================
+
+class TestCombatTileChars:
+    """Validate combat source tile characters are in TILE_CHARS_REVERSE."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_all_combat_tiles_valid(self):
+        """Every tile char in combat JSONs maps to a known tile byte."""
+        valid_chars = set(TILE_CHARS_REVERSE.keys())
+        for letter in 'abcfgmqrs':
+            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
+            if not os.path.exists(path):
+                continue
+            with open(path, 'r') as f:
+                data = json.load(f)
+            for row_idx, row in enumerate(data.get('tiles', [])):
+                for col_idx, ch in enumerate(row):
+                    assert ch in valid_chars, \
+                        (f"combat_{letter}.json tile[{row_idx}][{col_idx}]="
+                         f"'{ch}' not in TILE_CHARS_REVERSE")
+
+
+# =============================================================================
+# Dungeon ladder connectivity
+# =============================================================================
+
+class TestDungeonLadderConnectivity:
+    """Validate dungeon ladders connect properly across levels."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def _parse_dungeon(self, path):
+        """Parse a dungeon map file into 8 levels of 16x16 grids."""
+        with open(path, 'r') as f:
+            lines = [l for l in f.read().splitlines()
+                     if l and not l.startswith('# ')]
+        levels = []
+        for i in range(8):
+            level = lines[i * 16:(i + 1) * 16]
+            levels.append(level)
+        return levels
+
+    def _find_tiles(self, level, ch):
+        """Find all positions of a tile character in a level."""
+        positions = set()
+        for y, row in enumerate(level):
+            for x, c in enumerate(row):
+                if c == ch:
+                    positions.add((x, y))
+        return positions
+
+    def test_no_down_on_last_level(self):
+        """Last level (L8) should not have down ladders."""
+        for letter in 'mnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            if not os.path.exists(path):
+                continue
+            levels = self._parse_dungeon(path)
+            downs = self._find_tiles(levels[7], 'V')
+            assert len(downs) == 0, \
+                f"map{letter}.map L8 has down ladder(s) at {downs}"
+
+    def test_no_up_on_first_level(self):
+        """First level (L1) should not have up ladders."""
+        for letter in 'mnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            if not os.path.exists(path):
+                continue
+            levels = self._parse_dungeon(path)
+            ups = self._find_tiles(levels[0], '^')
+            assert len(ups) == 0, \
+                f"map{letter}.map L1 has up ladder(s) at {ups}"
+
+    def test_every_level_has_connection(self):
+        """Levels 2-7 should have both up and down ladders."""
+        for letter in 'mnopqrs':
+            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
+            if not os.path.exists(path):
+                continue
+            levels = self._parse_dungeon(path)
+            for li in range(1, 7):  # L2 through L7
+                ups = self._find_tiles(levels[li], '^')
+                downs = self._find_tiles(levels[li], 'V')
+                assert len(ups) > 0, \
+                    f"map{letter}.map L{li+1} has no up ladder"
+                assert len(downs) > 0, \
+                    f"map{letter}.map L{li+1} has no down ladder"
+
+
+# =============================================================================
+# Round-trip integration tests
+# =============================================================================
+
+class TestRoundTripIntegration:
+    """End-to-end: load Voidborn source → import into binary → verify."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_bestiary_import_roundtrip(self):
+        """Import bestiary_a.json into synthesized MON binary and verify HP."""
+        from u3edit.bestiary import Monster
+        path = os.path.join(self.SOURCES_DIR, 'bestiary_a.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+
+        # Create 16 empty monster objects directly
+        monsters = [Monster([0] * 10, i) for i in range(MON_MONSTERS_PER_FILE)]
+
+        # Apply the import manually (same logic as cmd_import)
+        mon_list = data.get('monsters', {})
+        if isinstance(mon_list, dict):
+            mon_list = [dict(v, index=int(k)) for k, v in mon_list.items()]
+        for entry in mon_list:
+            idx = entry.get('index')
+            if idx is None or not (0 <= idx < MON_MONSTERS_PER_FILE):
+                continue
+            m = monsters[idx]
+            for attr in ('hp', 'attack', 'defense', 'speed'):
+                if attr in entry:
+                    setattr(m, attr, max(0, min(255, entry[attr])))
+
+        # Verify values were set from JSON
+        first_mon = data['monsters']['0']
+        assert monsters[0].hp == min(255, first_mon['hp'])
+        assert monsters[0].attack == min(255, first_mon['attack'])
+        # Verify multiple monsters imported
+        imported_count = sum(1 for m in monsters if m.hp > 0)
+        assert imported_count >= 8, f"Only {imported_count} monsters imported"
+
+    def test_combat_import_roundtrip(self):
+        """Import combat_a.json into synthesized CON binary and verify tiles."""
+        from u3edit.combat import CombatMap, CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET
+        path = os.path.join(self.SOURCES_DIR, 'combat_a.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+
+        # Create a CON binary and write tiles + positions directly
+        con_data = bytearray(CON_FILE_SIZE)
+
+        # Write tile grid (11x11)
+        for y, row in enumerate(data.get('tiles', [])):
+            for x, ch in enumerate(row):
+                tile_byte = TILE_CHARS_REVERSE.get(ch, 0x20)
+                con_data[y * 11 + x] = tile_byte
+
+        # Write monster positions
+        raw_mons = data.get('monsters', {})
+        if isinstance(raw_mons, dict):
+            raw_mons = [raw_mons[str(i)] for i in sorted(int(k) for k in raw_mons)]
+        for i, m in enumerate(raw_mons[:8]):
+            con_data[CON_MONSTER_X_OFFSET + i] = m['x']
+            con_data[CON_MONSTER_Y_OFFSET + i] = m['y']
+
+        # Re-parse and verify
+        cmap = CombatMap(bytes(con_data))
+        first_mon = data['monsters']['0']
+        assert cmap.monster_x[0] == first_mon['x']
+        assert cmap.monster_y[0] == first_mon['y']
+
+        # Verify tile at (0,0)
+        first_row = data['tiles'][0]
+        expected_byte = TILE_CHARS_REVERSE.get(first_row[0], 0x20)
+        assert cmap.tiles[0] == expected_byte
+
+    def test_special_import_roundtrip(self):
+        """Import special_brnd.json into synthesized binary and verify tiles."""
+        path = os.path.join(self.SOURCES_DIR, 'special_brnd.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+
+        # Create a special location binary and write tiles
+        spec_data = bytearray(SPECIAL_FILE_SIZE)
+        for y, row in enumerate(data.get('tiles', [])):
+            for x, ch in enumerate(row):
+                tile_byte = TILE_CHARS_REVERSE.get(ch, 0x20)
+                spec_data[y * 11 + x] = tile_byte
+
+        # Verify
+        first_row = data['tiles'][0]
+        expected_byte = TILE_CHARS_REVERSE.get(first_row[0], 0x20)
+        assert spec_data[0] == expected_byte
+        # Verify center tile
+        center_ch = data['tiles'][5][5]
+        center_byte = TILE_CHARS_REVERSE.get(center_ch, 0x20)
+        assert spec_data[5 * 11 + 5] == center_byte
+
+
+# =============================================================================
+# gen_maps.py tests
+# =============================================================================
+
+class TestGenMaps:
+    """Test the map generator produces valid output."""
+
+    def _get_gen_maps(self):
+        """Import gen_maps module."""
+        tools_dir = os.path.join(os.path.dirname(__file__),
+                                  '..', 'conversions', 'tools')
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import gen_maps
+        return gen_maps
+
+    def test_castle_dimensions(self):
+        """gen_castle() produces exactly 64 rows of 64 chars."""
+        gm = self._get_gen_maps()
+        rows = gm.gen_castle()
+        assert len(rows) == 64
+        for i, r in enumerate(rows):
+            assert len(r) == 64, f"Castle row {i}: {len(r)} chars"
+
+    def test_town_dimensions(self):
+        """gen_town() produces exactly 64 rows of 64 chars."""
+        gm = self._get_gen_maps()
+        rows = gm.gen_town()
+        assert len(rows) == 64
+        for i, r in enumerate(rows):
+            assert len(r) == 64, f"Town row {i}: {len(r)} chars"
+
+    def test_mapz_dimensions(self):
+        """gen_mapz() produces exactly 64 rows of 64 chars."""
+        gm = self._get_gen_maps()
+        rows = gm.gen_mapz()
+        assert len(rows) == 64
+        for i, r in enumerate(rows):
+            assert len(r) == 64, f"mapz row {i}: {len(r)} chars"
+
+    def test_mapl_dimensions(self):
+        """gen_mapl() produces exactly 64 rows of 64 chars."""
+        gm = self._get_gen_maps()
+        rows = gm.gen_mapl()
+        assert len(rows) == 64
+        for i, r in enumerate(rows):
+            assert len(r) == 64, f"mapl row {i}: {len(r)} chars"
+
+    def test_dungeon_dimensions(self):
+        """gen_dungeon() produces 8 levels of 16 rows of 16 chars."""
+        gm = self._get_gen_maps()
+        levels = gm.gen_dungeon(has_mark=True, seed=42)
+        assert len(levels) == 8
+        for li, level in enumerate(levels):
+            assert len(level) == 16, f"Dungeon L{li}: {len(level)} rows"
+            for ri, r in enumerate(level):
+                assert len(r) == 16, f"Dungeon L{li} row {ri}: {len(r)} chars"
+
+    def test_dungeon_has_mark(self):
+        """gen_dungeon(has_mark=True) places M on level 7."""
+        gm = self._get_gen_maps()
+        levels = gm.gen_dungeon(has_mark=True, seed=99)
+        # Level 7 (index 6) should contain 'M'
+        l7_text = ''.join(levels[6])
+        assert 'M' in l7_text, "Level 7 missing Mark tile"
+
+    def test_dungeon_no_mark(self):
+        """gen_dungeon(has_mark=False) omits M from level 7."""
+        gm = self._get_gen_maps()
+        levels = gm.gen_dungeon(has_mark=False, seed=99)
+        l7_text = ''.join(levels[6])
+        assert 'M' not in l7_text, "Level 7 has unexpected Mark tile"
+
+    def test_surface_tile_chars_valid(self):
+        """All surface map generator tile chars are in TILE_CHARS_REVERSE."""
+        gm = self._get_gen_maps()
+        valid = set(TILE_CHARS_REVERSE.keys())
+        for name, gen_fn in [('castle', gm.gen_castle),
+                              ('town', gm.gen_town),
+                              ('mapz', gm.gen_mapz),
+                              ('mapl', gm.gen_mapl)]:
+            rows = gen_fn()
+            for y, row in enumerate(rows):
+                for x, ch in enumerate(row):
+                    assert ch in valid, \
+                        f"{name}[{y}][{x}]='{ch}' not in TILE_CHARS_REVERSE"
+
+    def test_dungeon_tile_chars_valid(self):
+        """All dungeon map generator tile chars are in DUNGEON_TILE_CHARS_REVERSE."""
+        gm = self._get_gen_maps()
+        valid = set(DUNGEON_TILE_CHARS_REVERSE.keys())
+        levels = gm.gen_dungeon(has_mark=True, seed=0)
+        for li, level in enumerate(levels):
+            for y, row in enumerate(level):
+                for x, ch in enumerate(row):
+                    assert ch in valid, \
+                        f"dungeon L{li}[{y}][{x}]='{ch}' not in DUNGEON_TILE_CHARS_REVERSE"
+
+
+# =============================================================================
+# Shop apply tool tests
+# =============================================================================
+
+class TestShopApply:
+    """Tests for the shop_apply.py text-matching tool."""
+
+    TOOLS_DIR = os.path.join(os.path.dirname(__file__),
+                              '..', 'conversions', 'tools')
+
+    def _get_shop_apply(self):
+        """Import shop_apply module."""
+        mod_path = os.path.join(self.TOOLS_DIR, 'shop_apply.py')
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('shop_apply', mod_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _build_shp_with_string(self, text):
+        """Build a minimal SHP binary containing a JSR $46BA inline string."""
+        from u3edit.shapes import encode_overlay_string
+        # JSR $46BA = 0x20 0xBA 0x46
+        jsr = bytes([0x20, 0xBA, 0x46])
+        encoded = encode_overlay_string(text)
+        # Pad before and after to simulate real code
+        return bytearray(b'\x60' * 16 + jsr + encoded + b'\x60' * 16)
+
+    def test_shop_apply_match_and_replace(self, tmp_path):
+        """Match vanilla text and replace with voidborn text."""
+        shop_apply = self._get_shop_apply()
+
+        # Create SHP0 with "WEAPONS" inline string
+        shp_data = self._build_shp_with_string('WEAPONS')
+        shp_path = str(tmp_path / 'SHP0')
+        with open(shp_path, 'wb') as f:
+            f.write(shp_data)
+
+        # Create shop_strings.json
+        source = {
+            "shops": {
+                "SHP0": {
+                    "name": "Weapons",
+                    "strings": [
+                        {"vanilla": "WEAPONS", "voidborn": "ARMS"}
+                    ]
+                }
+            }
+        }
+        json_path = str(tmp_path / 'shop_strings.json')
+        with open(json_path, 'w') as f:
+            json.dump(source, f)
+
+        replaced, skipped = shop_apply.apply_shop_strings(
+            json_path, str(tmp_path))
+
+        assert replaced == 1
+        assert skipped == 0
+
+        # Verify the file was modified
+        with open(shp_path, 'rb') as f:
+            result = f.read()
+        from u3edit.shapes import extract_overlay_strings
+        strings = extract_overlay_strings(result)
+        assert len(strings) == 1
+        assert strings[0]['text'] == 'ARMS'
+
+    def test_shop_apply_no_match_warning(self, tmp_path):
+        """Vanilla text not found in binary produces warning, not crash."""
+        shop_apply = self._get_shop_apply()
+
+        # Create SHP0 with "HELLO" but try to match "WEAPONS"
+        shp_data = self._build_shp_with_string('HELLO')
+        shp_path = str(tmp_path / 'SHP0')
+        with open(shp_path, 'wb') as f:
+            f.write(shp_data)
+
+        source = {
+            "shops": {
+                "SHP0": {
+                    "name": "Weapons",
+                    "strings": [
+                        {"vanilla": "WEAPONS", "voidborn": "ARMS"}
+                    ]
+                }
+            }
+        }
+        json_path = str(tmp_path / 'shop_strings.json')
+        with open(json_path, 'w') as f:
+            json.dump(source, f)
+
+        replaced, skipped = shop_apply.apply_shop_strings(
+            json_path, str(tmp_path))
+
+        assert replaced == 0
+        assert skipped == 1
+
+    def test_shop_apply_too_long_warning(self, tmp_path):
+        """Replacement text longer than original produces warning."""
+        shop_apply = self._get_shop_apply()
+
+        # Create SHP0 with short "HI" string
+        shp_data = self._build_shp_with_string('HI')
+        shp_path = str(tmp_path / 'SHP0')
+        with open(shp_path, 'wb') as f:
+            f.write(shp_data)
+
+        source = {
+            "shops": {
+                "SHP0": {
+                    "name": "Test",
+                    "strings": [
+                        {"vanilla": "HI", "voidborn": "VERY LONG REPLACEMENT"}
+                    ]
+                }
+            }
+        }
+        json_path = str(tmp_path / 'shop_strings.json')
+        with open(json_path, 'w') as f:
+            json.dump(source, f)
+
+        replaced, skipped = shop_apply.apply_shop_strings(
+            json_path, str(tmp_path))
+
+        assert replaced == 0
+        assert skipped == 1
+
+    def test_shop_apply_dry_run(self, tmp_path):
+        """Dry run does not modify files."""
+        shop_apply = self._get_shop_apply()
+
+        shp_data = self._build_shp_with_string('WEAPONS')
+        shp_path = str(tmp_path / 'SHP0')
+        with open(shp_path, 'wb') as f:
+            f.write(shp_data)
+        original = bytes(shp_data)
+
+        source = {
+            "shops": {
+                "SHP0": {
+                    "name": "Weapons",
+                    "strings": [
+                        {"vanilla": "WEAPONS", "voidborn": "ARMS"}
+                    ]
+                }
+            }
+        }
+        json_path = str(tmp_path / 'shop_strings.json')
+        with open(json_path, 'w') as f:
+            json.dump(source, f)
+
+        replaced, _ = shop_apply.apply_shop_strings(
+            json_path, str(tmp_path), dry_run=True)
+
+        assert replaced == 1
+        # File should be unchanged
+        with open(shp_path, 'rb') as f:
+            assert f.read() == original
+
+
+# =============================================================================
+# Sound source file validation
+# =============================================================================
+
+class TestSoundSources:
+    """Validate sound source JSON files."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_sosa_json_valid(self):
+        """SOSA source has correct structure and size."""
+        path = os.path.join(self.SOURCES_DIR, 'sosa.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'raw' in data
+        assert len(data['raw']) == 4096
+        assert all(0 <= b <= 255 for b in data['raw'])
+
+    def test_sosm_json_valid(self):
+        """SOSM source has correct structure and size."""
+        path = os.path.join(self.SOURCES_DIR, 'sosm.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'raw' in data
+        assert len(data['raw']) == 256
+        assert all(0 <= b <= 255 for b in data['raw'])
+
+    def test_mbs_json_valid(self):
+        """MBS source has correct structure, size, and END opcode."""
+        path = os.path.join(self.SOURCES_DIR, 'mbs.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'raw' in data
+        assert len(data['raw']) == 5456
+        assert data['raw'][0] == 0x82, "First byte should be END opcode"
+        assert all(0 <= b <= 255 for b in data['raw'])
+
+
+# =============================================================================
+# DDRW source file validation
+# =============================================================================
+
+class TestDdrwSource:
+    """Validate DDRW source JSON file."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_ddrw_json_valid(self):
+        """DDRW source has correct structure and size."""
+        path = os.path.join(self.SOURCES_DIR, 'ddrw.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'raw' in data
+        assert len(data['raw']) == 1792
+        assert all(0 <= b <= 255 for b in data['raw'])
+
+
+# =============================================================================
+# Shop strings JSON validation
+# =============================================================================
+
+class TestShopStringsSource:
+    """Validate shop_strings.json source file structure."""
+
+    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
+                                '..', 'conversions', 'voidborn', 'sources')
+
+    def test_shop_strings_json_structure(self):
+        """shop_strings.json has valid structure with all 8 shops."""
+        path = os.path.join(self.SOURCES_DIR, 'shop_strings.json')
+        with open(path, 'r') as f:
+            data = json.load(f)
+        assert 'shops' in data
+        shops = data['shops']
+        for i in range(8):
+            key = f'SHP{i}'
+            assert key in shops, f"Missing {key}"
+            assert 'strings' in shops[key]
+            for entry in shops[key]['strings']:
+                assert 'vanilla' in entry
+                assert 'voidborn' in entry

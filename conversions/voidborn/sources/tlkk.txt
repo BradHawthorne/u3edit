@@ -1,0 +1,75 @@
+# TLKK - The Last Wall
+# NPCs: Garrison Commander, Veteran, Spy, Soldiers
+# Theme: Final warnings, combat intel, desperate defense
+
+# Record 0 - Garrison Commander
+This is the last
+barrier between
+the settled lands
+and the Breach
+itself. Hold fast.
+---
+# Record 1 - Garrison Commander (orders)
+We cannot hold
+forever. Find the
+Shards. Seal the
+Breach. That is
+our only hope.
+---
+# Record 2 - Garrison Commander (warning)
+Beyond this wall
+reality thins. You
+will see things
+that cannot exist.
+Trust your blade
+not your eyes.
+---
+# Record 3 - Veteran
+I have fought the
+void for ten years.
+Every battle costs
+more than the last.
+We are losing.
+---
+# Record 4 - Veteran (combat)
+The boss creatures
+negate magic. Do
+not rely on spells
+alone. Carry steel
+and use it.
+---
+# Record 5 - Veteran (confession)
+I dream of the
+void now. It shows
+me a world without
+pain. I know it
+lies. I think.
+---
+# Record 6 - Spy
+I crossed beyond
+the wall and came
+back. Barely. The
+Cult has built a
+fortress there.
+---
+# Record 7 - Spy (intel)
+The Void Cult
+channels energy
+from the rifts to
+feed the Voidborn.
+Cut the channels
+cut the power.
+---
+# Record 8 - Soldier
+My first posting
+and they send me
+here. The screaming
+starts at dusk and
+ends at dawn.
+---
+# Record 9 - Lookout
+I count the eyes
+in the darkness
+each night. Last
+night I stopped
+counting at forty.

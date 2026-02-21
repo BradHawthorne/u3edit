@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Crystal Spire encounters (MONC)",
+  "monsters": {
+    "0":  {"hp": 85,  "attack": 48, "defense": 30, "speed": 15},
+    "1":  {"hp": 95,  "attack": 52, "defense": 35, "speed": 12},
+    "2":  {"hp": 80,  "attack": 50, "defense": 28, "speed": 22},
+    "3":  {"hp": 110, "attack": 58, "defense": 40, "speed": 10, "boss": true},
+    "4":  {"hp": 90,  "attack": 50, "defense": 32, "speed": 14},
+    "5":  {"hp": 100, "attack": 55, "defense": 36, "speed": 12},
+    "6":  {"hp": 88,  "attack": 48, "defense": 30, "speed": 18},
+    "7":  {"hp": 120, "attack": 62, "defense": 42, "speed": 8, "boss": true},
+    "8":  {"hp": 82,  "attack": 46, "defense": 28, "speed": 20},
+    "9":  {"hp": 92,  "attack": 50, "defense": 32, "speed": 16},
+    "10": {"hp": 98,  "attack": 54, "defense": 34, "speed": 14},
+    "11": {"hp": 105, "attack": 56, "defense": 36, "speed": 12},
+    "12": {"hp": 108, "attack": 58, "defense": 38, "speed": 10},
+    "13": {"hp": 115, "attack": 60, "defense": 40, "speed": 8},
+    "14": {"hp": 125, "attack": 65, "defense": 44, "speed": 8},
+    "15": {"hp": 160, "attack": 70, "defense": 50, "speed": 12, "boss": true}
+  }
+}

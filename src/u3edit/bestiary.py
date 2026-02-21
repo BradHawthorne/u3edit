@@ -430,16 +430,44 @@ def cmd_import(args) -> None:
 
     # Accept either a list of monsters or a dict with 'monsters' key
     mon_list = data if isinstance(data, list) else data.get('monsters', [])
+    # Convert dict-of-dicts format ({"0": {...}, "1": {...}}) to list
+    if isinstance(mon_list, dict):
+        mon_list = [dict(v, index=int(k)) for k, v in mon_list.items()]
     count = 0
     for entry in mon_list:
         idx = entry.get('index')
         if idx is None or not (0 <= idx < MON_MONSTERS_PER_FILE):
             continue
         m = monsters[idx]
+        # Apply flag/ability shortcuts before raw attributes
+        if entry.get('boss'):
+            m.flags1 |= MON_FLAG1_BOSS
+        if entry.get('undead'):
+            m.flags1 = (m.flags1 & ~0x0C) | MON_FLAG1_UNDEAD
+        if entry.get('ranged'):
+            m.flags1 = (m.flags1 & ~0x0C) | MON_FLAG1_RANGED
+        if entry.get('magic_user'):
+            m.flags1 = (m.flags1 & ~0x0C) | MON_FLAG1_MAGIC_USER
+        if entry.get('poison'):
+            m.ability1 |= MON_ABIL1_POISON
+        if entry.get('sleep'):
+            m.ability1 |= MON_ABIL1_SLEEP
+        if entry.get('negate'):
+            m.ability1 |= MON_ABIL1_NEGATE
+        if entry.get('teleport'):
+            m.ability1 |= MON_ABIL1_TELEPORT
+        if entry.get('divide'):
+            m.ability1 |= MON_ABIL1_DIVIDE
+        if entry.get('resistant'):
+            m.ability2 |= MON_ABIL2_RESISTANT
         for attr in ('tile1', 'tile2', 'hp', 'attack', 'defense', 'speed',
                      'flags1', 'flags2', 'ability1', 'ability2'):
             if attr in entry:
-                setattr(m, attr, max(0, min(255, entry[attr])))
+                raw = entry[attr]
+                clamped = max(0, min(255, raw))
+                if clamped != raw:
+                    print(f"  Warning: monster {idx} {attr}={raw} clamped to {clamped}")
+                setattr(m, attr, clamped)
         count += 1
 
     print(f"Import: {count} monster(s) to update")

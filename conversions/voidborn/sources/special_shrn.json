@@ -1,0 +1,17 @@
+{
+  "description": "Corrupted Shrines (SHRN) — Sigils of Binding/Venom/Dominion",
+  "tiles": [
+    "!.!.!.!.!.!",
+    "...........",
+    "!.........!",
+    "...........",
+    "!...!.!...!",
+    ".....%.....",
+    "!...!.!...!",
+    "...........",
+    "!.........!",
+    "...........",
+    "!.!.!.!.!.!"
+  ],
+  "notes": "Null field perimeter with ankh at center"
+}

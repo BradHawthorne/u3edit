@@ -1,0 +1,38 @@
+# TLKR - Abyss of Echoes
+# NPCs: Whispering voice, reflected warning
+# Theme: Repetition, distortion, identity erosion
+
+# Record 0 - Whispering Voice
+Can you hear me?
+I am the echo of
+the last one who
+came here. They
+did not leave.
+---
+# Record 1 - Whispering Voice
+The walls repeat
+everything. Not
+just sound. They
+repeat people.
+Do not touch them.
+---
+# Record 2 - Reflected Warning
+I look like you
+because I am what
+the Abyss made of
+the last visitor.
+Do not become me.
+---
+# Record 3 - Reflected Warning
+The Shard of Voice
+screams endlessly.
+Follow the scream.
+It will lead you
+to the center.
+---
+# Record 4 - Fading Script
+EVERY ECHO IS A
+COPY. EVERY COPY
+LOSES SOMETHING.
+THE VOID IS THE
+LAST ECHO.

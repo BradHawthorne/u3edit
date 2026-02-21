@@ -1,0 +1,32 @@
+{
+  "description": "Voidborn Fungal Forest battlefield (CONB)",
+  "tiles": [
+    "TTTTTTTTTTT",
+    "TT...T...TT",
+    "T..T...T..T",
+    "T.TT.T.TT.T",
+    "T..T...T..T",
+    "TT...T...TT",
+    "T..T...T..T",
+    "T.TT...TT.T",
+    "T..T...T..T",
+    "TT...T...TT",
+    "TTTTTTTTTTT"
+  ],
+  "monsters": {
+    "0": {"x": 3, "y": 1},
+    "1": {"x": 7, "y": 1},
+    "2": {"x": 5, "y": 3},
+    "3": {"x": 2, "y": 2},
+    "4": {"x": 8, "y": 2},
+    "5": {"x": 5, "y": 5},
+    "6": {"x": 3, "y": 4},
+    "7": {"x": 7, "y": 4}
+  },
+  "pcs": {
+    "0": {"x": 3, "y": 9},
+    "1": {"x": 5, "y": 9},
+    "2": {"x": 7, "y": 9},
+    "3": {"x": 5, "y": 8}
+  }
+}

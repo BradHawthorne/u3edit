@@ -1,0 +1,37 @@
+# TLKO - Abyss of Serpents
+# NPCs: Poisoned adventurer, warning echo
+# Theme: Venom, treachery, coiled darkness
+
+# Record 0 - Poisoned Adventurer
+The venom is in
+the air here. My
+antidotes ran out
+on the third level.
+Cover your mouth.
+---
+# Record 1 - Poisoned Adventurer
+The serpents here
+are not animals.
+They think. They
+plan. They herd
+you toward the pit.
+---
+# Record 2 - Warning Echo
+Shed your skin or
+be consumed. The
+serpent sheds. The
+void sheds worlds.
+You cling and die.
+---
+# Record 3 - Wounded Scout
+The Shard of Scale
+lies in the nest
+at the bottom. The
+mother guards it.
+She is enormous.
+---
+# Record 4 - Scratched Wall
+TRUST NOTHING THAT
+SLITHERS. THE
+FLOOR IS NOT
+ALWAYS THE FLOOR.

@@ -1,0 +1,73 @@
+# TLKJ - Ironhold West
+# NPCs: Master Smith, Armorer, Courier, Workers
+# Theme: Weapons, defense, news from other settlements
+
+# Record 0 - Master Smith
+I forge what kills
+void creatures.
+Normal steel bends
+against their hide.
+You need alloys.
+---
+# Record 1 - Master Smith (weapons)
+Void crystal folded
+into the blade edge
+lets it bite where
+steel alone would
+slide off.
+---
+# Record 2 - Master Smith (request)
+Bring me ore from
+the deep shafts
+and I will forge
+something worthy
+of the Abysses.
+---
+# Record 3 - Armorer
+Plate mail saves
+lives but slows
+you down. Against
+Thralls, speed
+matters more.
+---
+# Record 4 - Armorer (advice)
+Chain with crystal
+threading resists
+void corruption.
+Expensive but you
+only die once.
+---
+# Record 5 - Armorer (lore)
+The old armor from
+before the Breach
+had runes we cannot
+read. It held
+better than ours.
+---
+# Record 6 - Courier
+News from the west:
+Ashfall still holds
+but the rift count
+doubled. Riftwatch
+sends patrols now.
+---
+# Record 7 - Courier (news)
+The Last Wall
+garrison reports
+movement beyond
+their perimeter.
+Something large.
+---
+# Record 8 - Courier (rumor)
+A messenger from
+the Prophet says
+a fifth Sigil may
+exist. One that
+was never sealed.
+---
+# Record 9 - Apprentice Smith
+The master will
+not say it but
+we are running
+low on ore. The
+mines falter.

@@ -1,0 +1,38 @@
+# TLKN - Abyss of Madness
+# NPCs: Hallucinating wanderer, lost soul
+# Theme: Unreliable perception, insanity, void whispers
+
+# Record 0 - Hallucinating Wanderer
+Are you real? I
+cannot tell. The
+walls breathe and
+the floor speaks
+my name.
+---
+# Record 1 - Hallucinating Wanderer
+It shows you what
+you want to see.
+Then it takes that
+away. Then it takes
+everything else.
+---
+# Record 2 - Lost Soul
+I have been here
+for... days? Years?
+Time folds in on
+itself. Do not
+trust the clocks.
+---
+# Record 3 - Lost Soul (warning)
+The Shard of Mind
+is here somewhere.
+It whispers. If
+you hear singing
+walk the other way.
+---
+# Record 4 - Voice in the Dark
+You are already
+lost. You simply
+have not realized
+it yet. Welcome
+home.

@@ -1,0 +1,71 @@
+# TLKA - Prophet's Bastion (Lord British Castle)
+# NPCs: The Echo, Guard Captain, Archivist, servants
+# Theme: Quest exposition, Sigil lore, warnings about the void
+
+# Record 0 - The Echo (main quest giver)
+I am the Echo of
+the Prophet. He saw
+the Breach before
+it tore the sky.
+---
+# Record 1 - The Echo (Sigil quest)
+Four Sigils hold the
+seal. Find them in
+corrupted shrines.
+Without them, all
+is lost.
+---
+# Record 2 - The Echo (Shard quest)
+The Sigils reveal
+the Shards. Descend
+the Abysses. Bring
+what you find to
+the Sanctum.
+---
+# Record 3 - Guard Captain
+The null field
+weakens. Each night
+something tests
+our walls. Arm
+yourselves well.
+---
+# Record 4 - Guard Captain (warning)
+Do not travel the
+ash plains at night.
+The Thralls hunt by
+sound alone.
+---
+# Record 5 - Archivist
+Before the Breach,
+this was a place of
+learning. Now I
+guard what little
+knowledge survives.
+---
+# Record 6 - Archivist (lore)
+The Voidborn is not
+a creature. It is a
+presence. It does
+not hate us. It
+does not see us.
+---
+# Record 7 - Servant
+The Prophet speaks
+through echoes now.
+His body is sealed
+beyond the null
+field. We pray.
+---
+# Record 8 - Servant (rumor)
+A trader from
+Ashfall says the
+fungal forests
+are spreading
+faster now.
+---
+# Record 9 - Guard (gate)
+You are free to
+leave, but know
+this: the Bastion
+may not stand when
+you return.

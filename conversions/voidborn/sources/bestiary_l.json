@@ -1,0 +1,137 @@
+{
+  "description": "Voidborn Special/Void Cult encounters (MONL)",
+  "monsters": {
+    "0": {
+      "hp": 180,
+      "attack": 70,
+      "defense": 48,
+      "speed": 22,
+      "description": "Cult Initiate"
+    },
+    "1": {
+      "hp": 188,
+      "attack": 72,
+      "defense": 50,
+      "speed": 20,
+      "teleport": true,
+      "description": "Phase Zealot"
+    },
+    "2": {
+      "hp": 195,
+      "attack": 74,
+      "defense": 52,
+      "speed": 18,
+      "description": "Void Acolyte"
+    },
+    "3": {
+      "hp": 205,
+      "attack": 76,
+      "defense": 55,
+      "speed": 20,
+      "teleport": true,
+      "description": "Warp Dancer"
+    },
+    "4": {
+      "hp": 215,
+      "attack": 78,
+      "defense": 58,
+      "speed": 16,
+      "poison": true,
+      "description": "Cult Poisoner"
+    },
+    "5": {
+      "hp": 225,
+      "attack": 80,
+      "defense": 60,
+      "speed": 22,
+      "teleport": true,
+      "description": "Rift Walker"
+    },
+    "6": {
+      "hp": 235,
+      "attack": 82,
+      "defense": 62,
+      "speed": 18,
+      "sleep": true,
+      "description": "Thought Eater"
+    },
+    "7": {
+      "hp": 242,
+      "attack": 84,
+      "defense": 64,
+      "speed": 15,
+      "teleport": true,
+      "description": "Blink Assassin"
+    },
+    "8": {
+      "hp": 250,
+      "attack": 86,
+      "defense": 66,
+      "speed": 20,
+      "description": "Cult Enforcer"
+    },
+    "9": {
+      "hp": 255,
+      "attack": 88,
+      "defense": 68,
+      "speed": 18,
+      "teleport": true,
+      "negate": true,
+      "description": "Null Priest"
+    },
+    "10": {
+      "hp": 255,
+      "attack": 90,
+      "defense": 70,
+      "speed": 16,
+      "boss": true,
+      "description": "Cult Hierarch"
+    },
+    "11": {
+      "hp": 255,
+      "attack": 91,
+      "defense": 72,
+      "speed": 14,
+      "teleport": true,
+      "description": "Void Channeler"
+    },
+    "12": {
+      "hp": 255,
+      "attack": 92,
+      "defense": 74,
+      "speed": 18,
+      "boss": true,
+      "teleport": true,
+      "description": "Phase Tyrant"
+    },
+    "13": {
+      "hp": 255,
+      "attack": 93,
+      "defense": 76,
+      "speed": 12,
+      "boss": true,
+      "negate": true,
+      "description": "Cult Archon"
+    },
+    "14": {
+      "hp": 255,
+      "attack": 94,
+      "defense": 78,
+      "speed": 15,
+      "boss": true,
+      "teleport": true,
+      "negate": true,
+      "description": "Void Herald"
+    },
+    "15": {
+      "hp": 255,
+      "attack": 95,
+      "defense": 80,
+      "speed": 18,
+      "boss": true,
+      "teleport": true,
+      "negate": true,
+      "description": "The Eyeless Oracle"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Grassland/Ash Plains encounters (MONA)",
+  "monsters": {
+    "0":  {"hp": 45,  "attack": 25, "defense": 15, "speed": 20},
+    "1":  {"hp": 55,  "attack": 30, "defense": 18, "speed": 15},
+    "2":  {"hp": 40,  "attack": 28, "defense": 12, "speed": 30},
+    "3":  {"hp": 70,  "attack": 35, "defense": 25, "speed": 18},
+    "4":  {"hp": 80,  "attack": 40, "defense": 28, "speed": 15, "boss": true},
+    "5":  {"hp": 60,  "attack": 32, "defense": 20, "speed": 25, "poison": true},
+    "6":  {"hp": 50,  "attack": 30, "defense": 22, "speed": 28, "sleep": true},
+    "7":  {"hp": 65,  "attack": 38, "defense": 24, "speed": 22},
+    "8":  {"hp": 42,  "attack": 26, "defense": 14, "speed": 22},
+    "9":  {"hp": 48,  "attack": 28, "defense": 16, "speed": 20},
+    "10": {"hp": 52,  "attack": 30, "defense": 18, "speed": 18},
+    "11": {"hp": 58,  "attack": 32, "defense": 20, "speed": 16},
+    "12": {"hp": 62,  "attack": 34, "defense": 22, "speed": 14},
+    "13": {"hp": 68,  "attack": 36, "defense": 24, "speed": 12},
+    "14": {"hp": 75,  "attack": 38, "defense": 26, "speed": 10},
+    "15": {"hp": 85,  "attack": 42, "defense": 30, "speed": 20, "boss": true}
+  }
+}

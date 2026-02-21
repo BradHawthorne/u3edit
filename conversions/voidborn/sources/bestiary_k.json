@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Deep Reef encounters (MONK)",
+  "monsters": {
+    "0":  {"hp": 140, "attack": 60, "defense": 40, "speed": 22, "description": "Reef Lurker"},
+    "1":  {"hp": 148, "attack": 62, "defense": 42, "speed": 20, "description": "Brine Crawler"},
+    "2":  {"hp": 155, "attack": 64, "defense": 44, "speed": 25, "divide": true, "description": "Splitting Polyp"},
+    "3":  {"hp": 162, "attack": 66, "defense": 46, "speed": 18, "poison": true, "description": "Venomfin"},
+    "4":  {"hp": 170, "attack": 68, "defense": 48, "speed": 20, "description": "Coral Golem"},
+    "5":  {"hp": 178, "attack": 70, "defense": 50, "speed": 16, "divide": true, "description": "Fission Anemone"},
+    "6":  {"hp": 185, "attack": 72, "defense": 52, "speed": 22, "description": "Abyssal Eel"},
+    "7":  {"hp": 192, "attack": 74, "defense": 54, "speed": 14, "description": "Shell Titan"},
+    "8":  {"hp": 198, "attack": 76, "defense": 56, "speed": 20, "divide": true, "description": "Tidal Mimic"},
+    "9":  {"hp": 205, "attack": 78, "defense": 58, "speed": 18, "poison": true, "description": "Ink Wraith"},
+    "10": {"hp": 212, "attack": 80, "defense": 60, "speed": 16, "description": "Deep Stalker"},
+    "11": {"hp": 220, "attack": 82, "defense": 62, "speed": 14, "divide": true, "description": "Hydra Spawn"},
+    "12": {"hp": 225, "attack": 83, "defense": 64, "speed": 18, "boss": true, "description": "Reef Matriarch"},
+    "13": {"hp": 230, "attack": 84, "defense": 65, "speed": 12, "boss": true, "divide": true, "description": "Colony Mind"},
+    "14": {"hp": 235, "attack": 85, "defense": 66, "speed": 15, "boss": true, "description": "Trench Lord"},
+    "15": {"hp": 240, "attack": 85, "defense": 68, "speed": 16, "boss": true, "divide": true, "description": "The Undercurrent"}
+  }
+}

@@ -1,0 +1,65 @@
+# TLKB - Eyeless Spire (Castle of Death / Void Cult HQ)
+# NPCs: Cult members, prisoners, a turncoat
+# Theme: Void Cult motives, threats, cryptic prophecy
+
+# Record 0 - Cult Acolyte
+The Voidborn offers
+what your Prophet
+never could:
+certainty. Join us
+or be unmade.
+---
+# Record 1 - Cult Priest
+You cling to a
+dying world. We
+have seen what
+comes after. It is
+beautiful.
+---
+# Record 2 - Cult Priest (threat)
+The Sigils you seek
+are poison. Each
+one you claim draws
+the Voidborn's gaze
+upon you.
+---
+# Record 3 - The Eyeless Seer
+I tore out my eyes
+so I could truly
+see. The void is
+not empty. It
+watches. It waits.
+---
+# Record 4 - Prisoner
+Please... they took
+my eyes but I can
+still hear it. The
+humming. It never
+stops.
+---
+# Record 5 - Prisoner (desperate)
+The cult feeds
+prisoners to the
+Abyss. Do not let
+them take you
+below.
+---
+# Record 6 - Turncoat
+I was one of them.
+The rituals change
+you. I fled before
+it was too late.
+Barely.
+---
+# Record 7 - Turncoat (hint)
+The Seer guards a
+Shard. But she
+fears the Sigil of
+Flame above all.
+Fire still burns.
+---
+# Record 8 - Cult Guard
+Kneel before the
+Voidborn or be
+consumed. There is
+no third path.

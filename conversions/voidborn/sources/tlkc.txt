@@ -1,0 +1,73 @@
+# TLKC - Castle Arena
+# NPCs: Pit Master, Spectators, Challenger
+# Theme: Combat hints, martial lore, proving ground
+
+# Record 0 - Pit Master
+Welcome to the Pit.
+Here we train for
+what lurks beyond
+the walls. Step in
+or step aside.
+---
+# Record 1 - Pit Master (advice)
+The Thralls fear
+fire but resist
+cold. Strike fast
+before they
+swarm you.
+---
+# Record 2 - Pit Master (lore)
+Before the Breach
+this was a court
+of honor. Now it
+is survival
+practice.
+---
+# Record 3 - Spectator
+I saw a ranger
+take down three
+Spore Hulks alone.
+She used the
+terrain wisely.
+---
+# Record 4 - Spectator (tip)
+Corners are death
+traps in combat.
+Keep your healer
+behind the line
+and flanks clear.
+---
+# Record 5 - Spectator (rumor)
+They say the Abyss
+of Flame holds a
+Shard. But none
+who enter have
+returned yet.
+---
+# Record 6 - Challenger
+You look soft. I
+have survived six
+Abysses. Care to
+test your blade
+against mine?
+---
+# Record 7 - Challenger (warning)
+The deeper Abysses
+have creatures that
+negate all magic.
+Steel is your only
+friend down there.
+---
+# Record 8 - Arena Healer
+I mend what I can.
+The wounds from
+void creatures
+heal slower than
+any I have seen.
+---
+# Record 9 - Veteran Fighter
+The Sigil of War
+is said to lie
+beneath the Arena
+foundations. Dig
+deep, if you dare.

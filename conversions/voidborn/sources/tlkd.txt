@@ -1,0 +1,64 @@
+# TLKD - Ashfall (Dawn equivalent)
+# NPCs: Mayor Corren, herbalist, trader, refugees
+# Theme: Survival tips, local danger, supply trade
+
+# Record 0 - Mayor Corren
+Welcome to Ashfall.
+We survive, barely.
+The ash rains every
+third day now.
+---
+# Record 1 - Mayor Corren (warning)
+The spires to the
+north hum louder
+each week. When
+they go silent,
+run.
+---
+# Record 2 - Herbalist
+The fungal growths
+are toxic but some
+have uses. I brew
+what salves I can
+from them.
+---
+# Record 3 - Herbalist (tip)
+If the ichor burns
+you, pack ash on
+the wound. It draws
+the poison out.
+---
+# Record 4 - Trader
+Supplies are scarce.
+I trade what the
+caravans bring. Do
+not ask where they
+find it.
+---
+# Record 5 - Trader (rumor)
+A smith in
+Duskhollow forges
+blades that hold
+an edge against
+the Thralls.
+---
+# Record 6 - Refugee
+We fled Grimwall
+when the null field
+collapsed. Three
+days through ash
+and Thralls.
+---
+# Record 7 - Refugee (lore)
+My grandmother said
+the moongates once
+carried travelers
+safely. Now they
+vomit corruption.
+---
+# Record 8 - Child
+Mama says don't
+look at the sky
+when it turns
+purple. I looked
+once. I saw teeth.

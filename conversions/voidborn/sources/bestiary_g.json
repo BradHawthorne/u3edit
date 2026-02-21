@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Abyss L3-4 encounters (MONG)",
+  "monsters": {
+    "0":  {"hp": 125, "attack": 58, "defense": 35, "speed": 15, "sleep": true},
+    "1":  {"hp": 140, "attack": 62, "defense": 40, "speed": 12},
+    "2":  {"hp": 120, "attack": 60, "defense": 32, "speed": 22},
+    "3":  {"hp": 160, "attack": 68, "defense": 48, "speed": 10, "boss": true},
+    "4":  {"hp": 130, "attack": 60, "defense": 38, "speed": 14},
+    "5":  {"hp": 145, "attack": 64, "defense": 42, "speed": 12, "poison": true},
+    "6":  {"hp": 128, "attack": 58, "defense": 36, "speed": 18, "sleep": true},
+    "7":  {"hp": 175, "attack": 72, "defense": 50, "speed": 8, "boss": true},
+    "8":  {"hp": 122, "attack": 56, "defense": 34, "speed": 20},
+    "9":  {"hp": 135, "attack": 60, "defense": 38, "speed": 16},
+    "10": {"hp": 142, "attack": 62, "defense": 40, "speed": 14},
+    "11": {"hp": 148, "attack": 64, "defense": 42, "speed": 12},
+    "12": {"hp": 155, "attack": 66, "defense": 44, "speed": 10},
+    "13": {"hp": 165, "attack": 68, "defense": 46, "speed": 8},
+    "14": {"hp": 180, "attack": 72, "defense": 50, "speed": 8},
+    "15": {"hp": 200, "attack": 80, "defense": 55, "speed": 10, "boss": true}
+  }
+}

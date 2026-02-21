@@ -1,0 +1,108 @@
+{
+  "description": "Voidborn Abyss L5-6 encounters (MONH)",
+  "monsters": {
+    "0": {
+      "hp": 165,
+      "attack": 68,
+      "defense": 42,
+      "speed": 14,
+      "poison": true
+    },
+    "1": {
+      "hp": 180,
+      "attack": 72,
+      "defense": 48,
+      "speed": 12,
+      "boss": true
+    },
+    "2": {
+      "hp": 160,
+      "attack": 70,
+      "defense": 40,
+      "speed": 20
+    },
+    "3": {
+      "hp": 210,
+      "attack": 78,
+      "defense": 55,
+      "speed": 10,
+      "boss": true
+    },
+    "4": {
+      "hp": 170,
+      "attack": 70,
+      "defense": 44,
+      "speed": 14
+    },
+    "5": {
+      "hp": 190,
+      "attack": 75,
+      "defense": 50,
+      "speed": 12,
+      "poison": true
+    },
+    "6": {
+      "hp": 168,
+      "attack": 68,
+      "defense": 42,
+      "speed": 16,
+      "sleep": true
+    },
+    "7": {
+      "hp": 230,
+      "attack": 82,
+      "defense": 58,
+      "speed": 8,
+      "boss": true
+    },
+    "8": {
+      "hp": 162,
+      "attack": 66,
+      "defense": 40,
+      "speed": 18
+    },
+    "9": {
+      "hp": 175,
+      "attack": 70,
+      "defense": 46,
+      "speed": 14
+    },
+    "10": {
+      "hp": 185,
+      "attack": 72,
+      "defense": 48,
+      "speed": 12
+    },
+    "11": {
+      "hp": 195,
+      "attack": 74,
+      "defense": 50,
+      "speed": 10
+    },
+    "12": {
+      "hp": 200,
+      "attack": 76,
+      "defense": 52,
+      "speed": 10
+    },
+    "13": {
+      "hp": 215,
+      "attack": 78,
+      "defense": 54,
+      "speed": 8
+    },
+    "14": {
+      "hp": 240,
+      "attack": 82,
+      "defense": 58,
+      "speed": 8
+    },
+    "15": {
+      "hp": 255,
+      "attack": 90,
+      "defense": 65,
+      "speed": 10,
+      "boss": true
+    }
+  }
+}

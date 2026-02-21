@@ -1,0 +1,21 @@
+{
+  "description": "Voidborn Bastions encounters (MONJ)",
+  "monsters": {
+    "0":  {"hp": 100, "attack": 50, "defense": 35, "speed": 22, "description": "Bastion Sentry"},
+    "1":  {"hp": 106, "attack": 52, "defense": 37, "speed": 20, "description": "Bastion Archer"},
+    "2":  {"hp": 112, "attack": 54, "defense": 38, "speed": 18, "description": "Bastion Footman"},
+    "3":  {"hp": 118, "attack": 56, "defense": 40, "speed": 20, "poison": true, "description": "Bastion Saboteur"},
+    "4":  {"hp": 125, "attack": 58, "defense": 42, "speed": 16, "description": "Bastion Enforcer"},
+    "5":  {"hp": 130, "attack": 60, "defense": 44, "speed": 22, "description": "Bastion Outrider"},
+    "6":  {"hp": 136, "attack": 62, "defense": 46, "speed": 18, "sleep": true, "description": "Bastion Hexer"},
+    "7":  {"hp": 142, "attack": 64, "defense": 48, "speed": 15, "description": "Bastion Bulwark"},
+    "8":  {"hp": 148, "attack": 66, "defense": 50, "speed": 20, "description": "Bastion Veteran"},
+    "9":  {"hp": 152, "attack": 68, "defense": 52, "speed": 18, "description": "Bastion Warden"},
+    "10": {"hp": 158, "attack": 70, "defense": 54, "speed": 16, "description": "Bastion Berserker"},
+    "11": {"hp": 162, "attack": 71, "defense": 55, "speed": 14, "boss": true, "description": "Bastion Captain"},
+    "12": {"hp": 168, "attack": 72, "defense": 56, "speed": 18, "description": "Bastion Ironclad"},
+    "13": {"hp": 172, "attack": 73, "defense": 58, "speed": 12, "boss": true, "description": "Bastion Marshal"},
+    "14": {"hp": 176, "attack": 74, "defense": 60, "speed": 14, "boss": true, "description": "Bastion Warlord"},
+    "15": {"hp": 180, "attack": 75, "defense": 62, "speed": 16, "boss": true, "description": "Bastion Overlord"}
+  }
+}
