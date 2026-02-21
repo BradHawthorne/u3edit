@@ -514,12 +514,194 @@ def _extract_inline_strings(data: bytes, org: int = 0):
                     'address': org + i,
                     'text': text,
                     'byte_count': byte_count,
+                    'text_offset': text_start,
+                    'text_end': j,
                 })
                 idx += 1
             i = j + 1
         else:
             i += 1
     return strings
+
+
+def _encode_high_ascii(text: str) -> bytearray:
+    """Encode text as high-ASCII bytes with $FF for newlines."""
+    result = bytearray()
+    for ch in text:
+        if ch == '\n':
+            result.append(0xFF)
+        else:
+            result.append(ord(ch.upper()) | 0x80)
+    return result
+
+
+def _patch_inline_string(data: bytearray, string_info: dict,
+                         new_text: str) -> tuple:
+    """Patch a single inline string in-place.
+
+    Returns (success: bool, message: str).
+    """
+    text_offset = string_info['text_offset']
+    text_end = string_info['text_end']
+    max_bytes = text_end - text_offset  # space before null terminator
+
+    encoded = _encode_high_ascii(new_text)
+
+    if len(encoded) > max_bytes:
+        return False, (f"String too long: '{new_text}' needs {len(encoded)} "
+                       f"bytes, only {max_bytes} available "
+                       f"(original: '{string_info['text']}')")
+
+    # Write encoded text
+    for i, b in enumerate(encoded):
+        data[text_offset + i] = b
+
+    # Null-fill remaining space
+    for i in range(len(encoded), max_bytes + 1):
+        data[text_offset + i] = 0x00
+
+    return True, (f"[{string_info['index']:3d}] "
+                  f"'{string_info['text']}' -> '{new_text}'")
+
+
+def _resolve_string_target(strings, index=None, vanilla=None, address=None):
+    """Find a string entry by index, vanilla text, or address.
+
+    Returns list of matching string_info dicts.
+    """
+    if index is not None:
+        return [s for s in strings if s['index'] == index]
+    elif vanilla is not None:
+        key = vanilla.strip().strip('\n').upper()
+        return [s for s in strings
+                if s['text'].strip().strip('\n').upper() == key]
+    elif address is not None:
+        return [s for s in strings if s['address'] == address]
+    return []
+
+
+def cmd_strings_edit(args) -> None:
+    """Edit an inline string in an engine binary (in-place)."""
+    with open(args.file, 'rb') as f:
+        data = bytearray(f.read())
+
+    info = identify_binary(data, args.file)
+    org = info['load_addr'] if info else 0
+
+    strings = _extract_inline_strings(bytes(data), org)
+    if not strings:
+        print("No inline strings found", file=sys.stderr)
+        sys.exit(1)
+
+    # Find the target string
+    idx = getattr(args, 'index', None)
+    vanilla = getattr(args, 'vanilla', None)
+    addr = getattr(args, 'address', None)
+    new_text = args.text
+
+    if idx is None and vanilla is None and addr is None:
+        print("Error: specify --index, --vanilla, or --address",
+              file=sys.stderr)
+        sys.exit(1)
+
+    targets = _resolve_string_target(strings, index=idx, vanilla=vanilla,
+                                     address=addr)
+    if not targets:
+        print("Error: no matching string found", file=sys.stderr)
+        sys.exit(1)
+
+    success_count = 0
+    for target in targets:
+        ok, msg = _patch_inline_string(data, target, new_text)
+        if ok:
+            print(f"  Patched {msg}")
+            success_count += 1
+        else:
+            print(f"  ERROR: {msg}", file=sys.stderr)
+
+    if success_count == 0:
+        sys.exit(1)
+
+    if getattr(args, 'dry_run', False):
+        print(f"\nDry run — {success_count} string(s) would be patched.")
+        return
+
+    output = getattr(args, 'output', None) or args.file
+    if getattr(args, 'backup', False) and output == args.file:
+        backup_file(args.file)
+
+    with open(output, 'wb') as f:
+        f.write(data)
+    print(f"Patched {success_count} string(s) in {output}")
+
+
+def cmd_strings_import(args) -> None:
+    """Import inline string patches from JSON."""
+    with open(args.file, 'rb') as f:
+        data = bytearray(f.read())
+
+    info = identify_binary(data, args.file)
+    org = info['load_addr'] if info else 0
+
+    strings = _extract_inline_strings(bytes(data), org)
+    if not strings:
+        print("No inline strings found", file=sys.stderr)
+        sys.exit(1)
+
+    with open(args.json_file, 'r', encoding='utf-8') as f:
+        patch_data = json.load(f)
+
+    patches = patch_data.get('patches', [])
+    if not patches:
+        print("No patches found in JSON file", file=sys.stderr)
+        sys.exit(1)
+
+    success_count = 0
+    error_count = 0
+
+    for patch in patches:
+        new_text = patch.get('text', '')
+        idx = patch.get('index')
+        vanilla = patch.get('vanilla')
+        addr_str = patch.get('address')
+        addr = None
+        if addr_str is not None:
+            addr = int(addr_str, 0) if isinstance(addr_str, str) else addr_str
+
+        targets = _resolve_string_target(strings, index=idx, vanilla=vanilla,
+                                         address=addr)
+        if not targets:
+            key = vanilla or (f"index {idx}" if idx is not None else
+                              f"${addr:04X}" if addr else "?")
+            print(f"  Warning: no match for '{key}'", file=sys.stderr)
+            continue
+
+        for target in targets:
+            ok, msg = _patch_inline_string(data, target, new_text)
+            if ok:
+                print(f"  Patched {msg}")
+                success_count += 1
+            else:
+                print(f"  ERROR: {msg}", file=sys.stderr)
+                error_count += 1
+
+    print(f"\nPatched {success_count} string(s), {error_count} error(s)")
+
+    if error_count > 0:
+        print("Errors detected — not writing output.", file=sys.stderr)
+        sys.exit(1)
+
+    if getattr(args, 'dry_run', False):
+        print("Dry run — no changes written.")
+        return
+
+    output = getattr(args, 'output', None) or args.file
+    if getattr(args, 'backup', False) and output == args.file:
+        backup_file(args.file)
+
+    with open(output, 'wb') as f:
+        f.write(data)
+    print(f"Wrote {output}")
 
 
 def cmd_strings(args) -> None:
@@ -618,6 +800,32 @@ def register_parser(subparsers) -> None:
     p_strings.add_argument('--json', action='store_true', help='Output as JSON')
     p_strings.add_argument('--output', '-o', help='Output file (for --json)')
 
+    p_stredit = sub.add_parser('strings-edit',
+                               help='Edit an inline string (in-place)')
+    p_stredit.add_argument('file', help='Engine binary (ULT3)')
+    p_stredit.add_argument('--text', required=True, help='Replacement text')
+    match_group = p_stredit.add_mutually_exclusive_group(required=True)
+    match_group.add_argument('--index', type=int,
+                             help='String index (from strings command)')
+    match_group.add_argument('--vanilla', help='Original text to match')
+    match_group.add_argument('--address', type=hex_int,
+                             help='String address (e.g. 0x6C48)')
+    p_stredit.add_argument('--output', '-o', help='Output file')
+    p_stredit.add_argument('--backup', action='store_true',
+                           help='Create .bak backup before overwrite')
+    p_stredit.add_argument('--dry-run', action='store_true',
+                           help='Show changes without writing')
+
+    p_strimport = sub.add_parser('strings-import',
+                                 help='Import string patches from JSON')
+    p_strimport.add_argument('file', help='Engine binary (ULT3)')
+    p_strimport.add_argument('json_file', help='JSON patch file')
+    p_strimport.add_argument('--output', '-o', help='Output file')
+    p_strimport.add_argument('--backup', action='store_true',
+                             help='Create .bak backup before overwrite')
+    p_strimport.add_argument('--dry-run', action='store_true',
+                             help='Show changes without writing')
+
 
 def dispatch(args) -> None:
     """Dispatch patch subcommand."""
@@ -632,8 +840,13 @@ def dispatch(args) -> None:
         cmd_import(args)
     elif cmd == 'strings':
         cmd_strings(args)
+    elif cmd == 'strings-edit':
+        cmd_strings_edit(args)
+    elif cmd == 'strings-import':
+        cmd_strings_import(args)
     else:
-        print("Usage: u3edit patch {view|edit|dump|import|strings} ...",
+        print("Usage: u3edit patch "
+              "{view|edit|dump|import|strings|strings-edit|strings-import} ...",
               file=sys.stderr)
 
 
@@ -680,6 +893,32 @@ def main() -> None:
     p_strings.add_argument('--search', help='Filter by text (case-insensitive)')
     p_strings.add_argument('--json', action='store_true', help='Output as JSON')
     p_strings.add_argument('--output', '-o', help='Output file (for --json)')
+
+    p_stredit = sub.add_parser('strings-edit',
+                               help='Edit an inline string (in-place)')
+    p_stredit.add_argument('file', help='Engine binary (ULT3)')
+    p_stredit.add_argument('--text', required=True, help='Replacement text')
+    match_group = p_stredit.add_mutually_exclusive_group(required=True)
+    match_group.add_argument('--index', type=int,
+                             help='String index (from strings command)')
+    match_group.add_argument('--vanilla', help='Original text to match')
+    match_group.add_argument('--address', type=hex_int,
+                             help='String address (e.g. 0x6C48)')
+    p_stredit.add_argument('--output', '-o', help='Output file')
+    p_stredit.add_argument('--backup', action='store_true',
+                           help='Create .bak backup before overwrite')
+    p_stredit.add_argument('--dry-run', action='store_true',
+                           help='Show changes without writing')
+
+    p_strimport = sub.add_parser('strings-import',
+                                 help='Import string patches from JSON')
+    p_strimport.add_argument('file', help='Engine binary (ULT3)')
+    p_strimport.add_argument('json_file', help='JSON patch file')
+    p_strimport.add_argument('--output', '-o', help='Output file')
+    p_strimport.add_argument('--backup', action='store_true',
+                             help='Create .bak backup before overwrite')
+    p_strimport.add_argument('--dry-run', action='store_true',
+                             help='Show changes without writing')
 
     args = parser.parse_args()
     dispatch(args)

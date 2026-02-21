@@ -7300,3 +7300,179 @@ class TestPatchStrings:
             data = json.load(f)
         assert data['total_strings'] >= 200
         assert 'strings' in data
+
+
+# =============================================================================
+# Inline string editing (patch.py cmd_strings_edit / cmd_strings_import)
+# =============================================================================
+
+class TestPatchStringsEdit:
+    """Test u3edit patch strings-edit and strings-import CLI commands."""
+
+    def _make_test_binary(self, tmp_dir, *texts):
+        """Create a test binary with inline strings in tmp_dir."""
+        data = bytearray()
+        data.extend(b'\xEA' * 4)
+        for text in texts:
+            data.extend(b'\x20\xBA\x46')  # JSR $46BA
+            for ch in text:
+                if ch == '\n':
+                    data.append(0xFF)
+                else:
+                    data.append(ord(ch.upper()) | 0x80)
+            data.append(0x00)
+            data.extend(b'\xEA' * 2)
+        path = os.path.join(tmp_dir, 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_strings_edit_by_index(self, tmp_dir):
+        """Edit string by index replaces bytes correctly."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'HELLO WORLD', 'GOODBYE')
+        args = argparse.Namespace(
+            file=path, text='CHANGED', index=0, vanilla=None,
+            address=None, output=None, backup=False, dry_run=False)
+        cmd_strings_edit(args)
+        # Verify the binary was modified
+        from u3edit.patch import _extract_inline_strings
+        with open(path, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data)
+        assert strings[0]['text'] == 'CHANGED'
+        assert strings[1]['text'] == 'GOODBYE'  # untouched
+
+    def test_strings_edit_by_vanilla(self, tmp_dir):
+        """Edit string by vanilla text match."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'CARD OF DEATH', 'HELLO')
+        args = argparse.Namespace(
+            file=path, text='SHARD O VOID', index=None,
+            vanilla='CARD OF DEATH', address=None, output=None,
+            backup=False, dry_run=False)
+        cmd_strings_edit(args)
+        from u3edit.patch import _extract_inline_strings
+        with open(path, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data)
+        assert strings[0]['text'] == 'SHARD O VOID'
+
+    def test_strings_edit_too_long(self, tmp_dir):
+        """Editing with text too long for in-place fails gracefully."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'HI')
+        args = argparse.Namespace(
+            file=path, text='THIS IS WAY TOO LONG FOR HI',
+            index=0, vanilla=None, address=None, output=None,
+            backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_edit(args)
+
+    def test_strings_edit_dry_run(self, tmp_dir):
+        """Dry run does not modify the file."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
+        with open(path, 'rb') as f:
+            original = f.read()
+        args = argparse.Namespace(
+            file=path, text='CHANGED', index=0, vanilla=None,
+            address=None, output=None, backup=False, dry_run=True)
+        cmd_strings_edit(args)
+        with open(path, 'rb') as f:
+            after = f.read()
+        assert original == after
+
+    def test_strings_edit_backup(self, tmp_dir):
+        """Backup creates .bak file."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
+        args = argparse.Namespace(
+            file=path, text='CHANGED', index=0, vanilla=None,
+            address=None, output=None, backup=True, dry_run=False)
+        cmd_strings_edit(args)
+        assert os.path.exists(path + '.bak')
+
+    def test_strings_edit_output_file(self, tmp_dir):
+        """Writing to separate output file preserves original."""
+        from u3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
+        out_path = os.path.join(tmp_dir, 'output.bin')
+        with open(path, 'rb') as f:
+            original = f.read()
+        args = argparse.Namespace(
+            file=path, text='CHANGED', index=0, vanilla=None,
+            address=None, output=out_path, backup=False, dry_run=False)
+        cmd_strings_edit(args)
+        with open(path, 'rb') as f:
+            assert f.read() == original  # original untouched
+        assert os.path.exists(out_path)
+
+    def test_strings_import_from_json(self, tmp_dir):
+        """Import multiple patches from JSON file."""
+        from u3edit.patch import cmd_strings_import, _extract_inline_strings
+        path = self._make_test_binary(tmp_dir,
+                                      'CARD OF DEATH', 'MARK OF KINGS', 'HELLO')
+        # Create patch JSON
+        patch_path = os.path.join(tmp_dir, 'patches.json')
+        with open(patch_path, 'w') as f:
+            json.dump({'patches': [
+                {'vanilla': 'CARD OF DEATH', 'text': 'SHARD O VOID'},
+                {'vanilla': 'MARK OF KINGS', 'text': 'SIGIL KINGS'},
+            ]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=patch_path, output=None,
+            backup=False, dry_run=False)
+        cmd_strings_import(args)
+        with open(path, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data)
+        assert strings[0]['text'] == 'SHARD O VOID'
+        assert strings[1]['text'] == 'SIGIL KINGS'
+        assert strings[2]['text'] == 'HELLO'  # untouched
+
+    def test_strings_import_dry_run(self, tmp_dir):
+        """Import dry run doesn't modify file."""
+        from u3edit.patch import cmd_strings_import
+        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
+        with open(path, 'rb') as f:
+            original = f.read()
+        patch_path = os.path.join(tmp_dir, 'patches.json')
+        with open(patch_path, 'w') as f:
+            json.dump({'patches': [
+                {'index': 0, 'text': 'CHANGED'},
+            ]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=patch_path, output=None,
+            backup=False, dry_run=True)
+        cmd_strings_import(args)
+        with open(path, 'rb') as f:
+            assert f.read() == original
+
+    def test_strings_import_voidborn(self, tmp_dir):
+        """Voidborn engine_strings.json imports successfully on ULT3."""
+        ult3_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                 'engine', 'originals', 'ULT3.bin')
+        if not os.path.exists(ult3_path):
+            pytest.skip("ULT3.bin not found")
+        patches_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                    'conversions', 'voidborn', 'sources',
+                                    'engine_strings.json')
+        if not os.path.exists(patches_path):
+            pytest.skip("engine_strings.json not found")
+        # Copy ULT3 to temp
+        test_bin = os.path.join(tmp_dir, 'ULT3.bin')
+        shutil.copy2(ult3_path, test_bin)
+        from u3edit.patch import cmd_strings_import
+        args = argparse.Namespace(
+            file=test_bin, json_file=patches_path, output=None,
+            backup=False, dry_run=False)
+        cmd_strings_import(args)
+        # Verify changes
+        from u3edit.patch import _extract_inline_strings
+        with open(test_bin, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data, 0x5000)
+        texts = [s['text'] for s in strings]
+        assert any('SHARD OF VOID' in t for t in texts)
+        assert any('SIGIL: KINGS' in t for t in texts)
