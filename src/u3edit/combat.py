@@ -370,9 +370,18 @@ def cmd_import(args) -> None:
     pos_changes = 0
     raw_mons = jdata.get('monsters', [])
     if isinstance(raw_mons, dict):
-        raw_mons = [raw_mons[str(i)] for i in sorted(int(k) for k in raw_mons)]
+        sorted_keys = []
+        for k in raw_mons:
+            try:
+                sorted_keys.append(int(k))
+            except (ValueError, TypeError):
+                print(f"  Warning: skipping non-numeric monster key '{k}'",
+                      file=sys.stderr)
+        raw_mons = [raw_mons[str(i)] for i in sorted(sorted_keys)]
     for i, m in enumerate(raw_mons[:CON_MONSTER_COUNT]):
         nx, ny = m.get('x', 0), m.get('y', 0)
+        nx = max(0, min(255, nx))
+        ny = max(0, min(255, ny))
         if data[CON_MONSTER_X_OFFSET + i] != nx or data[CON_MONSTER_Y_OFFSET + i] != ny:
             pos_changes += 1
         data[CON_MONSTER_X_OFFSET + i] = nx
@@ -381,7 +390,14 @@ def cmd_import(args) -> None:
     # Import PC positions (accept list or dict-of-dicts format)
     raw_pcs = jdata.get('pcs', [])
     if isinstance(raw_pcs, dict):
-        raw_pcs = [raw_pcs[str(i)] for i in sorted(int(k) for k in raw_pcs)]
+        sorted_keys = []
+        for k in raw_pcs:
+            try:
+                sorted_keys.append(int(k))
+            except (ValueError, TypeError):
+                print(f"  Warning: skipping non-numeric PC key '{k}'",
+                      file=sys.stderr)
+        raw_pcs = [raw_pcs[str(i)] for i in sorted(sorted_keys)]
     for i, p in enumerate(raw_pcs[:CON_PC_COUNT]):
         nx, ny = p.get('x', 0), p.get('y', 0)
         if data[CON_PC_X_OFFSET + i] != nx or data[CON_PC_Y_OFFSET + i] != ny:

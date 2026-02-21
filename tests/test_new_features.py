@@ -6217,3 +6217,169 @@ class TestTileCompilerEdgeCases:
                 break
         assert glyph_bytes is not None
         assert glyph_bytes == original
+
+
+# =============================================================================
+# Bestiary import: shortcut + raw attribute conflict fix
+# =============================================================================
+
+class TestBestiaryShortcutRawConflict:
+    """Verify shortcuts OR into raw attributes, not overwritten by them."""
+
+    def test_shortcut_applied_after_raw(self, tmp_path):
+        """Boss shortcut is preserved even when flags1 raw value is 0."""
+        from u3edit.bestiary import (
+            load_mon_file, save_mon_file, cmd_import,
+            MON_FLAG1_BOSS, MON_MONSTERS_PER_FILE
+        )
+        # Create empty MON file
+        mon_data = bytearray(256)
+        mon_path = str(tmp_path / 'MONA')
+        with open(mon_path, 'wb') as f:
+            f.write(mon_data)
+
+        # JSON with both boss shortcut AND raw flags1=0
+        jdata = {
+            "monsters": {
+                "0": {"hp": 100, "attack": 50, "flags1": 0, "boss": True}
+            }
+        }
+        json_path = str(tmp_path / 'bestiary.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        # Import
+        args = type('Args', (), {
+            'file': mon_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        cmd_import(args)
+
+        # Verify boss flag is set
+        monsters = load_mon_file(mon_path)
+        assert monsters[0].flags1 & MON_FLAG1_BOSS, \
+            "Boss flag should be set even when flags1 raw value is 0"
+
+    def test_shortcut_ors_into_existing_flags(self, tmp_path):
+        """Multiple shortcuts all accumulate."""
+        from u3edit.bestiary import (
+            load_mon_file, cmd_import,
+            MON_FLAG1_BOSS, MON_ABIL1_POISON, MON_ABIL1_NEGATE
+        )
+        mon_data = bytearray(256)
+        mon_path = str(tmp_path / 'MONA')
+        with open(mon_path, 'wb') as f:
+            f.write(mon_data)
+
+        jdata = {
+            "monsters": {
+                "0": {"hp": 200, "boss": True, "poison": True, "negate": True}
+            }
+        }
+        json_path = str(tmp_path / 'bestiary.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': mon_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        cmd_import(args)
+
+        monsters = load_mon_file(mon_path)
+        assert monsters[0].flags1 & MON_FLAG1_BOSS
+        assert monsters[0].ability1 & MON_ABIL1_POISON
+        assert monsters[0].ability1 & MON_ABIL1_NEGATE
+
+
+# =============================================================================
+# Non-numeric dict key handling
+# =============================================================================
+
+class TestDictKeyValidation:
+    """Verify non-numeric dict keys are handled gracefully."""
+
+    def test_bestiary_import_skips_bad_keys(self, tmp_path):
+        """Bestiary import skips non-numeric keys without crashing."""
+        from u3edit.bestiary import load_mon_file, cmd_import
+        mon_data = bytearray(256)
+        mon_path = str(tmp_path / 'MONA')
+        with open(mon_path, 'wb') as f:
+            f.write(mon_data)
+
+        jdata = {
+            "monsters": {
+                "0": {"hp": 100},
+                "abc": {"hp": 200},  # non-numeric key
+                "1": {"hp": 150}
+            }
+        }
+        json_path = str(tmp_path / 'bestiary.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': mon_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        cmd_import(args)  # Should not crash
+
+        monsters = load_mon_file(mon_path)
+        assert monsters[0].hp == 100
+        assert monsters[1].hp == 150
+
+    def test_combat_import_skips_bad_keys(self, tmp_path):
+        """Combat import skips non-numeric monster keys without crashing."""
+        from u3edit.combat import cmd_import as combat_import, CON_FILE_SIZE
+        con_data = bytearray(CON_FILE_SIZE)
+        con_path = str(tmp_path / 'CONA')
+        with open(con_path, 'wb') as f:
+            f.write(con_data)
+
+        jdata = {
+            "tiles": [['.' for _ in range(11)] for _ in range(11)],
+            "monsters": {
+                "0": {"x": 3, "y": 4},
+                "bad": {"x": 5, "y": 6}  # non-numeric key
+            }
+        }
+        json_path = str(tmp_path / 'combat.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': con_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        combat_import(args)  # Should not crash
+
+
+# =============================================================================
+# Map import width validation
+# =============================================================================
+
+class TestMapImportWidthValidation:
+    """Verify map import warns on mismatched width."""
+
+    def test_import_with_correct_width(self, tmp_path):
+        """Normal import with correct width succeeds."""
+        from u3edit.map import cmd_import as map_import
+        # 64x64 overworld = 4096 bytes
+        data = bytearray(4096)
+        map_path = str(tmp_path / 'MAPA')
+        with open(map_path, 'wb') as f:
+            f.write(data)
+
+        jdata = {
+            "tiles": [['.' for _ in range(64)] for _ in range(64)],
+            "width": 64
+        }
+        json_path = str(tmp_path / 'map.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+
+        args = type('Args', (), {
+            'file': map_path, 'json_file': json_path,
+            'output': None, 'backup': False, 'dry_run': False
+        })()
+        map_import(args)  # Should succeed without warning

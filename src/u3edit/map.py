@@ -394,6 +394,11 @@ def cmd_import(args) -> None:
     else:
         tiles = jdata.get('tiles', [])
         width = jdata.get('width', 64)
+        # Validate width against file size
+        expected_height = len(data) // width if width > 0 else 0
+        if width > 0 and len(data) % width != 0:
+            print(f"  Warning: file size {len(data)} not divisible by "
+                  f"width {width}", file=sys.stderr)
         for y, row in enumerate(tiles):
             for x, name in enumerate(row):
                 offset = y * width + x

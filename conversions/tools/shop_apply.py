@@ -132,8 +132,11 @@ def main():
         print(f"Error: {args.game_dir} is not a directory", file=sys.stderr)
         sys.exit(1)
 
-    apply_shop_strings(args.json_file, args.game_dir,
-                       dry_run=args.dry_run, backup=args.backup)
+    replaced, skipped = apply_shop_strings(
+        args.json_file, args.game_dir,
+        dry_run=args.dry_run, backup=args.backup)
+    if replaced == 0 and skipped > 0:
+        sys.exit(1)
 
 
 if __name__ == '__main__':

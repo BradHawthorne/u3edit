@@ -432,14 +432,30 @@ def cmd_import(args) -> None:
     mon_list = data if isinstance(data, list) else data.get('monsters', [])
     # Convert dict-of-dicts format ({"0": {...}, "1": {...}}) to list
     if isinstance(mon_list, dict):
-        mon_list = [dict(v, index=int(k)) for k, v in mon_list.items()]
+        converted = []
+        for k, v in mon_list.items():
+            try:
+                converted.append(dict(v, index=int(k)))
+            except (ValueError, TypeError):
+                print(f"  Warning: skipping non-numeric key '{k}'",
+                      file=sys.stderr)
+        mon_list = converted
     count = 0
     for entry in mon_list:
         idx = entry.get('index')
         if idx is None or not (0 <= idx < MON_MONSTERS_PER_FILE):
             continue
         m = monsters[idx]
-        # Apply flag/ability shortcuts before raw attributes
+        # Apply raw attributes first, then OR in shortcuts on top
+        for attr in ('tile1', 'tile2', 'hp', 'attack', 'defense', 'speed',
+                     'flags1', 'flags2', 'ability1', 'ability2'):
+            if attr in entry:
+                raw = entry[attr]
+                clamped = max(0, min(255, raw))
+                if clamped != raw:
+                    print(f"  Warning: monster {idx} {attr}={raw} clamped to {clamped}")
+                setattr(m, attr, clamped)
+        # Apply flag/ability shortcuts (OR into current values)
         if entry.get('boss'):
             m.flags1 |= MON_FLAG1_BOSS
         if entry.get('undead'):
@@ -460,14 +476,6 @@ def cmd_import(args) -> None:
             m.ability1 |= MON_ABIL1_DIVIDE
         if entry.get('resistant'):
             m.ability2 |= MON_ABIL2_RESISTANT
-        for attr in ('tile1', 'tile2', 'hp', 'attack', 'defense', 'speed',
-                     'flags1', 'flags2', 'ability1', 'ability2'):
-            if attr in entry:
-                raw = entry[attr]
-                clamped = max(0, min(255, raw))
-                if clamped != raw:
-                    print(f"  Warning: monster {idx} {attr}={raw} clamped to {clamped}")
-                setattr(m, attr, clamped)
         count += 1
 
     print(f"Import: {count} monster(s) to update")
