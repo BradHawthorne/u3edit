@@ -420,6 +420,132 @@ def cmd_import(args) -> None:
     print(f"Imported map to {output}")
 
 
+def cmd_compile(args) -> None:
+    """Compile a text-art .map file to binary.
+
+    Reads a text-art map file using tile display characters from constants.py
+    and writes a binary MAP file. Auto-detects overworld (64x64) vs dungeon
+    (8x 16x16) based on --dungeon flag.
+    """
+    with open(args.source, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    is_dungeon = getattr(args, 'dungeon', False)
+    char_map = (dict(DUNGEON_TILE_CHARS_REVERSE) if is_dungeon
+                else dict(TILE_CHARS_REVERSE))
+
+    lines = text.split('\n')
+    current_level = []
+    level_grids = []
+
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped.startswith('#') or not stripped:
+            if is_dungeon and current_level:
+                if stripped.startswith('# Level') or stripped.startswith('# ---'):
+                    level_grids.append(current_level)
+                    current_level = []
+            continue
+
+        row = []
+        for ch in stripped:
+            row.append(char_map.get(ch, 0))
+
+        width = 16 if is_dungeon else 64
+        if len(row) < width:
+            row.extend([0] * (width - len(row)))
+        elif len(row) > width:
+            row = row[:width]
+
+        current_level.append(row)
+
+    if is_dungeon:
+        if current_level:
+            level_grids.append(current_level)
+        while len(level_grids) < 8:
+            level_grids.append([[0] * 16 for _ in range(16)])
+        for level in level_grids:
+            while len(level) < 16:
+                level.append([0] * 16)
+
+        data = bytearray()
+        for level in level_grids[:8]:
+            for row in level[:16]:
+                data.extend(row[:16])
+        expected_size = 2048
+    else:
+        grid = current_level
+        while len(grid) < 64:
+            grid.append([0] * 64)
+        data = bytearray()
+        for row in grid[:64]:
+            data.extend(row[:64])
+        expected_size = 4096
+
+    assert len(data) == expected_size
+
+    output = args.output
+    if not output:
+        print(f"Compiled {'dungeon' if is_dungeon else 'overworld'} map: "
+              f"{expected_size} bytes")
+        return
+
+    with open(output, 'wb') as f:
+        f.write(data)
+    print(f"Compiled {'dungeon' if is_dungeon else 'overworld'} map "
+          f"({expected_size} bytes) to {output}")
+
+
+def cmd_decompile(args) -> None:
+    """Decompile a binary MAP file to text-art.
+
+    Reads a binary MAP file and outputs a text-art representation using
+    tile display characters from constants.py.
+    """
+    with open(args.file, 'rb') as f:
+        data = f.read()
+
+    is_dungeon = len(data) <= MAP_DUNGEON_SIZE
+
+    if is_dungeon:
+        forward = {tid: ch for tid, (ch, _) in DUNGEON_TILES.items()}
+        width, height = 16, 16
+        levels = len(data) // 256
+        lines = []
+        for lvl in range(levels):
+            lines.append(f"# Level {lvl + 1}")
+            base = lvl * 256
+            for y in range(height):
+                row = ''
+                for x in range(width):
+                    b = data[base + y * width + x]
+                    row += forward.get(b, '?')
+                lines.append(row)
+            lines.append('')
+        result = '\n'.join(lines)
+    else:
+        forward = {tid: ch for tid, (ch, _) in TILES.items()}
+        width = 64
+        height = len(data) // width
+        lines = [f"# Overworld ({width}x{height})"]
+        for y in range(height):
+            row = ''
+            for x in range(width):
+                b = data[y * width + x]
+                row += forward.get(b, '?')
+            lines.append(row)
+        result = '\n'.join(lines)
+
+    output = getattr(args, 'output', None)
+    if output:
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(result + '\n')
+        print(f"Decompiled {'dungeon' if is_dungeon else 'overworld'} map "
+              f"to {output}")
+    else:
+        print(result)
+
+
 def _add_map_write_args(p) -> None:
     """Add common write arguments for map edit commands."""
     p.add_argument('--output', '-o', help='Output file (default: overwrite)')
@@ -486,6 +612,18 @@ def register_parser(subparsers) -> None:
     p_import.add_argument('--backup', action='store_true', help='Create .bak backup before overwrite')
     p_import.add_argument('--dry-run', action='store_true', help='Show changes without writing')
 
+    p_compile = sub.add_parser('compile',
+                               help='Compile text-art .map to binary')
+    p_compile.add_argument('source', help='Text-art .map source file')
+    p_compile.add_argument('--output', '-o', help='Output binary MAP file')
+    p_compile.add_argument('--dungeon', action='store_true',
+                           help='Compile as dungeon (8x 16x16)')
+
+    p_decompile = sub.add_parser('decompile',
+                                 help='Decompile binary MAP to text-art')
+    p_decompile.add_argument('file', help='Binary MAP file')
+    p_decompile.add_argument('--output', '-o', help='Output .map text file')
+
 
 def dispatch(args) -> None:
     """Dispatch map subcommand."""
@@ -508,9 +646,14 @@ def dispatch(args) -> None:
         cmd_find(args)
     elif cmd == 'import':
         cmd_import(args)
+    elif cmd == 'compile':
+        cmd_compile(args)
+    elif cmd == 'decompile':
+        cmd_decompile(args)
     else:
-        print("Usage: u3edit map {view|overview|legend|edit|set|fill|replace|find|import} ...",
-              file=sys.stderr)
+        print("Usage: u3edit map "
+              "{view|overview|legend|edit|set|fill|replace|find|import|"
+              "compile|decompile} ...", file=sys.stderr)
 
 
 def main() -> None:
@@ -575,6 +718,18 @@ def main() -> None:
                           help='Create .bak backup before overwrite')
     p_import.add_argument('--dry-run', action='store_true',
                           help='Show changes without writing')
+
+    p_compile = sub.add_parser('compile',
+                               help='Compile text-art .map to binary')
+    p_compile.add_argument('source', help='Text-art .map source file')
+    p_compile.add_argument('--output', '-o', help='Output binary MAP file')
+    p_compile.add_argument('--dungeon', action='store_true',
+                           help='Compile as dungeon (8x 16x16)')
+
+    p_decompile = sub.add_parser('decompile',
+                                 help='Decompile binary MAP to text-art')
+    p_decompile.add_argument('file', help='Binary MAP file')
+    p_decompile.add_argument('--output', '-o', help='Output .map text file')
 
     args = parser.parse_args()
     dispatch(args)

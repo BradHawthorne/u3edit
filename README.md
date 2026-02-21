@@ -543,7 +543,7 @@ pip install -e ".[dev]"
 pytest -v
 ```
 
-909 tests covering all modules with synthesized game data (no real game files needed).
+934 tests covering all modules with synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 
@@ -588,24 +588,26 @@ cat conversions/TEMPLATE/STORY_TEMPLATE.md
 
 ```bash
 # Decompile existing tiles to editable text-art
-python conversions/tools/tile_compiler.py decompile SHPS#060800 --output tiles.tiles
+u3edit shapes decompile SHPS --output tiles.tiles
 
 # Edit tiles.tiles (7x8 pixel grids, '#'=on '.'=off)
-# Compile back to import commands
-python conversions/tools/tile_compiler.py compile tiles.tiles --format json > tiles.json
-u3edit shapes import SHPS#060800 tiles.json
+# Compile back to binary
+u3edit shapes compile tiles.tiles --output SHPS
+# Or compile to JSON for shapes import
+u3edit shapes compile tiles.tiles --format json --output tiles.json
 ```
 
 **Map Compiler** — text-art maps to game binary:
 
 ```bash
 # Decompile a map to editable text-art
-python conversions/tools/map_compiler.py decompile MAPA#061000 --output mapa.map
+u3edit map decompile MAPA --output mapa.map
 
 # Edit mapa.map (single-char tiles: ~=water .=grass ^=mountain etc.)
-# Compile back
-python conversions/tools/map_compiler.py compile mapa.map --output mapa.json
-u3edit map import MAPA#061000 mapa.json
+# Compile back to binary
+u3edit map compile mapa.map --output MAPA
+# Dungeon maps: 8 levels x 16x16
+u3edit map compile mapm.map --dungeon --output MAPM
 ```
 
 **Dialog** — round-trip text editing:
@@ -620,15 +622,15 @@ u3edit tlk build tlka.txt TLKA      # Compile back to binary
 
 ```bash
 # Decompile current names from engine binary
-python conversions/tools/name_compiler.py decompile ULT3 --output names.names
+u3edit patch decompile-names ULT3 --output names.names
 
 # Edit names.names (one name per line, # comments for groups)
 # Validate budget (891 usable bytes)
-python conversions/tools/name_compiler.py validate names.names
+u3edit patch validate-names names.names
 
-# Compile and apply
-python conversions/tools/name_compiler.py compile names.names | \
-  xargs u3edit patch edit ULT3 --region name-table --data
+# Compile to JSON and apply
+u3edit patch compile-names names.names --output names.json
+u3edit patch import ULT3 names.json
 ```
 
 **Verification** — confirm all assets were replaced:

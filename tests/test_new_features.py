@@ -7476,3 +7476,383 @@ class TestPatchStringsEdit:
         texts = [s['text'] for s in strings]
         assert any('SHARD OF VOID' in t for t in texts)
         assert any('SIGIL: KINGS' in t for t in texts)
+
+
+# =============================================================================
+# Compiler subcommands — map, shapes, patch
+# =============================================================================
+
+class TestMapCompileSubcommand:
+    """Test u3edit map compile/decompile CLI subcommands."""
+
+    def test_compile_overworld(self, tmp_dir):
+        """Compile overworld .map produces 4096-byte binary."""
+        from u3edit.map import cmd_compile
+        # Create a minimal .map with water tiles
+        src = os.path.join(tmp_dir, 'test.map')
+        lines = ['# Overworld (64x64)']
+        for _ in range(64):
+            lines.append('~' * 64)
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        out = os.path.join(tmp_dir, 'test.bin')
+        args = argparse.Namespace(source=src, output=out, dungeon=False)
+        cmd_compile(args)
+        with open(out, 'rb') as f:
+            data = f.read()
+        assert len(data) == MAP_OVERWORLD_SIZE
+
+    def test_compile_dungeon(self, tmp_dir):
+        """Compile dungeon .map produces 2048-byte binary."""
+        from u3edit.map import cmd_compile
+        src = os.path.join(tmp_dir, 'test.map')
+        lines = []
+        for lvl in range(8):
+            lines.append(f'# Level {lvl + 1}')
+            for _ in range(16):
+                lines.append('#' * 16)
+            lines.append('')
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        out = os.path.join(tmp_dir, 'test.bin')
+        args = argparse.Namespace(source=src, output=out, dungeon=True)
+        cmd_compile(args)
+        with open(out, 'rb') as f:
+            data = f.read()
+        assert len(data) == MAP_DUNGEON_SIZE
+
+    def test_decompile_overworld(self, tmp_dir):
+        """Decompile overworld binary to text-art."""
+        from u3edit.map import cmd_decompile
+        # Create a 4096-byte binary (all water = 0x00)
+        bin_path = os.path.join(tmp_dir, 'test.bin')
+        with open(bin_path, 'wb') as f:
+            f.write(b'\x00' * MAP_OVERWORLD_SIZE)
+        out = os.path.join(tmp_dir, 'test.map')
+        args = argparse.Namespace(file=bin_path, output=out)
+        cmd_decompile(args)
+        with open(out, 'r') as f:
+            text = f.read()
+        assert 'Overworld' in text
+        # Should have 64 data lines
+        data_lines = [l for l in text.strip().split('\n')
+                      if l and not l.startswith('#')]
+        assert len(data_lines) == 64
+
+    def test_compile_decompile_roundtrip(self, tmp_dir):
+        """Compile then decompile preserves tile content."""
+        from u3edit.map import cmd_compile, cmd_decompile
+        src = os.path.join(tmp_dir, 'orig.map')
+        # Create map with mixed tiles
+        lines = ['# Test']
+        for y in range(64):
+            row = '~' * 32 + '.' * 32  # water + grass
+            lines.append(row)
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        # Compile
+        bin_path = os.path.join(tmp_dir, 'test.bin')
+        args = argparse.Namespace(source=src, output=bin_path, dungeon=False)
+        cmd_compile(args)
+        # Decompile
+        out = os.path.join(tmp_dir, 'decomp.map')
+        args2 = argparse.Namespace(file=bin_path, output=out)
+        cmd_decompile(args2)
+        with open(out, 'r') as f:
+            text = f.read()
+        data_lines = [l for l in text.strip().split('\n')
+                      if l and not l.startswith('#')]
+        # Each row should have ~ and . characters
+        for line in data_lines:
+            assert '~' in line
+            assert '.' in line
+
+    def test_compile_no_output_prints_size(self, tmp_dir, capsys):
+        """Compile without --output prints size info."""
+        from u3edit.map import cmd_compile
+        src = os.path.join(tmp_dir, 'test.map')
+        lines = ['# Test']
+        for _ in range(64):
+            lines.append('~' * 64)
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        args = argparse.Namespace(source=src, output=None, dungeon=False)
+        cmd_compile(args)
+        captured = capsys.readouterr()
+        assert '4096 bytes' in captured.out
+
+
+class TestShapesCompileSubcommand:
+    """Test u3edit shapes compile/decompile CLI subcommands."""
+
+    def _make_tiles_source(self, path, count=2):
+        """Create a .tiles source with test glyphs."""
+        lines = []
+        for i in range(count):
+            lines.append(f'# Tile 0x{i:02X}: Test{i}')
+            for row in range(8):
+                # Alternating pattern
+                if row % 2 == 0:
+                    lines.append('#.#.#.#')
+                else:
+                    lines.append('.#.#.#.')
+            lines.append('')
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines))
+
+    def test_compile_binary(self, tmp_dir):
+        """Compile .tiles to 2048-byte SHPS binary."""
+        from u3edit.shapes import cmd_compile_tiles
+        src = os.path.join(tmp_dir, 'test.tiles')
+        self._make_tiles_source(src)
+        out = os.path.join(tmp_dir, 'test.bin')
+        args = argparse.Namespace(source=src, output=out, format='binary')
+        cmd_compile_tiles(args)
+        with open(out, 'rb') as f:
+            data = f.read()
+        assert len(data) == 2048
+        # Tile 0 should have non-zero data
+        assert data[0] != 0
+
+    def test_compile_json(self, tmp_dir):
+        """Compile .tiles to JSON format."""
+        from u3edit.shapes import cmd_compile_tiles
+        src = os.path.join(tmp_dir, 'test.tiles')
+        self._make_tiles_source(src, count=3)
+        out = os.path.join(tmp_dir, 'test.json')
+        args = argparse.Namespace(source=src, output=out, format='json')
+        cmd_compile_tiles(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert 'tiles' in result
+        assert len(result['tiles'][0]['frames']) == 3
+
+    def test_decompile(self, tmp_dir):
+        """Decompile SHPS binary to text-art."""
+        from u3edit.shapes import cmd_decompile_tiles
+        # Create 2048-byte SHPS binary
+        data = bytearray(2048)
+        # Put a pattern in tile 0: alternating rows
+        data[0] = 0b0101010  # #.#.#.#
+        data[1] = 0b0101010
+        bin_path = os.path.join(tmp_dir, 'test.bin')
+        with open(bin_path, 'wb') as f:
+            f.write(data)
+        out = os.path.join(tmp_dir, 'test.tiles')
+        args = argparse.Namespace(file=bin_path, output=out)
+        cmd_decompile_tiles(args)
+        with open(out, 'r') as f:
+            text = f.read()
+        assert '# Tile 0x00' in text
+        assert '#' in text  # pixel-on chars present
+
+    def test_compile_decompile_roundtrip(self, tmp_dir):
+        """Compile then decompile preserves glyph pixel data."""
+        from u3edit.shapes import cmd_compile_tiles, cmd_decompile_tiles, \
+            parse_tiles_text
+        src = os.path.join(tmp_dir, 'orig.tiles')
+        self._make_tiles_source(src, count=4)
+        # Read original
+        with open(src, 'r') as f:
+            orig_tiles = parse_tiles_text(f.read())
+        # Compile
+        bin_path = os.path.join(tmp_dir, 'test.bin')
+        args = argparse.Namespace(source=src, output=bin_path, format='binary')
+        cmd_compile_tiles(args)
+        # Decompile
+        out = os.path.join(tmp_dir, 'decomp.tiles')
+        args2 = argparse.Namespace(file=bin_path, output=out)
+        cmd_decompile_tiles(args2)
+        # Re-parse decompiled
+        with open(out, 'r') as f:
+            decomp_tiles = parse_tiles_text(f.read())
+        # Find our original tiles in the decompiled output
+        decomp_map = {idx: data for idx, data in decomp_tiles}
+        for idx, orig_data in orig_tiles:
+            assert idx in decomp_map
+            assert decomp_map[idx] == orig_data
+
+    def test_compile_no_output_prints_count(self, tmp_dir, capsys):
+        """Compile without --output prints tile count."""
+        from u3edit.shapes import cmd_compile_tiles
+        src = os.path.join(tmp_dir, 'test.tiles')
+        self._make_tiles_source(src, count=5)
+        args = argparse.Namespace(source=src, output=None, format='binary')
+        cmd_compile_tiles(args)
+        captured = capsys.readouterr()
+        assert '5 tiles' in captured.out
+
+    def test_parse_tiles_text_auto_index(self, tmp_dir):
+        """Tiles without headers get auto-assigned sequential indices."""
+        from u3edit.shapes import parse_tiles_text
+        text = '# Tile 0x10: Start\n'
+        for _ in range(8):
+            text += '#######\n'
+        text += '\n'
+        for _ in range(8):
+            text += '.......\n'
+        text += '\n'
+        tiles = parse_tiles_text(text)
+        assert len(tiles) == 2
+        assert tiles[0][0] == 0x10
+        assert tiles[1][0] == 0x11  # auto-assigned
+
+
+class TestPatchCompileNamesSubcommand:
+    """Test u3edit patch compile-names/decompile-names CLI subcommands."""
+
+    def _make_names_source(self, path, names=None):
+        """Create a .names source file."""
+        if names is None:
+            names = ['WATER', 'GRASS', 'FOREST', 'MOUNTAIN',
+                     'SWORD', 'MACE', 'DAGGER']
+        lines = ['# Test Name Table', '# Group: Terrain']
+        lines.extend(names[:4])
+        lines.append('')
+        lines.append('# Group: Weapons')
+        lines.extend(names[4:])
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+    def test_compile_names_json(self, tmp_dir):
+        """Compile .names to JSON with regions.name-table.data."""
+        from u3edit.patch import cmd_compile_names
+        src = os.path.join(tmp_dir, 'test.names')
+        self._make_names_source(src)
+        out = os.path.join(tmp_dir, 'names.json')
+        args = argparse.Namespace(source=src, output=out)
+        cmd_compile_names(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert 'regions' in result
+        assert 'name-table' in result['regions']
+        assert 'data' in result['regions']['name-table']
+        names = result['regions']['name-table']['data']
+        assert 'WATER' in names
+        assert 'SWORD' in names
+
+    def test_compile_names_stdout(self, tmp_dir, capsys):
+        """Compile .names to stdout prints JSON."""
+        from u3edit.patch import cmd_compile_names
+        src = os.path.join(tmp_dir, 'test.names')
+        self._make_names_source(src)
+        args = argparse.Namespace(source=src, output=None)
+        cmd_compile_names(args)
+        captured = capsys.readouterr()
+        result = json.loads(captured.out)
+        assert 'regions' in result
+
+    def test_validate_names_pass(self, tmp_dir, capsys):
+        """Validate .names within budget passes."""
+        from u3edit.patch import cmd_validate_names
+        src = os.path.join(tmp_dir, 'test.names')
+        self._make_names_source(src)
+        args = argparse.Namespace(source=src)
+        cmd_validate_names(args)
+        captured = capsys.readouterr()
+        assert 'PASS' in captured.out
+
+    def test_validate_names_fail(self, tmp_dir):
+        """Validate .names over budget fails."""
+        from u3edit.patch import cmd_validate_names
+        src = os.path.join(tmp_dir, 'test.names')
+        # Create names that exceed 891-byte budget
+        names = [f'VERY_LONG_NAME_PADDING_{i:04d}' for i in range(100)]
+        self._make_names_source(src, names)
+        args = argparse.Namespace(source=src)
+        with pytest.raises(SystemExit):
+            cmd_validate_names(args)
+
+    def test_decompile_names(self, tmp_dir):
+        """Decompile name table from ULT3-sized binary."""
+        from u3edit.patch import cmd_decompile_names
+        # Create a minimal binary with name table at offset 0x397A
+        data = bytearray(0x397A + 921)
+        # Encode some test names at offset 0x397A
+        offset = 0x397A
+        for name in ['WATER', 'GRASS', 'SWORD']:
+            for ch in name:
+                data[offset] = ord(ch) | 0x80
+                offset += 1
+            data[offset] = 0x00
+            offset += 1
+        bin_path = os.path.join(tmp_dir, 'test_ult3.bin')
+        with open(bin_path, 'wb') as f:
+            f.write(data)
+        out = os.path.join(tmp_dir, 'names.names')
+        args = argparse.Namespace(file=bin_path, output=out)
+        cmd_decompile_names(args)
+        with open(out, 'r') as f:
+            text = f.read()
+        assert 'WATER' in text
+        assert 'GRASS' in text
+        assert 'SWORD' in text
+
+    def test_parse_names_empty_string(self):
+        """Explicit empty strings ('""') are preserved."""
+        from u3edit.patch import _parse_names_file
+        text = '# Test\nFOO\n""\nBAR\n'
+        names = _parse_names_file(text)
+        assert names == ['FOO', '', 'BAR']
+
+    def test_validate_names_budget_math(self):
+        """Budget math: encoded size = sum(len+1), budget = 921-30."""
+        from u3edit.patch import _validate_names
+        names = ['AB', 'CD']
+        size, budget, valid = _validate_names(names)
+        assert size == 6  # (2+1) + (2+1)
+        assert budget == 891
+        assert valid is True
+
+
+class TestCliParityCompilers:
+    """Verify compile subcommands are registered in CLI dispatch."""
+
+    def test_map_compile_in_dispatch(self):
+        """map dispatch handles 'compile'."""
+        from u3edit.map import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'compile'" in src
+
+    def test_map_decompile_in_dispatch(self):
+        """map dispatch handles 'decompile'."""
+        from u3edit.map import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'decompile'" in src
+
+    def test_shapes_compile_in_dispatch(self):
+        """shapes dispatch handles 'compile'."""
+        from u3edit.shapes import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'compile'" in src
+
+    def test_shapes_decompile_in_dispatch(self):
+        """shapes dispatch handles 'decompile'."""
+        from u3edit.shapes import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'decompile'" in src
+
+    def test_patch_compile_names_in_dispatch(self):
+        """patch dispatch handles 'compile-names'."""
+        from u3edit.patch import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'compile-names'" in src
+
+    def test_patch_decompile_names_in_dispatch(self):
+        """patch dispatch handles 'decompile-names'."""
+        from u3edit.patch import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'decompile-names'" in src
+
+    def test_patch_validate_names_in_dispatch(self):
+        """patch dispatch handles 'validate-names'."""
+        from u3edit.patch import dispatch
+        import inspect
+        src = inspect.getsource(dispatch)
+        assert "'validate-names'" in src

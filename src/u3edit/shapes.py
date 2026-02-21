@@ -12,6 +12,7 @@ using Apple II NTSC artifact color logic.
 import argparse
 import json
 import os
+import re
 import struct
 import sys
 import zlib
@@ -829,6 +830,181 @@ def _hex_dump(data: bytes, offset: int, length: int) -> None:
 
 
 # ============================================================================
+# Tile compile / decompile
+# ============================================================================
+
+# Characters recognized as "pixel on" in .tiles text-art
+_TILE_ON_CHARS = set('#*XO@')
+
+_TILE_HEADER_RE = re.compile(
+    r'^#\s*[Tt]ile\s+(0x[0-9A-Fa-f]+|\d+)\s*[:\-]?\s*(.*)')
+
+
+def _rows_to_glyph(rows: list[str]) -> bytes:
+    """Convert 8 text rows to 8-byte glyph data.
+
+    Bit 0 = leftmost pixel, bit 6 = rightmost pixel. Bit 7 always 0.
+    """
+    result = bytearray(GLYPH_SIZE)
+    for r, row in enumerate(rows):
+        byte_val = 0
+        for c in range(GLYPH_WIDTH):
+            ch = row[c] if c < len(row) else '.'
+            if ch in _TILE_ON_CHARS:
+                byte_val |= (1 << c)
+        result[r] = byte_val
+    return bytes(result)
+
+
+def _glyph_to_rows(data: bytes, offset: int = 0) -> list[str]:
+    """Convert 8 bytes of glyph data to 8 text rows."""
+    rows = []
+    for r in range(GLYPH_HEIGHT):
+        b = data[offset + r] if offset + r < len(data) else 0
+        row = ''
+        for c in range(GLYPH_WIDTH):
+            row += '#' if (b >> c) & 1 else '.'
+        rows.append(row)
+    return rows
+
+
+def parse_tiles_text(text: str) -> list[tuple[int, bytes]]:
+    """Parse a .tiles text file into (index, glyph_bytes) tuples."""
+    tiles = []
+    lines = text.split('\n')
+    current_index = None
+    current_rows = []
+
+    for line in lines:
+        stripped = line.rstrip()
+
+        header_match = _TILE_HEADER_RE.match(stripped)
+        if header_match:
+            if current_index is not None and len(current_rows) == GLYPH_HEIGHT:
+                tiles.append((current_index, _rows_to_glyph(current_rows)))
+            elif current_index is not None and current_rows:
+                raise ValueError(
+                    f'Tile 0x{current_index:02X}: expected {GLYPH_HEIGHT} '
+                    f'rows, got {len(current_rows)}')
+            current_index = int(header_match.group(1), 0)
+            current_rows = []
+            continue
+
+        if stripped.startswith('# ') or stripped == '#':
+            continue
+
+        if not stripped:
+            if current_index is not None and len(current_rows) == GLYPH_HEIGHT:
+                tiles.append((current_index, _rows_to_glyph(current_rows)))
+                current_index = None
+                current_rows = []
+            continue
+
+        row_chars = stripped
+        if len(row_chars) < GLYPH_WIDTH:
+            row_chars = row_chars.ljust(GLYPH_WIDTH, '.')
+        elif len(row_chars) > GLYPH_WIDTH:
+            row_chars = row_chars[:GLYPH_WIDTH]
+
+        if current_index is None:
+            current_index = tiles[-1][0] + 1 if tiles else 0
+            current_rows = []
+
+        current_rows.append(row_chars)
+
+    if current_index is not None and len(current_rows) == GLYPH_HEIGHT:
+        tiles.append((current_index, _rows_to_glyph(current_rows)))
+    elif current_index is not None and current_rows:
+        raise ValueError(
+            f'Tile 0x{current_index:02X}: expected {GLYPH_HEIGHT} '
+            f'rows, got {len(current_rows)}')
+
+    return tiles
+
+
+def decompile_shps(data: bytes) -> str:
+    """Convert SHPS binary data to text-art format."""
+    if len(data) < SHPS_FILE_SIZE:
+        raise ValueError(
+            f'SHPS file too small: {len(data)} bytes '
+            f'(expected {SHPS_FILE_SIZE})')
+
+    lines = []
+    tile_names = {}
+    for tile_id, (char, name) in TILES.items():
+        for frame in range(FRAMES_PER_TILE):
+            idx = (tile_id + frame) & 0xFF
+            suffix = f' (frame {frame})' if frame else ''
+            tile_names[idx] = f'{name}{suffix}'
+
+    for idx in range(GLYPHS_PER_FILE):
+        name = f': {tile_names[idx]}' if idx in tile_names else ''
+        lines.append(f'# Tile 0x{idx:02X}{name}')
+        for row_str in _glyph_to_rows(data, idx * GLYPH_SIZE):
+            lines.append(row_str)
+        lines.append('')
+
+    return '\n'.join(lines)
+
+
+def cmd_compile_tiles(args) -> None:
+    """Compile a .tiles text-art file to SHPS binary or JSON."""
+    with open(args.source, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    tiles = parse_tiles_text(text)
+    if not tiles:
+        print("No tiles found in source file.", file=sys.stderr)
+        sys.exit(1)
+
+    fmt = getattr(args, 'format', 'binary')
+
+    if fmt == 'json':
+        tile_list = [{'index': idx, 'raw': list(glyph)}
+                     for idx, glyph in tiles]
+        result = json.dumps({'tiles': [{'frames': tile_list}]}, indent=2)
+        output = getattr(args, 'output', None)
+        if output:
+            with open(output, 'w', encoding='utf-8') as f:
+                f.write(result + '\n')
+            print(f"Compiled {len(tiles)} tiles to JSON: {output}")
+        else:
+            print(result)
+        return
+
+    # Binary output: produce full 2048-byte SHPS
+    data = bytearray(SHPS_FILE_SIZE)
+    for idx, glyph in tiles:
+        if 0 <= idx < GLYPHS_PER_FILE:
+            offset = idx * GLYPH_SIZE
+            data[offset:offset + GLYPH_SIZE] = glyph
+
+    output = getattr(args, 'output', None)
+    if not output:
+        print(f"Compiled {len(tiles)} tiles ({SHPS_FILE_SIZE} bytes)")
+        return
+
+    with open(output, 'wb') as f:
+        f.write(data)
+    print(f"Compiled {len(tiles)} tiles ({SHPS_FILE_SIZE} bytes) to {output}")
+
+
+def cmd_decompile_tiles(args) -> None:
+    """Decompile SHPS binary to text-art .tiles format."""
+    with open(args.file, 'rb') as f:
+        data = f.read()
+
+    text = decompile_shps(data)
+    output = getattr(args, 'output', None)
+    if output:
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(text + '\n')
+        print(f"Decompiled {len(data)} bytes to {output}")
+    else:
+        print(text)
+
+
+# ============================================================================
 # Parser registration
 # ============================================================================
 
@@ -884,6 +1060,18 @@ def register_parser(subparsers) -> None:
     p_estr.add_argument('--dry-run', action='store_true',
                         help='Show changes without writing')
 
+    p_compile = sub.add_parser('compile',
+                               help='Compile text-art .tiles to SHPS binary')
+    p_compile.add_argument('source', help='Text-art .tiles source file')
+    p_compile.add_argument('--output', '-o', help='Output file')
+    p_compile.add_argument('--format', choices=['binary', 'json'],
+                           default='binary', help='Output format')
+
+    p_decompile = sub.add_parser('decompile',
+                                 help='Decompile SHPS binary to text-art')
+    p_decompile.add_argument('file', help='SHPS binary file')
+    p_decompile.add_argument('--output', '-o', help='Output .tiles file')
+
 
 def dispatch(args) -> None:
     """Dispatch shapes subcommand."""
@@ -900,8 +1088,13 @@ def dispatch(args) -> None:
         cmd_info(args)
     elif cmd == 'edit-string':
         cmd_edit_string(args)
+    elif cmd == 'compile':
+        cmd_compile_tiles(args)
+    elif cmd == 'decompile':
+        cmd_decompile_tiles(args)
     else:
-        print("Usage: u3edit shapes {view|export|edit|import|info|edit-string} ...",
+        print("Usage: u3edit shapes "
+              "{view|export|edit|import|info|edit-string|compile|decompile} ...",
               file=sys.stderr)
 
 
@@ -961,6 +1154,18 @@ def main() -> None:
                         help='Create .bak backup before overwrite')
     p_estr.add_argument('--dry-run', action='store_true',
                         help='Show changes without writing')
+
+    p_compile = sub.add_parser('compile',
+                               help='Compile text-art .tiles to SHPS binary')
+    p_compile.add_argument('source', help='Text-art .tiles source file')
+    p_compile.add_argument('--output', '-o', help='Output file')
+    p_compile.add_argument('--format', choices=['binary', 'json'],
+                           default='binary', help='Output format')
+
+    p_decompile = sub.add_parser('decompile',
+                                 help='Decompile SHPS binary to text-art')
+    p_decompile.add_argument('file', help='SHPS binary file')
+    p_decompile.add_argument('--output', '-o', help='Output .tiles file')
 
     args = parser.parse_args()
     dispatch(args)

@@ -754,6 +754,149 @@ def cmd_strings(args) -> None:
 
 
 # ============================================================================
+# Name table compile / decompile
+# ============================================================================
+
+_NAME_TABLE_OFFSET = 0x397A
+_NAME_TABLE_SIZE = 921
+_NAME_TAIL_RESERVE = 30
+
+# Known group boundaries (from engine analysis)
+_NAME_GROUPS = [
+    (0, 39, 'Terrain and NPC Types'),
+    (39, 65, 'Map Codes'),
+    (65, 81, 'Weapons'),
+    (81, 89, 'Armor'),
+    (89, 104, 'Wizard Spells'),
+    (104, 105, 'Separator'),
+    (105, 121, 'Cleric Spells'),
+    (121, None, 'Monster Alternates'),
+]
+
+
+def _parse_names_file(text: str) -> list[str]:
+    """Parse a .names text file into a list of name strings."""
+    names = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('# ') or stripped == '#':
+            continue
+        if not stripped:
+            continue
+        if stripped in ('""', "''"):
+            names.append('')
+        else:
+            names.append(stripped)
+    return names
+
+
+def _validate_names(names: list[str]) -> tuple[int, int, bool]:
+    """Check if names fit within the 921-byte budget.
+
+    Returns (encoded_size, budget, is_valid).
+    """
+    size = sum(len(s) + 1 for s in names)
+    budget = _NAME_TABLE_SIZE - _NAME_TAIL_RESERVE
+    return size, budget, size <= budget
+
+
+def cmd_compile_names(args) -> None:
+    """Compile .names file to JSON for patch import."""
+    with open(args.source, 'r', encoding='utf-8') as f:
+        text = f.read()
+
+    names = _parse_names_file(text)
+    if not names:
+        print("No names found in source file.", file=sys.stderr)
+        sys.exit(1)
+
+    size, budget, valid = _validate_names(names)
+    if not valid:
+        print(f"Error: names ({size} bytes) exceed budget "
+              f"({budget} bytes, {_NAME_TAIL_RESERVE} reserved for tail)",
+              file=sys.stderr)
+        sys.exit(1)
+
+    result = json.dumps({
+        'regions': {
+            'name-table': {
+                'data': names
+            }
+        }
+    }, indent=2)
+
+    output = getattr(args, 'output', None)
+    if output:
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(result + '\n')
+        print(f"Compiled {len(names)} names ({size}/{budget} bytes) "
+              f"to {output}")
+    else:
+        print(result)
+    print(f"# {len(names)} names, {size}/{budget} bytes OK",
+          file=sys.stderr)
+
+
+def cmd_decompile_names(args) -> None:
+    """Decompile ULT3 name table to .names text format."""
+    with open(args.file, 'rb') as f:
+        data = f.read()
+
+    strings = parse_text_region(data, _NAME_TABLE_OFFSET, _NAME_TABLE_SIZE)
+
+    lines = ['# Ultima III Name Table']
+    lines.append(f'# {len(strings)} strings extracted')
+    lines.append('')
+
+    idx = 0
+    for start, end, label in _NAME_GROUPS:
+        if idx >= len(strings):
+            break
+        actual_end = end if end is not None else len(strings)
+        if idx < start:
+            for i in range(idx, min(start, len(strings))):
+                lines.append(strings[i] if strings[i] else '""')
+            idx = start
+        lines.append(f'# Group: {label}')
+        for i in range(start, min(actual_end, len(strings))):
+            lines.append(strings[i] if strings[i] else '""')
+        lines.append('')
+        idx = actual_end
+
+    if idx < len(strings):
+        lines.append('# Group: Extra')
+        for i in range(idx, len(strings)):
+            lines.append(strings[i] if strings[i] else '""')
+
+    result = '\n'.join(lines) + '\n'
+
+    output = getattr(args, 'output', None)
+    if output:
+        with open(output, 'w', encoding='utf-8') as f:
+            f.write(result)
+        print(f"Decompiled {len(strings)} names to {output}")
+    else:
+        print(result)
+
+
+def cmd_validate_names(args) -> None:
+    """Validate .names file against 921-byte budget."""
+    with open(args.source, 'r', encoding='utf-8') as f:
+        text = f.read()
+    names = _parse_names_file(text)
+    size, budget, valid = _validate_names(names)
+
+    print(f"Strings: {len(names)}")
+    print(f"Encoded: {size} bytes")
+    print(f"Budget:  {budget} bytes (921 - {_NAME_TAIL_RESERVE} tail reserve)")
+    print(f"Free:    {budget - size} bytes")
+    print(f"Status:  {'PASS' if valid else 'FAIL -- over budget'}")
+
+    if not valid:
+        sys.exit(1)
+
+
+# ============================================================================
 # Parser registration
 # ============================================================================
 
@@ -826,6 +969,20 @@ def register_parser(subparsers) -> None:
     p_strimport.add_argument('--dry-run', action='store_true',
                              help='Show changes without writing')
 
+    p_cnames = sub.add_parser('compile-names',
+                              help='Compile .names to JSON for patch import')
+    p_cnames.add_argument('source', help='.names source file')
+    p_cnames.add_argument('--output', '-o', help='Output JSON file')
+
+    p_dnames = sub.add_parser('decompile-names',
+                              help='Decompile ULT3 name table to .names')
+    p_dnames.add_argument('file', help='ULT3 engine binary')
+    p_dnames.add_argument('--output', '-o', help='Output .names file')
+
+    p_vnames = sub.add_parser('validate-names',
+                              help='Validate .names file against budget')
+    p_vnames.add_argument('source', help='.names source file')
+
 
 def dispatch(args) -> None:
     """Dispatch patch subcommand."""
@@ -844,9 +1001,16 @@ def dispatch(args) -> None:
         cmd_strings_edit(args)
     elif cmd == 'strings-import':
         cmd_strings_import(args)
+    elif cmd == 'compile-names':
+        cmd_compile_names(args)
+    elif cmd == 'decompile-names':
+        cmd_decompile_names(args)
+    elif cmd == 'validate-names':
+        cmd_validate_names(args)
     else:
         print("Usage: u3edit patch "
-              "{view|edit|dump|import|strings|strings-edit|strings-import} ...",
+              "{view|edit|dump|import|strings|strings-edit|strings-import|"
+              "compile-names|decompile-names|validate-names} ...",
               file=sys.stderr)
 
 
@@ -919,6 +1083,20 @@ def main() -> None:
                              help='Create .bak backup before overwrite')
     p_strimport.add_argument('--dry-run', action='store_true',
                              help='Show changes without writing')
+
+    p_cnames = sub.add_parser('compile-names',
+                              help='Compile .names to JSON for patch import')
+    p_cnames.add_argument('source', help='.names source file')
+    p_cnames.add_argument('--output', '-o', help='Output JSON file')
+
+    p_dnames = sub.add_parser('decompile-names',
+                              help='Decompile ULT3 name table to .names')
+    p_dnames.add_argument('file', help='ULT3 engine binary')
+    p_dnames.add_argument('--output', '-o', help='Output .names file')
+
+    p_vnames = sub.add_parser('validate-names',
+                              help='Validate .names file against budget')
+    p_vnames.add_argument('source', help='.names source file')
 
     args = parser.parse_args()
     dispatch(args)
