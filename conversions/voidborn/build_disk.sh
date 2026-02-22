@@ -306,6 +306,9 @@ def make_entry(storage_type, name, file_type, key_block, blocks_used, eof, aux_t
 # --- Write all file data ---
 file_records = []  # (prodos_name, file_type, aux_type, key_block, storage_type, blocks_used, eof, is_root)
 
+# Write root files first — PRODOS must be earliest on disk (boot code loads it)
+prodos_order = {'PRODOS': 0, 'LOADER.SYSTEM': 1}
+root_files.sort(key=lambda r: (prodos_order.get(r[0], 99), r[0]))
 for prodos_name, file_type, aux_type, data in root_files:
     key_block, storage_type, blocks_used = write_file(data)
     file_records.append((prodos_name, file_type, aux_type, key_block, storage_type, blocks_used, len(data), True))
@@ -369,10 +372,21 @@ for i, blk in enumerate(game_dir_blocks):
     write_block(blk, block_data)
 
 # --- Build volume directory ---
-# Root directory entries: GAME subdir + root files
+# Root directory entries — PRODOS must be first (boot code expects it)
+# Vanilla order: PRODOS, LOADER.SYSTEM, U3, GAME
 root_entries = []
 
-# GAME subdirectory entry
+# Root file entries first (PRODOS, then others)
+root_recs = [r for r in file_records if r[7]]
+# Sort: PRODOS first, then LOADER.SYSTEM, then alphabetical
+prodos_order = {'PRODOS': 0, 'LOADER.SYSTEM': 1}
+root_recs.sort(key=lambda r: (prodos_order.get(r[0], 99), r[0]))
+for rec in root_recs:
+    name, ftype, aux, key, stype, blks, eof, _ = rec
+    entry = make_entry(stype, name, ftype, key, blks, eof, aux)
+    root_entries.append(entry)
+
+# GAME subdirectory entry last
 game_entry = bytearray(ENTRY_LENGTH)
 name_bytes = b'GAME'
 game_entry[0x00] = (0x0D << 4) | len(name_bytes)  # 0xD = directory file
@@ -388,13 +402,6 @@ game_entry[0x16] = ((len(game_dir_blocks) * BLOCK_SIZE) >> 8) & 0xFF
 game_entry[0x17] = ((len(game_dir_blocks) * BLOCK_SIZE) >> 16) & 0xFF
 game_entry[0x1E] = 0xE3  # access
 root_entries.append(game_entry)
-
-# Root file entries
-for rec in file_records:
-    if rec[7]:  # is_root
-        name, ftype, aux, key, stype, blks, eof, _ = rec
-        entry = make_entry(stype, name, ftype, key, blks, eof, aux)
-        root_entries.append(entry)
 
 root_file_count = len(root_entries)
 
@@ -444,8 +451,8 @@ for i, blk in enumerate(vol_dir_blocks):
     write_block(blk, block_data)
 
 # Fix GAME subdir parent entry number (which slot is GAME in the volume dir?)
-# GAME is the first root entry = slot 1 (slot 0 is volume header)
-game_parent_entry = 1
+# GAME is the last root entry = slot len(root_entries) (slot 0 is volume header)
+game_parent_entry = len(root_entries)
 disk[game_dir_blocks[0] * BLOCK_SIZE + 4 + 0x25] = game_parent_entry
 
 # --- Write volume bitmap ---
