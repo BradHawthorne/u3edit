@@ -1,6 +1,6 @@
 [project]
 name = "u3edit"
-version = "1.9.0"
+version = "1.10.0"
 description = "Ultima III: Exodus - Data file toolkit for Apple II archaeology"
 readme = "README.md"
 requires-python = ">=3.10"
