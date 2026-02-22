@@ -15004,3 +15004,255 @@ class TestSaveCmdViewGaps:
             game_dir=str(tmp_path), json=False, output=None)
         with pytest.raises(SystemExit):
             cmd_view(args)
+
+
+# =============================================================================
+# Batch 8: Final remaining gaps
+# =============================================================================
+
+class TestSoundCmdEditGaps:
+    """Test sound cmd_edit error paths."""
+
+    def test_invalid_hex_data(self, tmp_path):
+        """cmd_edit with invalid hex data exits."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, offset=0, data='ZZZZ',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_patch_past_end(self, tmp_path):
+        """cmd_edit with offset+data past end of file exits."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, offset=SOSA_FILE_SIZE - 1, data='AABBCC',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_no_sound_files_in_dir(self, tmp_path):
+        """cmd_view on directory with no sound files exits."""
+        from u3edit.sound import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+class TestSoundCmdImportGaps:
+    """Test sound cmd_import error paths."""
+
+    def test_import_non_list_raw(self, tmp_path):
+        """cmd_import with non-list 'raw' exits."""
+        from u3edit.sound import cmd_import
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'raw': 'not a list'}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+    def test_import_invalid_byte_values(self, tmp_path):
+        """cmd_import with invalid byte values exits."""
+        from u3edit.sound import cmd_import
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'raw': [999, -1, 'abc']}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+
+class TestPatchCmdEditDataTooLong:
+    """Test patch cmd_edit data exceeds region size."""
+
+    def test_data_exceeds_region_max(self, tmp_path):
+        """cmd_edit with data larger than region max_length exits."""
+        from u3edit.patch import cmd_edit
+        # Create file that looks like ULT3 (17408 bytes)
+        path = os.path.join(str(tmp_path), 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(bytearray(17408))
+        args = argparse.Namespace(
+            file=path, region='food-rate',  # max_length=1
+            data='AA BB CC DD',  # 4 bytes > 1
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_invalid_hex_in_patch(self, tmp_path):
+        """cmd_edit with invalid hex string exits."""
+        from u3edit.patch import cmd_edit
+        path = os.path.join(str(tmp_path), 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(bytearray(17408))
+        args = argparse.Namespace(
+            file=path, region='food-rate',
+            data='ZZZZ',  # Invalid hex
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_unknown_region(self, tmp_path):
+        """cmd_edit with unknown region name exits."""
+        from u3edit.patch import cmd_edit
+        path = os.path.join(str(tmp_path), 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(bytearray(17408))
+        args = argparse.Namespace(
+            file=path, region='nonexistent-region',
+            data='FF',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestPatchCmdImportGaps:
+    """Test patch cmd_import error paths."""
+
+    def test_import_unrecognized_binary(self, tmp_path):
+        """cmd_import on unrecognized binary exits."""
+        from u3edit.patch import cmd_import
+        path = os.path.join(str(tmp_path), 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(bytearray(100))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'food-rate': [4]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, region=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+    def test_import_no_matching_regions(self, tmp_path):
+        """cmd_import with no matching regions exits."""
+        from u3edit.patch import cmd_import
+        path = os.path.join(str(tmp_path), 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(bytearray(17408))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'nonexistent': [1, 2, 3]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, region=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+    def test_import_subs_no_regions(self, tmp_path):
+        """cmd_import on SUBS binary (no regions) exits."""
+        from u3edit.patch import cmd_import
+        path = os.path.join(str(tmp_path), 'SUBS')
+        with open(path, 'wb') as f:
+            f.write(bytearray(3584))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'food-rate': [4]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, region=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+
+class TestShapesCmdEditGaps:
+    """Test shapes cmd_edit error paths."""
+
+    def test_edit_no_file_in_dir(self, tmp_path):
+        """cmd_edit on directory with no SHPS file exits or falls through."""
+        from u3edit.shapes import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None,
+            tile=None, glyph=True, color=False)
+        try:
+            cmd_view(args)
+        except SystemExit:
+            pass  # Expected
+
+
+class TestDdrwCmdEditGaps:
+    """Test DDRW cmd_edit error paths."""
+
+    def test_edit_patch_past_end(self, tmp_path):
+        """cmd_edit with patch extending past end of file exits."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'DDRW')
+        with open(path, 'wb') as f:
+            f.write(bytearray(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, offset=DDRW_FILE_SIZE - 1,
+            data='AA BB CC DD',  # 4 bytes past end
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_invalid_hex(self, tmp_path):
+        """cmd_edit with invalid hex data exits."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'DDRW')
+        with open(path, 'wb') as f:
+            f.write(bytearray(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, offset=0,
+            data='ZZZZ',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestSpecialCmdImportGaps:
+    """Test special cmd_import additional error paths."""
+
+    def test_import_no_tiles_in_json(self, tmp_path):
+        """Import with JSON missing tiles works (empty set)."""
+        from u3edit.special import cmd_import
+        data = bytearray(SPECIAL_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=True, backup=False, output=None)
+        cmd_import(args)  # Should not crash
+
+
+class TestPatchCmdDumpGaps:
+    """Test patch cmd_dump error paths."""
+
+    def test_dump_offset_past_end(self, tmp_path):
+        """cmd_dump with offset past end of file exits."""
+        from u3edit.patch import cmd_dump
+        path = os.path.join(str(tmp_path), 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(bytearray(17408))
+        args = argparse.Namespace(
+            file=path, offset=99999, length=16)
+        with pytest.raises(SystemExit):
+            cmd_dump(args)

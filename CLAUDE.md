@@ -11,7 +11,7 @@ u3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides CL
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 1399 tests
+pytest -v                            # Run all 1415 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 u3edit roster view path/to/ROST      # CLI usage pattern
