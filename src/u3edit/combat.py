@@ -51,16 +51,16 @@ class CombatMap:
         # Padding and runtime arrays — preserved for round-trip fidelity
         # padding1: 7 bytes between tile grid and monster positions (unused)
         self.padding1 = list(data[CON_PADDING1_OFFSET:CON_PADDING1_OFFSET + CON_PADDING1_SIZE]) \
-            if len(data) > CON_PADDING1_OFFSET else [0] * CON_PADDING1_SIZE
+            if len(data) >= CON_PADDING1_OFFSET + CON_PADDING1_SIZE else [0] * CON_PADDING1_SIZE
         # runtime_data: 16 bytes of runtime arrays (saved-tile + status, overwritten at init)
         self.runtime_monster = list(data[CON_RUNTIME_MONSAVE_OFFSET:CON_RUNTIME_MONSTATUS_OFFSET + 8]) \
-            if len(data) > CON_RUNTIME_MONSAVE_OFFSET else [0] * 16
+            if len(data) >= CON_RUNTIME_MONSTATUS_OFFSET + 8 else [0] * 16
         # runtime_pc: 8 bytes of runtime arrays (saved-tile + appearance, overwritten at init)
         self.runtime_pc = list(data[CON_RUNTIME_PCSAVE_OFFSET:CON_RUNTIME_PCTILE_OFFSET + 4]) \
-            if len(data) > CON_RUNTIME_PCSAVE_OFFSET else [0] * 8
+            if len(data) >= CON_RUNTIME_PCTILE_OFFSET + 4 else [0] * 8
         # padding2: 16 bytes of unused tail padding
         self.padding2 = list(data[CON_PADDING2_OFFSET:CON_PADDING2_OFFSET + CON_PADDING2_SIZE]) \
-            if len(data) > CON_PADDING2_OFFSET else [0] * CON_PADDING2_SIZE
+            if len(data) >= CON_PADDING2_OFFSET + CON_PADDING2_SIZE else [0] * CON_PADDING2_SIZE
 
     def render(self) -> str:
         """Render 11x11 battlefield with position overlays."""

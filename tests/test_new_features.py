@@ -8133,6 +8133,36 @@ class TestMapDecompileUnknownTiles:
         assert stderr.getvalue() == ''
 
 
+class TestCombatMapTruncated:
+    """Test CombatMap handles truncated data correctly."""
+
+    def test_truncated_padding_defaults_to_zeros(self):
+        """Truncated file gets zero-filled padding arrays."""
+        from u3edit.combat import CombatMap
+        from u3edit.constants import CON_PADDING1_SIZE
+        # 150 bytes: past monster positions but short of full runtime data
+        data = bytes(150)
+        cm = CombatMap(data)
+        # padding1 needs offset 121+7=128 bytes; 150 >= 128 so should work
+        assert len(cm.padding1) == CON_PADDING1_SIZE
+        # runtime_monster needs offset 0x90+16=160; 150 < 160 so defaults
+        assert len(cm.runtime_monster) == 16
+        assert cm.runtime_monster == [0] * 16
+
+    def test_full_file_preserves_all_arrays(self):
+        """Full 192-byte file preserves all padding/runtime data."""
+        from u3edit.combat import CombatMap
+        from u3edit.constants import CON_FILE_SIZE
+        data = bytearray(CON_FILE_SIZE)
+        data[0xB0] = 0xAA  # padding2[0]
+        data[0x79] = 0xBB  # padding1[0]
+        cm = CombatMap(bytes(data))
+        assert cm.padding1[0] == 0xBB
+        assert cm.padding2[0] == 0xAA
+        assert len(cm.runtime_monster) == 16
+        assert len(cm.runtime_pc) == 8
+
+
 class TestCombatImportBoundsValidation:
     """Test combat import position clamping to 11x11 grid."""
 
