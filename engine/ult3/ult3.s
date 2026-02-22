@@ -2,33 +2,85 @@
 ; ULT3.s — Ultima III: Exodus Main Game Engine
 ; ===========================================================================
 ;
-; 17,408 bytes at $5000. Core game logic, combat, magic, equipment, I/O.
-; Reassembled byte-identical from CIDAR disassembly via asmiigs.
+; HISTORICAL CONTEXT:
+;   This is the main engine binary for Ultima III: Exodus, released by
+;   Origin Systems in 1983 for the Apple II. At 17,408 bytes ($5000-$93FF),
+;   it implements the complete RPG game loop: overworld exploration, town
+;   navigation, dungeon crawling, tactical combat, magic, equipment, shops,
+;   NPC dialog, file I/O, and rendering — all in 6502 assembly.
 ;
-; Subsystems:
-;   $5000-$54FF  Boot / Initialization — game setup, data init, quit handler
-;   $5506-$58E8  Character Management — record decrypt/encrypt, field access
-;   $58E9-$5C62  Character Field Read — char_decrypt_records (14 callers)
-;   $5C63-$6457  Character Field Write — char_combat_turn, BCD arithmetic
-;   $6458-$65AF  File I/O — save/load PLRS, PRTY, SOSA, overlays
-;   $65B0-$6F42  Game Main Loop — central state machine, command dispatch
-;   $6F43-$7086  Location & World — check_location, advance_turn
-;   $7087-$71FF  Combat HP & Damage — BCD multiply, apply damage, party alive
-;   $7200-$731F  Combat End — termination check, XOR checksum
-;   $7320-$7445  Movement Display — save cursor, show party status
-;   $7446-$746F  Input — input_wait_key, keyboard polling
-;   $7470-$75AD  Turn Processing — move_process_turn, turn resolution
-;   $75AE-$761C  Magic — cast spell, resolve effect, check MP
-;   $761D-$772C  Equipment — equip_handle, class restrictions
-;   $772D-$79FF  Shops & Items — shop_handle, transactions
-;   $7961-$7A80  World Movement — world_move_handler, overworld dispatch
-;   $7A0C-$7C0B  Dungeon — dungeon_handle, level navigation
-;   $7C0C-$7DFF  Tile & Map — passability, special tiles, map read
-;   $7E00-$88FF  Rendering — viewport, sprites, animation, HGR math
+;   The engine was written by Dr. Kenneth W. Arnold under contract to
+;   Richard Garriott (Lord British). Ultima III was the first game in the
+;   series to feature a party-based combat system on a tactical grid,
+;   moving beyond the single-character model of Ultima I and II. This
+;   file contains the implementation of that system.
+;
+;   The code is organized as a monolithic state machine: the game_main_loop
+;   at $65B0 polls for keyboard input, dispatches to command handlers, and
+;   processes turns. There is no operating system, no memory allocator, no
+;   interrupt-driven I/O. The program owns the entire machine.
+;
+; ARCHITECTURE:
+;   17,408 bytes loaded at $5000 via ProDOS BLOAD.
+;   68% executable code, 32% inline string data and name tables.
+;   245 inline strings embedded via JSR $46BA (SUBS print_inline_str).
+;   The inline strings serve as primary documentation of function purpose.
+;   Reassembled byte-identical from CIDAR disassembly via asmiigs.
+;
+; CODE/DATA INTERLEAVING:
+;   Unlike modern binaries with separate text/data sections, 6502 code
+;   freely intermixes executable instructions with inline data. The JSR
+;   $46BA inline string printer reads bytes AFTER the JSR instruction as
+;   string data, advancing the return address past the string. CIDAR's
+;   disassembler cannot always distinguish these data bytes from code,
+;   so many "instructions" in this listing are actually high-ASCII text
+;   being misinterpreted. Data regions are marked with --- Data region ---
+;   comments where identified.
+;
+; MEMORY MAP:
+;   $0000-$00FF  Zero page — fast-access variables (see below)
+;   $0100-$01FF  6502 hardware stack
+;   $0200-$03FF  ProDOS/Monitor scratch area, BLOAD command buffers
+;   $0400-$07FF  Apple II text page 1 (40×24 text, not used in HGR mode)
+;   $0800-$0FFF  Sprite data tables, animation buffers
+;   $1000-$1FFF  Map viewport data, tile caches
+;   $2000-$3FFF  HGR page 1 (280×192 pixels, primary display)
+;   $4000-$40FF  PLRS — active character records (4 × 64 bytes)
+;   $4100-$4EFF  SUBS — shared subroutine library
+;   $4F00-$4FFF  Runtime creature tracking (5 × 32-entry arrays)
+;   $5000-$93FF  ULT3 — THIS FILE (main engine)
+;   $9900-$99BF  CON — active combat map (192 bytes)
+;   $B400-$B7FF  ProDOS file I/O buffer area
+;
+; SUBSYSTEM DIRECTORY:
+;   $5000-$54FF  Boot/Init — file loading, game setup, quit handler
+;   $5506-$58E8  Character Records — XOR decrypt/encrypt, field access
+;   $58E9-$5C62  Character Read — stat lookup, class validation
+;   $5C63-$6457  Character Write — BCD arithmetic, combat turn processing
+;   $6458-$65AF  File I/O — BSAVE/BLOAD PLRS, PRTY, overlays
+;   $65B0-$6F42  Game Main Loop — central state machine, input dispatch
+;   $6F43-$7086  Location Logic — location type checks, world transitions
+;   $7087-$71FF  Combat Math — BCD multiply, damage, HP management
+;   $7200-$731F  Combat End — victory/defeat, XOR checksum
+;   $7320-$7445  Status Display — party status, cursor save/restore
+;   $7446-$746F  Keyboard Input — key polling, input wait
+;   $7470-$75AD  Turn Processing — move resolution, MP regen, poison
+;   $75AE-$761C  Magic System — spell casting, MP checks, effects
+;   $761D-$772C  Equipment — weapon/armor handling, class restrictions
+;   $772D-$79FF  Shops — buy/sell transactions, gold management
+;   $7961-$7A80  Overworld Movement — surface navigation, ship boarding
+;   $7A0C-$7C0B  Dungeon System — level navigation, torch light
+;   $7C0C-$7DFF  Tile Logic — passability, special tiles, map I/O
+;   $7E00-$88FF  Rendering — viewport, combat sprites, animation
 ;   $897A-$8CFF  Name Table — 921 bytes, all entity names (high-ASCII)
-;   $93DE        calc_hgr_scanline — HGR scanline address computation
+;   $93DE        HGR Math — scanline address computation
 ;
-; Key Forward References (EQU, mid-instruction entry points):
+; FORWARD REFERENCES (EQU, mid-instruction entry points):
+;   These are addresses referenced BEFORE they appear in the linear code.
+;   The assembler needs EQU directives to resolve them. Several enter
+;   mid-instruction — the bytes at those addresses have dual meaning
+;   depending on entry point (a common 6502 size optimization trick).
+;
 ;   $5882  input_return_to_loop    Return from input to main loop
 ;   $658D  game_loop_vblank        VBlank sync point
 ;   $65B0  game_main_loop          Central state machine entry
@@ -39,24 +91,38 @@
 ;   $882F  render_animate          Animation frame handler
 ;   $8880  render_party_exit       Party render exit point
 ;
-; Zero-Page Usage:
-;   $00/$01    map_cursor_x/y        Map/overworld position
-;   $02/$03    combat_cursor_x/y     Combat grid position
-;   $0E        transport_type        Movement mode (SPEEDZ alias)
+; ZERO-PAGE VARIABLE MAP:
+;   The 6502's zero page ($00-$FF) provides 256 bytes of fast-access
+;   storage with shorter instruction encoding (2 bytes vs. 3 for absolute
+;   addressing). ULT3 uses it as a register file for game state:
+;
+;   $00/$01    map_cursor_x/y        Current position on overworld/town map
+;   $02/$03    combat_cursor_x/y     Position on 11×11 combat grid
+;   $0A-$0D    direction_flags       Passability flags for N/S/E/W
+;   $0E        transport_type        Movement mode (foot/horse/ship/raft)
 ;   $0F        animation_slot        Tile animation table offset
-;   $10        combat_active_flag    Nonzero = in combat
-;   $B0-$B2    disk_io_flags         Disk I/O state
-;   $CE        current_tile          Tile under player
-;   $D0-$D5    display_state         Viewport rendering state
-;   $E0        party_transport       PRTY transport byte
-;   $E1        party_size            Active party member count
-;   $E2        location_type         PRTY location type
-;   $E3/$E4    saved_x/saved_y       PRTY overworld coords
-;   $E5        party_sentinel        $FF when party active
-;   $E6-$E9    party_slots           Roster indices for 4 members
+;   $10        combat_active_flag    Nonzero suppresses SFX during combat
+;   $11        wind_direction        Current wind (0=calm, 1-4=N/E/S/W)
+;   $13        dungeon_level         Current dungeon depth (0-7)
+;   $36/$37    checksum_lo/hi        Anti-cheat XOR checksum
+;   $95/$96    scratch_pair          Temporary calculation storage
+;   $B0-$B2    disk_io_flags         ProDOS disk I/O state machine
+;   $CB        light_timer           Torch/light duration counter
+;   $CC        special_timer         Special effect countdown
+;   $CD        target_index          Combat target selection
+;   $CE        current_tile          Tile ID at player position
+;   $D0        command_state         Current command/action being processed
+;   $D1/$D2    calc_scratch          Multi-byte calculation workspace
+;   $D5        char_slot_id          Active character slot (0-19)
+;   $D6        saved_slot_id         Saved slot during nested operations
+;   $D7        spell_id              Current spell being cast
+;   $E0-$E9    PRTY mirror           Party state (see PRTY format in MEMORY)
 ;   $F0-$F3    temp_work             General scratch registers
+;   $F5/$F6    distance_calc         Distance computation workspace
 ;   $F9/$FA    text_cursor_x/y       Text output cursor position
-;   $FE/$FF    data_pointer          General data pointer
+;   $FB        effect_counter        Visual effect countdown
+;   $FC/$FD    alt_pointer           Secondary data pointer
+;   $FE/$FF    data_pointer          Primary data pointer (character records)
 ;
 ; === Optimization Hints Report ===
 ; Total hints: 31
@@ -1541,10 +1607,32 @@ render_animate       EQU $882F
 
             ORG  $5000
 
-            jsr  $B60F           ; [SP-2]
-            jsr  $46B7           ; [SP-4]
+; ###########################################################################
+; ###                                                                     ###
+; ###               BOOT / INITIALIZATION ($5000-$54FF)                   ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   The boot sequence runs once when the game starts. It loads supporting
+;   data files from disk (UPDT patch file, SOSA/SOSM sound data), then
+;   initializes the game state and enters the main loop.
+;
+;   APPLE II BOOT SEQUENCE:
+;   ProDOS loads ULT3 at $5000 and jumps to the first instruction. The
+;   JSR $B60F call enters the ProDOS BASIC.SYSTEM interpreter to execute
+;   the BLOAD commands that follow as inline text strings. This is a clever
+;   bootstrap: the engine uses the BASIC interpreter's own BLOAD command
+;   to load its supporting files, then takes over the machine entirely.
+;
+;   The $46B7 call is to SUBS' command processor, which reads the text
+;   commands after the JSR as Apple II DOS/ProDOS commands.
+;
+; ---------------------------------------------------------------------------
 
-; --- Data region (129 bytes) ---
+            jsr  $B60F           ; Enter ProDOS BASIC.SYSTEM command processor
+            jsr  $46B7           ; Execute inline BLOAD commands:
+
+; --- Inline BLOAD commands (read by BASIC.SYSTEM, not executed as 6502) ---
             DB      $04 ; string length
             ASC     "BLOA"
             ASC     "D UPDT"
@@ -1570,40 +1658,65 @@ boot_init_data_2
             DB      $20,$BA,$46,$1D,$34,$1E,$00,$60
 ; --- End data region (129 bytes) ---
 
-; XREF: 1 ref (1 jump) from $005047
-boot_setup_game  lda  #$58            ; A=$0058 ; [SP-34]
-            sta  $B403           ; A=$0058 ; [SP-34]
-            lda  #$FF            ; A=$00FF ; [SP-34]
-            sta  $B404           ; A=$00FF ; [SP-34]
-            lda  #$00            ; A=$0000 ; [SP-34]
-            sta  $CB             ; A=$0000 ; [SP-34]
-            sta  $10             ; A=$0000 ; [SP-34]
-            jsr  $0230           ; A=$0000 ; [SP-36]
-            lda  #$00            ; A=$0000 ; [SP-36]
-            sta  $B2             ; A=$0000 ; [SP-36]
-            lda  #$01            ; A=$0001 ; [SP-36]
-            sta  $B0             ; A=$0001 ; [SP-36]
-            sta  $B1             ; A=$0001 ; [SP-36]
-            bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
+; ---------------------------------------------------------------------------
+; boot_setup_game — Initialize game state after loading
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Called once after all data files are loaded. Sets up the
+;            ProDOS file I/O buffer, clears game flags, and enters the
+;            main game loop. This is the transition from boot to gameplay.
+;
+;   INITIALIZATION:
+;     $B403/$B404 = ProDOS I/O buffer address ($5800 + $FF prefix)
+;     $CB = 0 (light timer — no torch lit)
+;     $10 = 0 (combat_active_flag — not in combat)
+;     $B2 = 0 (disk I/O complete flag)
+;     $B0/$B1 = 1 (disk I/O request flags — trigger initial load)
+;     $C010 = clear keyboard strobe (discard any boot-time keypresses)
+;
+; ---------------------------------------------------------------------------
+boot_setup_game  lda  #$58            ; ProDOS I/O buffer at $5800
+            sta  $B403
+            lda  #$FF            ; Buffer prefix byte
+            sta  $B404
+            lda  #$00
+            sta  $CB             ; Clear torch timer
+            sta  $10             ; Clear combat flag
+            jsr  $0230           ; Call ProDOS MLI setup
+            lda  #$00
+            sta  $B2             ; Clear disk I/O complete flag
+            lda  #$01
+            sta  $B0             ; Request initial file load
+            sta  $B1             ; Request initial display update
+            bit  $C010           ; Clear keyboard strobe (KBDSTRB)
 
-; === while loop starts here (counter: Y 'j') ===
-; XREF: 3 refs (3 jumps) from world_move_start, world_move_check_torch, world_move_dungeon
-boot_check_quit  lda  $36             ; A=[$0036] ; [SP-36]
-            cmp  #$4A            ; A=[$0036] ; [SP-36]
-            bne  boot_clear_floor      ; A=[$0036] ; [SP-36]
-            lda  $37             ; A=[$0037] ; [SP-36]
-            cmp  #$B4            ; A=[$0037] ; [SP-36]
-            beq  boot_clear_floor      ; A=[$0037] ; [SP-36]
+; ---------------------------------------------------------------------------
+; boot_check_quit — Integrity check and main loop entry point
+; ---------------------------------------------------------------------------
+;
+;   ANTI-CHEAT CHECKSUM:
+;   Compares $36/$37 against expected values ($4A/$B4). If the checksum
+;   has been tampered with (e.g., by a memory editor), the game exits
+;   via PLA/RTS. This is a simple integrity check — the XOR checksum at
+;   combat_checksum_xor maintains these values during normal gameplay.
+;
+;   This label is also the re-entry point from world_move_start after
+;   each overworld turn — it's the top of the main game loop.
+;
+; ---------------------------------------------------------------------------
+boot_check_quit  lda  $36             ; Load checksum low byte
+            cmp  #$4A            ; Expected value?
+            bne  boot_clear_floor ; Yes, or first entry → continue
+            lda  $37             ; Load checksum high byte
+            cmp  #$B4            ; Expected value?
+            beq  boot_clear_floor ; Match → continue (normal)
 
-; === while loop starts here [nest:3] ===
-; XREF: 1 ref (1 branch) from boot_clear_floor
-boot_quit_pop_rts  pla                  ; A=[stk] ; [SP-35]
-; LUMA: epilogue_rts
-            rts                  ; A=[stk] ; [SP-33]
-; XREF: 2 refs (2 branches) from boot_check_quit, boot_check_quit
-boot_clear_floor  lda  #$00            ; A=$0000 ; [SP-33]
-            sta  $13             ; A=$0000 ; [SP-33]
-            jsr  combat_check_party_alive     ; A=$0000 ; [SP-35]
+boot_quit_pop_rts  pla                  ; Checksum mismatch → pop return addr
+            rts                  ; and exit to caller (game terminates)
+
+boot_clear_floor  lda  #$00
+            sta  $13             ; Clear dungeon level (surface)
+            jsr  combat_check_party_alive  ; Check if any party members alive
             cmp  #$0F            ; A=$0000 ; [SP-35]
             bne  boot_quit_pop_rts      ; A=$0000 ; [SP-35]
 ; === End of while loop ===
@@ -1641,23 +1754,55 @@ boot_clear_floor  lda  #$00            ; A=$0000 ; [SP-33]
             DB      $A0,$33,$6B
 ; --- End data region (307 bytes) ---
 
-input_dispatch_entry  inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
-            ora  $52             ; A=$0017 ; [SP-71]
-            cmp  #$1A            ; A=$0017 ; [SP-71]
-            bne  input_dispatch_jump      ; A=$0017 ; [SP-71]
-            pla                  ; A=[stk] ; [SP-70]
-            sec                  ; A=[stk] ; [SP-70]
-            sbc  #$C1            ; A=A-$C1 ; [SP-70]
-            asl  a               ; A=A-$C1 ; [SP-70]
-            tay                  ; A=A-$C1 Y=A ; [SP-70]
-; LUMA: data_array_y
-            lda  $5222,Y         ; A=A-$C1 Y=A ; [SP-70]
-            sta  $FE             ; A=A-$C1 Y=A ; [SP-70]
-; LUMA: data_array_y
-            lda  $5223,Y         ; A=A-$C1 Y=A ; [SP-70]
-            sta  $FF             ; A=A-$C1 Y=A ; [SP-70]
-; XREF: 1 ref (1 branch) from input_dispatch_entry
-input_dispatch_jump  jmp  ($00FE)         ; A=A-$C1 Y=A ; [SP-70]
+; ---------------------------------------------------------------------------
+; input_dispatch_entry — Keyboard command router
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Converts a keypress into a function call. This is the central
+;            command dispatch for Ultima III's turn-based input system.
+;
+;   ALGORITHM:
+;   The player presses a letter key (A-Z). The engine:
+;   1. Subtracts $C1 (high-ASCII 'A') to get index 0-25
+;   2. Doubles the index (×2) since each table entry is a 16-bit address
+;   3. Reads a function pointer from the jump table at $5222
+;   4. Stores the address in $FE/$FF and jumps indirect
+;
+;   JUMP TABLE at $5222:
+;   26 entries (A-Z), each a 16-bit address (lo/hi) of the handler:
+;     A=Attack, B=Board, C=Cast, D=Descend/Direction, E=Enter,
+;     F=(combat), G=Get, H=Hand equip, I=Ignite, J=Join Gold,
+;     K=Klimb, L=(reserved), M=Mix, N=Negate, O=Other command,
+;     P=Peer, Q=Quit&Save, R=Ready weapon, S=Steal, T=Transact,
+;     U=Use, V=Volume, W=Wear armor, X=X-it, Y=Yell, Z=Ztats
+;
+;   DESIGN CONTEXT:
+;   This single-letter command vocabulary was a hallmark of early Ultima
+;   games and influenced by mainframe text adventures. Each command maps
+;   to exactly one keypress — no menus, no mouse, no multi-key combos.
+;   The indirect jump table is the fastest dispatch method on the 6502,
+;   taking only ~20 cycles from keypress to handler entry.
+;
+;   NOTE: The bytes CE 00 CE / 05 52 / C9 1A are actually the tail end
+;   of inline data from the previous region — CIDAR disassembles them as
+;   INC $CE00,X / ORA $52 / CMP #$1A but they execute as part of the
+;   data flow from the calling code above.
+;
+; ---------------------------------------------------------------------------
+input_dispatch_entry  inc  $CE00,X         ; (data flow from above — not a real INC)
+            ora  $52             ; (continuation of data flow)
+            cmp  #$1A            ; Compare key index against 26 (A-Z range)
+            bne  input_dispatch_jump      ; Not in range → skip table lookup
+            pla                  ; Pull key character from stack
+            sec
+            sbc  #$C1            ; Convert high-ASCII 'A'-'Z' → index 0-25
+            asl  a               ; ×2 for 16-bit table entries
+            tay                  ; Y = table offset
+            lda  $5222,Y         ; Load handler address (lo byte)
+            sta  $FE             ; → $FE = address lo
+            lda  $5223,Y         ; Load handler address (hi byte)
+            sta  $FF             ; → $FF = address hi
+input_dispatch_jump  jmp  ($00FE)         ; Jump indirect to command handler
 
 ; ---
             DB      $99,$52,$F5,$52,$5C,$53,$10,$59,$1E,$59,$9A,$5A,$69,$5B,$8F,$5D
@@ -1698,46 +1843,70 @@ input_not_here_msg
 ; ---
 
 
-; === while loop starts here (counter: Y 'j') ===
-; XREF: 1 ref (1 jump) from tile_update_check_special
-input_combat_render_unit  txa                  ; Y=A ; [SP-76]
-            pha                  ; Y=A ; [SP-77]
-            jsr  $0230           ; Y=A ; [SP-79]
-            pla                  ; A=[stk] Y=A ; [SP-78]
-            tax                  ; A=[stk] X=[stk] Y=A ; [SP-78]
-; LUMA: data_array_x
-            lda  $4F40,X         ; A=[stk] X=[stk] Y=A ; [SP-78]
-            sta  $02             ; A=[stk] X=[stk] Y=A ; [SP-78]
-            lda  $4F60,X         ; A=[stk] X=[stk] Y=A ; [SP-78]
-            sta  $03             ; A=[stk] X=[stk] Y=A ; [SP-78]
-            jsr  $46FF           ; A=[stk] X=[stk] Y=A ; [SP-80]
-; LUMA: data_array_x
-            lda  $4F20,X         ; A=[stk] X=[stk] Y=A ; [SP-80]
-            beq  input_store_tile      ; A=[stk] X=[stk] Y=A ; [SP-80]
-            lsr  a               ; A=[stk] X=[stk] Y=A ; [SP-80]
-            lsr  a               ; A=[stk] X=[stk] Y=A ; [SP-80]
-            and  #$03            ; A=A&$03 X=[stk] Y=A ; [SP-80]
-            clc                  ; A=A&$03 X=[stk] Y=A ; [SP-80]
-            adc  #$24            ; A=A+$24 X=[stk] Y=A ; [SP-80]
-; XREF: 1 ref (1 branch) from input_combat_render_unit
-input_store_tile  sta  ($FE),Y         ; A=A+$24 X=[stk] Y=A ; [SP-80]
-; LUMA: data_array_x
-            lda  $4F00,X         ; A=A+$24 X=[stk] Y=A ; [SP-80]
-            lsr  a               ; A=A+$24 X=[stk] Y=A ; [SP-80]
-            sta  $CE             ; A=A+$24 X=[stk] Y=A ; [SP-80]
-            pha                  ; A=A+$24 X=[stk] Y=A ; [SP-81]
-            lda  #$00            ; A=$0000 X=[stk] Y=A ; [SP-81]
-            sta  $4F00,X         ; A=$0000 X=[stk] Y=A ; [SP-81]
-            pla                  ; A=[stk] X=[stk] Y=A ; [SP-80]
-            cmp  #$1E            ; A=[stk] X=[stk] Y=A ; [SP-80]
-            bne  input_jump_render      ; A=[stk] X=[stk] Y=A ; [SP-80]
-            lda  $0E             ; A=[$000E] X=[stk] Y=A ; [SP-80]
-            cmp  #$16            ; A=[$000E] X=[stk] Y=A ; [SP-80]
-            beq  input_jump_render      ; A=[$000E] X=[stk] Y=A ; [SP-80]
-            lda  #$2C            ; A=$002C X=[stk] Y=A ; [SP-80]
-            sta  ($FE),Y         ; A=$002C X=[stk] Y=A ; [SP-80]
-; XREF: 2 refs (2 branches) from input_store_tile, input_store_tile
-input_jump_render  jmp  render_combat_update     ; A=$002C X=[stk] Y=A ; [SP-80]
+; ---------------------------------------------------------------------------
+; input_combat_render_unit — Render a creature on the combat/overworld map
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Draws a single creature from the tracking arrays onto the
+;            map display. Used during combat and overworld rendering to
+;            place creature sprites at their current positions.
+;
+;   CREATURE TRACKING ARRAYS ($4F00-$4F9F):
+;   The engine maintains 5 parallel arrays of 32 entries each:
+;     $4F00,X = creature type/ID (bit 0 set = alive)
+;     $4F20,X = terrain tile under creature (saved for restore)
+;     $4F40,X = creature X position on map
+;     $4F60,X = creature Y position on map
+;     $4F80,X = behavior flags (AI mode in upper 2 bits)
+;
+;   TILE APPEARANCE LOGIC:
+;   If the creature has a saved-terrain value ($4F20,X ≠ 0):
+;     - Extract creature appearance: (saved_terrain >> 2) & 3
+;     - Add $24 to get tile index ($24-$27 = creature animation frames)
+;   This gives 4 animation frames for creature movement.
+;
+;   After rendering, the creature type ($4F00,X) is checked:
+;     - If $1E (ship type) and transport is not $16 (ship): replace with
+;       $2C (frigate tile) for visual distinction between allied and
+;       enemy ships.
+;
+;   The creature entry is then cleared ($4F00,X = 0) to prevent
+;   double-rendering on the next frame.
+;
+; ---------------------------------------------------------------------------
+input_combat_render_unit  txa                  ; Save creature index
+            pha                  ; Push X to stack
+            jsr  $0230           ; ProDOS MLI call (sync display)
+            pla                  ; Restore creature index
+            tax
+            lda  $4F40,X         ; Load creature X position
+            sta  $02             ; → combat_cursor_x
+            lda  $4F60,X         ; Load creature Y position
+            sta  $03             ; → combat_cursor_y
+            jsr  $46FF           ; Compute map tile pointer
+            lda  $4F20,X         ; Load terrain-under-creature
+            beq  input_store_tile      ; Zero = no terrain → use as-is
+            lsr  a               ; Extract animation frame:
+            lsr  a               ;   (terrain >> 2) & 3
+            and  #$03
+            clc
+            adc  #$24            ; + $24 = creature tile ($24-$27)
+input_store_tile  sta  ($FE),Y         ; Write creature tile to map
+            lda  $4F00,X         ; Load creature type
+            lsr  a               ; Shift right (bit 0 → carry)
+            sta  $CE             ; Store shifted type in current_tile
+            pha                  ; Save for later comparison
+            lda  #$00
+            sta  $4F00,X         ; Clear creature entry (consumed)
+            pla                  ; Restore shifted type
+            cmp  #$1E            ; Is this a ship? ($3C >> 1 = $1E)
+            bne  input_jump_render      ; No → render normally
+            lda  $0E             ; Check current transport mode
+            cmp  #$16            ; Already on a ship?
+            beq  input_jump_render      ; Yes → render as normal ship
+            lda  #$2C            ; No → use frigate tile for enemy ships
+            sta  ($FE),Y         ; Override tile display
+input_jump_render  jmp  render_combat_update     ; Trigger display refresh
 
 ; --- Data region (356 bytes, text data) ---
             DB      $A3,$03,$A5,$0E,$C9,$7E,$F0,$0C,$20,$BA,$46,$C2,$EF,$E1,$F2,$E4
@@ -1770,20 +1939,28 @@ input_jump_render  jmp  render_combat_update     ; A=$002C X=[stk] Y=A ; [SP-80]
 ; --- End data region (356 bytes) ---
 
 
-; === while loop starts here [nest:7] ===
-; XREF: 1 ref (1 branch) from input_spell_check_done
-input_spell_pop_rts  pla                  ; A=[stk] X=[stk] Y=A ; [SP-129]
-; LUMA: epilogue_rts
-            rts                  ; A=[stk] X=[stk] Y=A ; [SP-129]
-; LUMA: hw_keyboard_read
-; XREF: 2 refs (2 jumps) from $005446, $005422
-input_spell_check_done  lda  $5362           ; A=[$5362] X=[stk] Y=A ; [SP-129]
-            cmp  #$20            ; A=[$5362] X=[stk] Y=A ; [SP-129]
-            bne  input_spell_pop_rts      ; A=[$5362] X=[stk] Y=A ; [SP-129]
-; === End of while loop ===
+; ---------------------------------------------------------------------------
+; input_spell_check_done — Verify spell was successfully cast
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: After a spell casting attempt, checks whether the spell
+;            resolved or was cancelled. The sentinel at $5362 is set
+;            to $20 (space) when a spell completes successfully.
+;            If not $20, the cast was interrupted or failed — pop
+;            the return address and exit early.
+;
+;   After a successful cast, sets up the character pointer ($46F6)
+;   and loads the spell index ($D7) for the effect resolver.
+;
+; ---------------------------------------------------------------------------
+input_spell_pop_rts  pla                  ; Discard return address
+            rts                  ; Early exit — spell cancelled/failed
+input_spell_check_done  lda  $5362           ; Check spell completion sentinel
+            cmp  #$20            ; $20 = space = spell resolved
+            bne  input_spell_pop_rts      ; Not resolved → abort
 
-            jsr  $46F6           ; A=[$5362] X=[stk] Y=A ; [SP-131]
-            lda  $D7             ; A=[$00D7] X=[stk] Y=A ; [SP-131]
+            jsr  $46F6           ; Setup character pointer for caster
+            lda  $D7             ; Load spell index for effect dispatch
             and  #$0F            ; A=A&$0F X=[stk] Y=A ; [SP-131]
             tax                  ; A=A&$0F X=A Y=A ; [SP-131]
             lda  #$05            ; A=$0005 X=A Y=A ; [SP-131]
@@ -1865,21 +2042,39 @@ input_dungeon_random_pos  ror  $13C6           ; A=$0005 X=A Y=$0019 ; [SP-168]
 ; --- End data region (393 bytes) ---
 
 
-; === while loop starts here [nest:7] ===
-; XREF: 4 refs (2 jumps) (2 branches) from input_dungeon_gen_pos, input_dungeon_random_pos, $005726, $005587
-input_dungeon_gen_pos  lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-236]
-            jsr  $46E4           ; Call $0046E4(A)
-            sta  $02             ; A=$0010 X=A Y=$0019 ; [SP-238]
-            lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-238]
-            jsr  $46E4           ; A=$0010 X=A Y=$0019 ; [SP-240]
-            sta  $03             ; A=$0010 X=A Y=$0019 ; [SP-240]
-            jsr  calc_hgr_scanline      ; A=$0010 X=A Y=$0019 ; [SP-242]
-            bne  input_dungeon_gen_pos      ; A=$0010 X=A Y=$0019 ; [SP-242]
-            lda  $02             ; A=[$0002] X=A Y=$0019 ; [SP-242]
-            sta  $00             ; A=[$0002] X=A Y=$0019 ; [SP-242]
-            lda  $03             ; A=[$0003] X=A Y=$0019 ; [SP-242]
-            sta  $01             ; A=[$0003] X=A Y=$0019 ; [SP-242]
-            jmp  input_return_to_loop      ; A=[$0003] X=A Y=$0019 ; [SP-242]
+; ---------------------------------------------------------------------------
+; input_dungeon_gen_pos — Generate random valid dungeon position
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Places the party at a random empty tile in the current
+;            dungeon level. Used for teleportation effects and some
+;            trap outcomes.
+;
+;   ALGORITHM (rejection sampling):
+;   1. Generate random X in range 0-15 ($46E4 = random mod A)
+;   2. Generate random Y in range 0-15
+;   3. Look up tile at (X,Y) on current dungeon level (calc_hgr_scanline)
+;   4. If tile is non-zero (wall/obstacle) → retry from step 1
+;   5. If tile is zero (empty floor) → place party there
+;
+;   This is a classic rejection sampling loop — simple but potentially
+;   slow if the dungeon is very dense. In practice, Ultima III dungeon
+;   levels always have enough open space to converge quickly.
+;
+; ---------------------------------------------------------------------------
+input_dungeon_gen_pos  lda  #$10            ; Range: 0-15 (dungeon is 16×16)
+            jsr  $46E4           ; Random X = rand() mod 16
+            sta  $02             ; → trial X position
+            lda  #$10
+            jsr  $46E4           ; Random Y = rand() mod 16
+            sta  $03             ; → trial Y position
+            jsr  calc_hgr_scanline      ; Look up tile at (X,Y)
+            bne  input_dungeon_gen_pos      ; Non-empty → reject, try again
+            lda  $02             ; Accept: copy trial position
+            sta  $00             ; → map_cursor_x
+            lda  $03
+            sta  $01             ; → map_cursor_y
+            jmp  input_return_to_loop      ; Return to game loop
 
 ; --- Data region (276 bytes, text data) ---
             DB      $20,$BA,$46
@@ -1977,49 +2172,74 @@ input_spell_done  rts                  ; A=$0003 X=$00A3 Y=$0033 ; [SP-310]
 ; --- End data region (33 bytes) ---
 
 
-; ===========================================================================
-; SUBROUTINES (29 functions)
-; ===========================================================================
+; ###########################################################################
+; ###                                                                     ###
+; ###             CHARACTER MANAGEMENT ($5506-$6457)                      ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Character records are 64-byte structures stored at $4000+ (PLRS).
+;   The engine encrypts them on disk using XOR $FF to prevent casual
+;   hex editing — a simple but effective anti-cheat measure for 1983.
+;
+;   The decrypt/encrypt functions are the most-called routines in the
+;   engine (14+ callers each), invoked before any character field access
+;   and after any modification. This XOR toggle pattern means the same
+;   function both encrypts and decrypts (XOR is its own inverse).
+;
 
 ; ---------------------------------------------------------------------------
-; char_decrypt_records  [14 calls]
-;   Called by: combat_end_flag, input_return_to_loop, input_spell_setup_slot, render_combat_mon_wait, world_move_handler
+; char_decrypt_records — XOR-toggle character record encryption
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Toggles encryption on all character records. XOR $FF is
+;            applied to bytes 1-22 of each record (skipping byte 0,
+;            the first character of the name). Since XOR is self-inverse,
+;            calling this function twice restores the original data.
+;
+;   PARAMS:  None (operates on PLRS area via lookup tables)
+;   RETURNS: A = last decrypted byte, X = $10, Y = $80
+;            Then jumps to indirect dispatch at ($52F3)
+;
+;   ANTI-CHEAT CONTEXT:
+;   Richard Garriott was famously concerned about players cheating with
+;   sector editors. The XOR $FF encryption makes character stats unreadable
+;   in a hex dump — instead of seeing "99" for max HP, you'd see "66".
+;   This was sufficient to deter casual cheating in the pre-Internet era.
+;   The encryption only covers bytes 1-22 (stats and flags), leaving byte 0
+;   (first name character) in cleartext for the character select screen.
+;
+;   MEMORY LAYOUT:
+;   The lookup tables at $4300/$43C0 contain lo/hi bytes of base addresses
+;   for character record pages. X indexes into these tables (starting at 8,
+;   running to $B7 = 183) to iterate over all active record pages.
+;
+; ---------------------------------------------------------------------------
+char_decrypt_records   ldx  #$08            ; Start at table index 8
 
-; FUNC $0058E9: register -> A:X [I]
-; Proto: uint32_t func_0058E9(void);
-; Liveness: returns(A,X,Y) [24 dead stores]
-; XREF: 14 refs (14 calls) from combat_end_flag, combat_end_flag, combat_end_flag, input_return_to_loop, input_spell_setup_slot, ...
-char_decrypt_records   ldx  #$08            ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
+char_decrypt_outer lda  $4300,X         ; Load record page base address (lo)
+            sta  $FC             ; → $FC/$FD = record pointer
+            lda  $43C0,X         ; Load record page base address (hi)
+            sta  $FD
+            ldy  #$16            ; 22 bytes to XOR (bytes 1-22)
 
-; === while loop starts here (counter: X 'iter_x', range: 0..184, iters: 184) [nest:13] ===
-; XREF: 1 ref (1 branch) from char_decrypt_inner
-char_decrypt_outer lda  $4300,X         ; -> $4308 ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
-            sta  $FC             ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
-            lda  $43C0,X         ; -> $43C8 ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
-            sta  $FD             ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
-            ldy  #$16            ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
+; --- XOR each byte with $FF (toggle encryption) ---
+char_decrypt_inner lda  ($FC),Y         ; Load encrypted/decrypted byte
+            eor  #$FF            ; Toggle all bits (XOR $FF)
+            sta  ($FC),Y         ; Store result
+            dey                  ; Next byte (counting down)
+            bne  char_decrypt_inner ; Continue until Y=0 (skip byte 0)
 
-; === loop starts here (counter: Y, range: 22..0, iters: 22) [nest:14] ===
-; XREF: 1 ref (1 branch) from char_decrypt_inner
-char_decrypt_inner lda  ($FC),Y         ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
-            eor  #$FF            ; A=A^$FF X=$0008 Y=$0016 ; [SP-310]
-            sta  ($FC),Y         ; A=A^$FF X=$0008 Y=$0016 ; [SP-310]
-            dey                  ; A=A^$FF X=$0008 Y=$0015 ; [SP-310]
-            bne  char_decrypt_inner    ; A=A^$FF X=$0008 Y=$0015 ; [SP-310]
-; === End of loop (counter: Y) ===
+            inx                  ; Next record page
+            cpx  #$B8            ; End of table?
+            bcc  char_decrypt_outer ; No → continue to next page
 
-            inx                  ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
-            cpx  #$B8            ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
-            bcc  char_decrypt_outer    ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
-; === End of while loop (counter: X) ===
-
-            ldy  #$80            ; A=A^$FF X=$0009 Y=$0080 ; [SP-310]
-            txa                  ; A=$0009 X=$0009 Y=$0080 ; [SP-310]
-            sec                  ; A=$0009 X=$0009 Y=$0080 ; [SP-310]
-            sbc  #$02            ; A=A-$02 X=$0009 Y=$0080 ; [SP-310]
-            ldx  #$10            ; A=A-$02 X=$0010 Y=$0080 ; [SP-310]
-            jmp  ($52F3)         ; A=A-$02 X=$0010 Y=$0080 ; [SP-310]
+            ldy  #$80            ; Y = $80 for caller context
+            txa                  ; A = final table index
+            sec
+            sbc  #$02            ; A = table index - 2
+            ldx  #$10            ; X = $10 for caller context
+            jmp  ($52F3)         ; Indirect dispatch to caller
 
 ; --- Data region (851 bytes) ---
             DB      $20,$BA,$46,$C4,$E5,$F3,$E3,$E5,$EE,$E4,$00,$4C,$79,$52,$20,$BA
@@ -2092,44 +2312,61 @@ char_decrypt_inner lda  ($FC),Y         ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
 
 
 ; ---------------------------------------------------------------------------
-; char_combat_turn  [3 calls]
-;   Called by: tile_update_bcd_food, game_loop_combat_lookup2
-;   Calls: magic_resolve_effect, render_encrypt_records, combat_apply_damage, move_display_party_status
+; char_combat_turn — Process environmental damage for each party member
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Applies per-turn environmental effects to all party members.
+;            Called when the party is affected by area hazards (poison gas,
+;            dungeon traps, lava tiles, etc.).
+;
+;   ALGORITHM:
+;   For each party member ($D5 counting down from party_size-1 to 0):
+;     1. Check if character can act (magic_resolve_effect → status check)
+;     2. If alive: decrypt stats, generate random damage (AND #$77 caps
+;        at 119 BCD), apply damage via combat_apply_damage
+;     3. Scale additional damage by dungeon level: (level+1) × 8
+;        This makes deeper dungeon levels progressively more lethal
+;     4. Re-encrypt stats after modification
+;   Finally refresh the status display.
+;
+;   DUNGEON LEVEL SCALING:
+;   The formula (dungeon_level + 1) << 3 means:
+;     Level 1: (1+1)×8 = 16 bonus damage
+;     Level 4: (4+1)×8 = 40 bonus damage
+;     Level 8: (8+1)×8 = 72 bonus damage
+;   This steep scaling makes deep dungeons extremely dangerous without
+;   proper preparation — a core design choice encouraging gradual
+;   progression.
+;
+;   PARAMS:  None (reads $E1 = party_size, $13 = dungeon_level)
+;   RETURNS: After updating all party members and refreshing display
+;
+; ---------------------------------------------------------------------------
+char_combat_turn   lda  $E1             ; Load party_size from PRTY
+            sta  $D5             ; → loop counter
+            dec  $D5             ; Start at party_size - 1 (0-indexed)
 
-; FUNC $005C63: register -> A:X [IJ]
-; Proto: uint32_t func_005C63(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from tile_update_bcd_food, game_loop_combat_lookup2, $005C5D
-char_combat_turn   lda  $E1             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
-            sta  $D5             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
-            dec  $D5             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
+char_turn_loop jsr  magic_resolve_effect       ; Check if this member can act
+            bne  char_turn_next    ; Dead/incapacitated → skip
+            jsr  render_encrypt_records        ; Decrypt character records
+            lda  #$F7            ; Display code for damage flash
+            jsr  $4705           ; Flash damage indicator
+            jsr  render_encrypt_records        ; Re-encrypt after display access
+            jsr  $46E7           ; Generate random byte
+            and  #$77            ; Cap at 0-119 BCD (mask off high bits)
+            jsr  combat_apply_damage       ; Apply random base damage
+            lda  $13             ; Load dungeon_level (0-7)
+            clc
+            adc  #$01            ; level + 1
+            asl  a               ; ×2  — three shifts = ×8
+            asl  a               ; ×4
+            asl  a               ; ×8 = (level+1) × 8
+            jsr  combat_apply_damage       ; Apply level-scaled bonus damage
+char_turn_next dec  $D5             ; Next party member (counting down)
+            bpl  char_turn_loop    ; Continue until all processed
 
-; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from char_turn_next
-char_turn_loop jsr  magic_resolve_effect       ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
-            bne  char_turn_next    ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
-            jsr  render_encrypt_records        ; A=[$00E1] X=$0010 Y=$0080 ; [SP-460]
-            lda  #$F7            ; A=$00F7 X=$0010 Y=$0080 ; [SP-460]
-            jsr  $4705           ; A=$00F7 X=$0010 Y=$0080 ; [SP-462]
-            jsr  render_encrypt_records        ; A=$00F7 X=$0010 Y=$0080 ; [SP-464]
-            jsr  $46E7           ; A=$00F7 X=$0010 Y=$0080 ; [SP-466]
-            and  #$77            ; A=A&$77 X=$0010 Y=$0080 ; [SP-466]
-            jsr  combat_apply_damage       ; A=A&$77 X=$0010 Y=$0080 ; [SP-468]
-            lda  $13             ; A=[$0013] X=$0010 Y=$0080 ; [SP-468]
-            clc                  ; A=[$0013] X=$0010 Y=$0080 ; [SP-468]
-            adc  #$01            ; A=A+$01 X=$0010 Y=$0080 ; [SP-468]
-            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-468]
-            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-468]
-            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [SP-468]
-            jsr  combat_apply_damage       ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
-; XREF: 1 ref (1 branch) from char_turn_loop
-char_turn_next dec  $D5             ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
-            bpl  char_turn_loop    ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
-; === End of while loop ===
-
-            jsr  move_display_party_status       ; Call $007338(A, X, 1 stack)
-            rts                  ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
+            jsr  move_display_party_status       ; Refresh party status sidebar
+            rts
 
 ; --- Data region (469 bytes, text data) ---
             DB      $A5,$D5,$85,$D6,$20,$BA,$46,$C7,$C1,$D3,$A0,$D4,$D2,$C1,$D0,$A1
@@ -2199,35 +2436,56 @@ char_turn_done_msg
             DB      $20,$49,$54,$C9,$C2
 ; --- End data region (179 bytes) ---
 
-char_equip_check_weapon bcc  char_equip_none_msg    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
-            cmp  #$D1            ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
-            bcs  char_equip_none_msg    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
-            sec                  ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
-            sbc  #$C1            ; A=A-$C1 X=$0010 Y=$0080 ; [SP-604]
-            sta  $F0             ; A=A-$C1 X=$0010 Y=$0080 ; [SP-604]
-            jsr  $46F6           ; A=A-$C1 X=$0010 Y=$0080 ; [SP-606]
-            ldy  #$30            ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            lda  ($FE),Y         ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            cmp  $F0             ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            bne  char_equip_not_owned    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            jmp  char_equip_add_weapon    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-; XREF: 1 ref (1 branch) from char_equip_check_weapon
-char_equip_not_owned clc                  ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            lda  #$30            ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            adc  $F0             ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            tay                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            lda  ($FE),Y         ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            beq  char_equip_none_msg    ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            sed                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            sec                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            sbc  #$01            ; A=A-$01 X=$0010 Y=$0030 ; [SP-606]
-            cld                  ; A=A-$01 X=$0010 Y=$0030 ; [SP-606]
-            sta  ($FE),Y         ; A=A-$01 X=$0010 Y=$0030 ; [SP-606]
-            lda  $D6             ; A=[$00D6] X=$0010 Y=$0030 ; [SP-606]
-            sta  $D5             ; A=[$00D6] X=$0010 Y=$0030 ; [SP-606]
-            lda  #$01            ; A=$0001 X=$0010 Y=$0030 ; [SP-606]
-            jsr  combat_add_bcd_field         ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
-            jmp  char_turn_done_msg    ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
+; ---------------------------------------------------------------------------
+; char_equip_check_weapon — Validate and equip a weapon from inventory
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Handles the "Ready weapon" command. Validates the player's
+;            weapon choice (A-P, mapped from high-ASCII $C1-$D0), checks
+;            whether the character owns it, and equips it.
+;
+;   CHARACTER RECORD WEAPON LAYOUT (offsets from $FE/$FF pointer):
+;     $30 = readied weapon index (0 = Hands, 1-15 = weapon type)
+;     $31-$3F = weapon inventory counts (BCD, one per weapon type)
+;
+;   ALGORITHM:
+;   1. Range-check input: must be $C1-$D0 (A-P in high-ASCII)
+;   2. Convert to weapon index: subtract $C1 → 0-15
+;   3. If index matches currently readied weapon ($30) → already equipped
+;   4. Otherwise, check inventory slot ($30 + index) for quantity > 0
+;   5. If owned: BCD-decrement inventory, equip the weapon, add 1 to
+;      the previous weapon's inventory via combat_add_bcd_field
+;   6. If not owned: print "NONE!" error message
+;
+; ---------------------------------------------------------------------------
+char_equip_check_weapon bcc  char_equip_none_msg    ; Below 'A' → invalid
+            cmp  #$D1            ; Above 'P'?
+            bcs  char_equip_none_msg    ; Yes → invalid (only 16 weapons)
+            sec
+            sbc  #$C1            ; Convert high-ASCII → weapon index 0-15
+            sta  $F0             ; Save weapon index
+            jsr  $46F6           ; Setup character pointer ($FE/$FF)
+            ldy  #$30            ; Offset $30 = readied weapon
+            lda  ($FE),Y         ; Load currently equipped weapon
+            cmp  $F0             ; Same as requested?
+            bne  char_equip_not_owned    ; No → check inventory
+            jmp  char_equip_add_weapon    ; Yes → re-equip (swap logic)
+char_equip_not_owned clc
+            lda  #$30            ; Base of weapon inventory ($31-$3F)
+            adc  $F0             ; + weapon index = inventory slot offset
+            tay
+            lda  ($FE),Y         ; Load inventory count for this weapon
+            beq  char_equip_none_msg    ; Zero → don't own it
+            sed                  ; BCD decrement inventory
+            sec
+            sbc  #$01            ; Count -= 1
+            cld
+            sta  ($FE),Y         ; Store updated count
+            lda  $D6             ; Restore active slot
+            sta  $D5
+            lda  #$01            ; Return 1 weapon to previous slot
+            jsr  combat_add_bcd_field         ; Add to previous weapon's inventory
+            jmp  char_turn_done_msg    ; Print "DONE!" and end
 ; XREF: 8 refs (3 jumps) (5 branches) from char_equip_check_weapon, $005E1B, char_equip_not_owned, char_equip_none_msg, char_equip_check_weapon, ...
 char_equip_none_msg jsr  $46BA           ; A=$0001 X=$0010 Y=$0030 ; [SP-610]
             dec  $CECF           ; SLOTEXP_x6CF - Slot expansion ROM offset $6CF {Slot}
@@ -2312,16 +2570,33 @@ char_equip_bcd_add sed                  ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
             DB      $03,$4C,$2E,$60
 ; --- End data region (481 bytes) ---
 
-; XREF: 1 ref (1 branch) from $0061CD
-char_use_powder sed                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
-            lda  ($FE),Y         ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
-            sec                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
-            sbc  #$01            ; A=A-$01 X=$0010 Y=$00D5 ; [SP-677]
-            sta  ($FE),Y         ; A=A-$01 X=$0010 Y=$00D5 ; [SP-677]
-            cld                  ; A=A-$01 X=$0010 Y=$00D5 ; [SP-677]
-            lda  #$0A            ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
-            sta  $CB             ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
-            jmp  game_loop_end_turn   ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
+; ---------------------------------------------------------------------------
+; char_use_powder — Consume one powder and light the dungeon
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Decrements the character's powder count (BCD at offset $27
+;            in the character record) and sets the light timer to 10 turns.
+;
+;   THE SED/CLD BRACKET:
+;   The 6502's decimal mode flag (D) makes ADC/SBC operate in BCD instead
+;   of binary. All Ultima III inventory counts are stored as BCD, so
+;   decrementing a powder count requires SED before the SBC and CLD after.
+;   Forgetting the CLD would corrupt all subsequent arithmetic — a bug
+;   that plagued many early 6502 programs.
+;
+;   $CB is the light/torch timer — counts down each turn. Setting it to
+;   $0A (10 decimal in BCD) gives 10 turns of illumination.
+;
+; ---------------------------------------------------------------------------
+char_use_powder sed                  ; Enter BCD mode for inventory math
+            lda  ($FE),Y         ; Load current powder count
+            sec
+            sbc  #$01            ; Decrement by 1 (BCD)
+            sta  ($FE),Y         ; Store updated count
+            cld                  ; Exit BCD mode (CRITICAL)
+            lda  #$0A            ; 10 turns of light
+            sta  $CB             ; Set torch/light timer
+            jmp  game_loop_end_turn   ; End this turn
 
 ; --- Data region (166 bytes, text data) ---
             DB      $A9,$FF,$8D,$B9,$6A,$20,$BA,$46,$CF,$F4,$E8,$E5,$F2,$A0,$E3,$EF
@@ -2356,62 +2631,88 @@ file_cmd_data_2
             DB      $D0,$03,$4C,$2E,$60
 ; --- End data region (119 bytes) ---
 
-; XREF: 1 ref (1 branch) from file_cmd_data_2
-file_mark_check_slot  ldx  $F1             ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
-            cpx  $02             ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
-            beq  file_mark_check_done      ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
+; ---------------------------------------------------------------------------
+; file_mark_check_slot — Endgame mark/card insertion and Exodus encounter
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Handles the "insert card into slot" mechanic at the Exodus
+;            encounter. The player must insert 4 cards into 4 slots in
+;            a specific sequence. Wrong card → instant death (HP zeroed,
+;            $FF damage = 255 BCD, effectively fatal).
+;
+;   ENDGAME SEQUENCE:
+;   Ultima III's endgame is unique in RPG history — you don't fight
+;   Exodus with weapons. Instead, you insert the 4 cards (Sol, Moon,
+;   Love, Death) into slots on the Exodus machine. Insert them in the
+;   wrong order and your characters die. Get all 4 right and you
+;   trigger the END sequence.
+;
+;   file_max_slots ($6378) tracks how many correct insertions have been
+;   made. When it reaches $22 (decimal 34 — the completion sentinel),
+;   the game BRUNs the END binary to play the victory sequence.
+;
+;   ENDGAME SETUP LOOP:
+;   Once all cards are correctly inserted, the loop prepares each party
+;   member's display state ($F0 = flash effect, $7C = special tile)
+;   for the victory animation before transitioning to BRUN END.
+;
+; ---------------------------------------------------------------------------
+file_mark_check_slot  ldx  $F1             ; Load mark/card slot index
+            cpx  $02             ; Compare against expected slot
+            beq  file_mark_check_done      ; Correct slot → continue
 
-; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from file_mark_check_done
-file_mark_apply_loop  jsr  render_encrypt_records        ; A=$000A X=$0010 Y=$00D5 ; [SP-718]
-            lda  #$F7            ; A=$00F7 X=$0010 Y=$00D5 ; [SP-718]
-            jsr  $4705           ; Call $004705(X)
-            jsr  render_encrypt_records        ; A=$00F7 X=$0010 Y=$00D5 ; [SP-722]
-            jsr  $46F6           ; A=$00F7 X=$0010 Y=$00D5 ; [SP-724]
-            lda  #$00            ; A=$0000 X=$0010 Y=$00D5 ; [SP-724]
-            ldy  #$1A            ; A=$0000 X=$0010 Y=$001A ; [SP-724]
-            sta  ($FE),Y         ; A=$0000 X=$0010 Y=$001A ; [SP-724]
-            lda  #$FF            ; A=$00FF X=$0010 Y=$001A ; [SP-724]
-            jsr  combat_apply_damage       ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-            jmp  game_loop_end_turn   ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-; XREF: 1 ref (1 branch) from file_mark_check_slot
-file_mark_check_done  cpx  file_max_slots     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-            bne  file_mark_apply_loop      ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-; === End of while loop ===
+; --- Wrong card/slot → kill the character ---
+file_mark_apply_loop  jsr  render_encrypt_records        ; Decrypt for stat modification
+            lda  #$F7
+            jsr  $4705           ; Flash damage effect
+            jsr  render_encrypt_records        ; Re-encrypt after display
+            jsr  $46F6           ; Setup character pointer
+            lda  #$00
+            ldy  #$1A            ; Offset $1A = HP (high byte)
+            sta  ($FE),Y         ; Zero HP → death
+            lda  #$FF            ; 255 damage (fatal)
+            jsr  combat_apply_damage       ; Apply lethal damage
+            jmp  game_loop_end_turn   ; End turn (character dies)
 
-            inc  file_max_slots     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-            lda  #$04            ; A=$0004 X=$0010 Y=$001A ; [SP-726]
-            sta  $D0             ; A=$0004 X=$0010 Y=$001A ; [SP-726]
+; --- Correct card inserted → advance toward victory ---
+file_mark_check_done  cpx  file_max_slots     ; Check against current progress
+            bne  file_mark_apply_loop      ; Mismatch → lethal punishment
 
-; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from file_endgame_setup_loop
-file_endgame_setup_loop  jsr  $46FF           ; A=$0004 X=$0010 Y=$001A ; [SP-728]
-            lda  #$F0            ; A=$00F0 X=$0010 Y=$001A ; [SP-728]
-            sta  ($FE),Y         ; A=$00F0 X=$0010 Y=$001A ; [SP-728]
-            jsr  $0230           ; A=$00F0 X=$0010 Y=$001A ; [SP-730]
-            lda  #$F7            ; A=$00F7 X=$0010 Y=$001A ; [SP-730]
-            jsr  $4705           ; A=$00F7 X=$0010 Y=$001A ; [SP-732]
-            jsr  $46FF           ; A=$00F7 X=$0010 Y=$001A ; [SP-734]
-            lda  #$7C            ; A=$007C X=$0010 Y=$001A ; [SP-734]
-            sta  ($FE),Y         ; A=$007C X=$0010 Y=$001A ; [SP-734]
-            jsr  $0230           ; A=$007C X=$0010 Y=$001A ; [SP-736]
-            lda  #$F7            ; A=$00F7 X=$0010 Y=$001A ; [SP-736]
-            jsr  $4705           ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
-            dec  $D0             ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
-            bpl  file_endgame_setup_loop      ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
-            lda  #$20            ; A=$0020 X=$0010 Y=$001A ; [SP-738]
-            ldy  #$00            ; A=$0020 X=$0010 Y=$0000 ; [SP-738]
-            sta  ($FE),Y         ; A=$0020 X=$0010 Y=$0000 ; [SP-738]
-            jsr  $0230           ; A=$0020 X=$0010 Y=$0000 ; [SP-740]
-            lda  file_max_slots     ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-            cmp  #$22            ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-            beq  file_endgame_start      ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-            jmp  game_loop_end_turn   ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-; XREF: 1 ref (1 branch) from file_endgame_setup_loop
-file_endgame_start  lda  #$0A            ; A=$000A X=$0010 Y=$0000 ; [SP-740]
-            sta  $B1             ; A=$000A X=$0010 Y=$0000 ; [SP-740]
-            sta  $B0             ; A=$000A X=$0010 Y=$0000 ; [SP-740]
-            jsr  $46B7           ; A=$000A X=$0010 Y=$0000 ; [SP-742]
+            inc  file_max_slots     ; Advance the progress counter
+            lda  #$04
+            sta  $D0             ; 5 iterations (4 party members + 1)
+
+; --- Prepare victory animation for each party member ---
+file_endgame_setup_loop  jsr  $46FF           ; Setup pointer for member
+            lda  #$F0            ; Flash effect tile
+            sta  ($FE),Y         ; Set display to flash
+            jsr  $0230           ; Commit to display
+            lda  #$F7
+            jsr  $4705           ; Visual effect
+            jsr  $46FF           ; Re-setup pointer
+            lda  #$7C            ; Victory tile (special graphic)
+            sta  ($FE),Y         ; Set display to victory tile
+            jsr  $0230           ; Commit to display
+            lda  #$F7
+            jsr  $4705           ; Visual effect
+            dec  $D0             ; Next member
+            bpl  file_endgame_setup_loop      ; Continue for all members
+
+; --- Check if all 4 cards have been inserted ---
+            lda  #$20            ; Clear display
+            ldy  #$00
+            sta  ($FE),Y         ; Reset tile at (0,0)
+            jsr  $0230           ; Commit
+            lda  file_max_slots     ; Load progress counter
+            cmp  #$22            ; All cards inserted? ($22 = completion)
+            beq  file_endgame_start      ; Yes → trigger endgame!
+            jmp  game_loop_end_turn   ; No → wait for next insertion
+
+; --- VICTORY: Load and run the END binary ---
+file_endgame_start  lda  #$0A            ; Disk request code for END
+            sta  $B1
+            sta  $B0
+            jsr  $46B7           ; Execute inline command:
 
 ; --- Data region (236 bytes, text data) ---
             DB      $04 ; string length
@@ -2453,27 +2754,48 @@ file_overlay_data
             DB      $03,$4C,$2E,$60
 ; --- End data region (110 bytes) ---
 
-; XREF: 1 ref (1 branch) from file_overlay_data
-file_use_gem_bcd  sed                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
-            lda  ($FE),Y         ; A=$000A X=$0010 Y=$0000 ; [SP-775]
-            sec                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
-            sbc  #$01            ; A=A-$01 X=$0010 Y=$0000 ; [SP-775]
-            sta  ($FE),Y         ; A=A-$01 X=$0010 Y=$0000 ; [SP-775]
-            cld                  ; A=A-$01 X=$0010 Y=$0000 ; [SP-775]
-            lda  #$00            ; A=$0000 X=$0010 Y=$0000 ; [SP-775]
-            sta  $02             ; A=$0000 X=$0010 Y=$0000 ; [SP-775]
-            sta  $03             ; A=$0000 X=$0010 Y=$0000 ; [SP-775]
-            lda  $B0             ; A=[$00B0] X=$0010 Y=$0000 ; [SP-775]
-            pha                  ; A=[$00B0] X=$0010 Y=$0000 ; [SP-776]
-            lda  #$00            ; A=$0000 X=$0010 Y=$0000 ; [SP-776]
-            sta  $B1             ; A=$0000 X=$0010 Y=$0000 ; [SP-776]
-            sta  $B0             ; A=$0000 X=$0010 Y=$0000 ; [SP-776]
+; ---------------------------------------------------------------------------
+; file_use_gem_bcd — Use a gem to see a world overview map
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Consumes one gem from the character's inventory, then loads
+;            the OUTM (outdoor map overview) overlay from disk to display
+;            a zoomed-out view of the surrounding area.
+;
+;   IMPLEMENTATION:
+;   1. BCD-decrement gem count at offset $25 in character record
+;   2. Reset map cursor to (0,0) for the overview renderer
+;   3. Save current $B0 (disk I/O request) state
+;   4. Wait for any pending disk I/O to complete
+;   5. BLOAD OUTM overlay file from disk
+;   6. Restore $B0 and trigger display update
+;
+;   GEMS AND EXPLORATION:
+;   In Ultima III, gems are a limited consumable that reveals the local
+;   map — essential for navigating dungeons and finding hidden locations.
+;   This creates an economy around exploration: gems are expensive, so
+;   players must choose carefully when to use them.
+;
+; ---------------------------------------------------------------------------
+file_use_gem_bcd  sed                  ; Enter BCD mode
+            lda  ($FE),Y         ; Load gem count (offset $25)
+            sec
+            sbc  #$01            ; Decrement by 1 (BCD)
+            sta  ($FE),Y         ; Store updated count
+            cld                  ; Exit BCD mode
+            lda  #$00
+            sta  $02             ; Reset overview cursor X = 0
+            sta  $03             ; Reset overview cursor Y = 0
+            lda  $B0             ; Save current disk I/O request state
+            pha
+            lda  #$00
+            sta  $B1             ; Clear display update flag
+            sta  $B0             ; Clear disk I/O request
 
-; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from file_wait_vblank
-file_wait_vblank  lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
-            bne  file_wait_vblank      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
-            jsr  $46B7           ; Call $0046B7(A)
+; --- Spin-wait for disk, then BLOAD OUTM overlay ---
+file_wait_vblank  lda  $B2             ; Check disk busy flag
+            bne  file_wait_vblank      ; Still busy → wait
+            jsr  $46B7           ; Execute inline BLOAD command:
 
 ; --- Data region (197 bytes, text data) ---
             DB      $04 ; string length
@@ -2503,14 +2825,75 @@ game_loop_vblank
             DB      $00 ; null terminator
 ; --- End data region (202 bytes) ---
 
-            sta  $B1             ; A=$0000 X=$0010 Y=$0000 ; [SP-810]
-            sta  $B0             ; A=$0000 X=$0010 Y=$0000 ; [SP-810]
+; ###########################################################################
+; ###                                                                     ###
+; ###              GAME MAIN LOOP ($65B0-$6F42)                           ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   The central state machine of Ultima III. This is the heartbeat of the
+;   entire game. Each iteration:
+;
+;   1. Wait for disk I/O completion (VBlank sync)
+;   2. Save party state (BSAVE PLRS, BSAVE PRTY)
+;   3. Poll keyboard for input
+;   4. Dispatch to command handler (move, attack, cast, get, etc.)
+;   5. Process turn effects (poison, food depletion, MP regen)
+;   6. Check for random encounters
+;   7. Update display
+;   8. Loop back to step 1
+;
+;   GAME DESIGN — THE TURN STRUCTURE:
+;   Ultima III uses a hybrid turn system. In the overworld, time advances
+;   with each player action (move, search, etc.). In combat, it's strictly
+;   turn-based with a round-robin among party members and monsters. The
+;   game_main_loop handles the overworld turn; combat has its own loop
+;   (render_combat_loop_start) that temporarily takes over.
+;
+;   FILE I/O — CONTINUOUS AUTOSAVE:
+;   The game saves PLRS and PRTY to disk EVERY TURN. This is both a
+;   feature (no lost progress on power failure — critical for 1983 when
+;   the Apple II had no battery backup) and an anti-cheat measure (you
+;   can't reload an old save to undo bad outcomes). The $B0/$B1/$B2 flags
+;   coordinate asynchronous disk I/O with the ProDOS MLI.
+;
+; ---------------------------------------------------------------------------
 
-; === while loop starts here [nest:17] ===
-; XREF: 1 ref (1 branch) from game_loop_wait_vblank
-game_loop_wait_vblank lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            bne  game_loop_wait_vblank    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            jsr  $46B7           ; A=[$00B2] X=$0010 Y=$0000 ; [SP-812]
+; ---------------------------------------------------------------------------
+; file_save_and_dispatch — Save party state to disk, then dispatch command
+; ---------------------------------------------------------------------------
+;
+;   CONTINUOUS AUTOSAVE MECHANISM:
+;   Every single turn, the game saves both PLRS (character records at
+;   $4000, 4×64 bytes) and PRTY (party state at $E0, 16 bytes) to disk.
+;   This happens BEFORE the next command is processed, ensuring that no
+;   game state is ever lost — even if the player turns off the Apple II
+;   mid-game.
+;
+;   The $B0/$B1/$B2 flags coordinate disk I/O:
+;     $B0 = save request pending (set to 1 to request save)
+;     $B1 = display update pending
+;     $B2 = disk busy flag (non-zero while ProDOS is writing)
+;
+;   The game spins on $B2 before issuing new BSAVE commands to avoid
+;   corrupting the disk if a previous write is still in progress.
+;   This busy-wait pattern is the only synchronization mechanism — there
+;   are no interrupts or DMA on the Apple II.
+;
+;   DESIGN RATIONALE:
+;   Richard Garriott insisted on persistent save state to prevent "save
+;   scumming" — reloading saves to undo bad outcomes. Combined with the
+;   XOR encryption, this was Ultima's answer to cheating. Death is real:
+;   if your party dies, the save file already reflects it.
+;
+; ---------------------------------------------------------------------------
+            sta  $B1             ; Clear save request flags
+            sta  $B0
+
+; --- Spin-wait for any pending disk I/O to complete ---
+game_loop_wait_vblank lda  $B2             ; Check disk busy flag
+            bne  game_loop_wait_vblank ; Still busy → keep waiting
+            jsr  $46B7           ; Execute inline BSAVE commands via BASIC:
 
 ; --- Data region (54 bytes, text data) ---
             DB      $04 ; string length
@@ -2526,14 +2909,25 @@ game_loop_wait_vblank lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810
             DB      $03,$85,$FF,$EE,$F5,$65,$A9,$03,$A2,$A3,$A0,$33,$6B
 ; --- End data region (54 bytes) ---
 
-game_loop_dispatch_entry inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
-            sbc  $65,X           ; -> $0075 ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
+; ---------------------------------------------------------------------------
+; game_loop_dispatch_entry — Secondary command dispatch after file save
+; ---------------------------------------------------------------------------
+;
+;   This is the second half of the command dispatch mechanism. After the
+;   autosave completes, execution falls through here. Like input_dispatch_entry,
+;   the leading bytes (CE 00 CE / F5 65) are actually the tail end of inline
+;   data — CIDAR sees INC $CE00,X / SBC $65,X but they're data.
+;
+;   The actual dispatch uses the same $FE/$FF indirect jump mechanism
+;   established by input_dispatch_entry above.
+;
+; ---------------------------------------------------------------------------
+game_loop_dispatch_entry inc  $CE00,X         ; (data flow — not a real instruction)
+            sbc  $65,X           ; (continuation of data flow)
 
-; === while loop starts here [nest:17] ===
-; XREF: 2 refs (2 branches) from game_main_loop, game_loop_check_key
-game_loop_check_key cmp  #$1A            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            bne  game_loop_check_key    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            rts                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-808]
+game_loop_check_key cmp  #$1A            ; Range check for dispatch
+            bne  game_loop_check_key    ; Not ready → wait
+            rts                  ; Return to caller
 
 ; --- Data region (413 bytes, text data) ---
             DB      $20,$BA,$46,$D2,$E5,$E1,$E4,$F9,$A0,$E6,$EF,$F2,$A0,$A3,$A0,$AD
@@ -2639,18 +3033,37 @@ game_loop_get_viewport lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-87
             DB      $03,$4C,$2E,$60
 ; --- End data region (347 bytes) ---
 
-; XREF: 1 ref (1 branch) from $006933
-game_loop_food_deduct sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
-            sec                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
-            sbc  #$01            ; A=A-$01 X=$0010 Y=$0000 ; [SP-915]
-            sta  ($FE),Y         ; A=A-$01 X=$0010 Y=$0000 ; [SP-915]
-            cld                  ; A=A-$01 X=$0010 Y=$0000 ; [SP-915]
-            jsr  $46FF           ; A=A-$01 X=$0010 Y=$0000 ; [SP-917]
-            lda  $09             ; A=[$0009] X=$0010 Y=$0000 ; [SP-917]
-            asl  a               ; A=[$0009] X=$0010 Y=$0000 ; [SP-917]
-            sta  ($FE),Y         ; A=[$0009] X=$0010 Y=$0000 ; [SP-917]
-            jsr  $0230           ; A=[$0009] X=$0010 Y=$0000 ; [SP-919]
-            jmp  game_loop_end_turn   ; A=[$0009] X=$0010 Y=$0000 ; [SP-919]
+; ---------------------------------------------------------------------------
+; game_loop_food_deduct — Consume food and update NPC tile animation
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Decrements the active character's food supply (BCD) and
+;            updates the NPC/creature tile appearance based on the
+;            current tile type ($09).
+;
+;   FOOD AS TIME:
+;   In Ultima III, food serves as the game's time currency. Every
+;   action (move, search, attack) costs food. When food reaches zero,
+;   the party begins taking starvation damage. This creates urgency —
+;   the player can't wander indefinitely and must plan routes to
+;   provisions. The food depletion rate is configurable (default 4,
+;   stored at $772C in ULT3), controlling game difficulty.
+;
+;   ASL of $09 (tile type) doubles it to get the animated tile index —
+;   the engine uses even/odd tile pairs for animation frames.
+;
+; ---------------------------------------------------------------------------
+game_loop_food_deduct sed                  ; Enter BCD mode for food math
+            sec
+            sbc  #$01            ; Decrement food by 1 (BCD)
+            sta  ($FE),Y         ; Store updated food count
+            cld                  ; Exit BCD mode
+            jsr  $46FF           ; Re-setup character pointer
+            lda  $09             ; Load current tile type
+            asl  a               ; ×2 for animation tile pair index
+            sta  ($FE),Y         ; Store animated tile appearance
+            jsr  $0230           ; ProDOS MLI call (commit state)
+            jmp  game_loop_end_turn   ; End this turn
 
 ; --- Data region (1256 bytes, text data) ---
             DB      $20,$BA,$46,$D6,$EF,$EC,$F5,$ED,$E5,$A0,$00,$A5,$10,$49,$FF,$85
@@ -2786,47 +3199,73 @@ game_loop_food_deduct sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915
 ; --- End data region (1256 bytes) ---
 
 
-; === while loop starts here [nest:14] ===
-; XREF: 52 refs (16 jumps) from $006AE9, char_equip_bcd_add, $006064, $005B66, $005E52, ...
-game_loop_end_turn jsr  $03AF           ; Call $0003AF(A)
-            lda  #$03            ; A=$0003 X=$0010 Y=$0000 ; [SP-1194]
-            ldx  #$A3            ; A=$0003 X=$00A3 Y=$0000 ; [SP-1194]
-            ldy  #$33            ; A=$0003 X=$00A3 Y=$0033 ; [SP-1194]
-            jsr  $03A3           ; Call $0003A3(A, X, Y)
-            cmp  #$1A            ; A=$0003 X=$00A3 Y=$0033 ; [SP-1196]
-            bne  game_loop_end_turn   ; A=$0003 X=$00A3 Y=$0033 ; [SP-1196]
-            lda  $E2             ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1196]
-            bne  game_loop_check_dungeon   ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1196]
-            pha                  ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1197]
-            jsr  check_surface_only     ; Call $006F5D(A, 1 stack)
-            pla                  ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
-; XREF: 1 ref (1 branch) from game_loop_end_turn
-game_loop_check_dungeon cmp  #$01            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
-            bne  game_loop_check_surface   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
-            jsr  $1800           ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            jmp  dungeon_turn_process      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 1 ref (1 branch) from game_loop_check_dungeon
-game_loop_check_surface cmp  #$80            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            bne  game_loop_check_town   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            jmp  render_combat_loop_start      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 1 ref (1 branch) from game_loop_check_surface
-game_loop_check_town cmp  #$02            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            bcc  game_loop_call_terrain   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            lda  $00             ; A=[$0000] X=$00A3 Y=$0033 ; [SP-1200]
-            beq  game_loop_load_saved_x   ; A=[$0000] X=$00A3 Y=$0033 ; [SP-1200]
-            lda  $01             ; A=[$0001] X=$00A3 Y=$0033 ; [SP-1200]
-            bne  game_loop_call_terrain   ; A=[$0001] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 4 refs (3 jumps) (1 branch) from $00559A, input_dungeon_gen_pos, $008F5D, game_loop_check_town
-game_loop_load_saved_x lda  $E3             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $00             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
-            lda  $E4             ; A=[$00E4] X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $01             ; A=[$00E4] X=$00A3 Y=$0033 ; [SP-1200]
-            lda  #$FF            ; A=$00FF X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $0F             ; A=$00FF X=$00A3 Y=$0033 ; [SP-1200]
-            lda  #$00            ; A=$0000 X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $E2             ; A=$0000 X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $B1             ; A=$0000 X=$00A3 Y=$0033 ; [SP-1200]
-            sta  $B0             ; A=$0000 X=$00A3 Y=$0033 ; [SP-1200]
+; ---------------------------------------------------------------------------
+; game_loop_end_turn — Central turn dispatcher (52 callers!)
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: The single convergence point for ALL command handlers. Every
+;            action in the game (move, attack, cast, get, etc.) eventually
+;            JMPs here when done. This function processes end-of-turn
+;            effects and dispatches to the appropriate location handler.
+;
+;   LOCATION TYPE DISPATCH ($E2):
+;   The party's current location type determines which subsystem runs:
+;     $00 = Sosaria overworld → check_surface_only (day/night, encounters)
+;     $01 = Dungeon → $1800 dungeon renderer + dungeon_turn_process
+;     $02 = Town/Castle → standard turn processing
+;     $80 = Combat → render_combat_loop_start (tactical grid)
+;
+;   TOWN EXIT DETECTION:
+;   When location_type ≥ 2 (town) and map position (0,0) or (X,0), the
+;   party has walked off the map edge. The engine restores saved overworld
+;   coordinates ($E3/$E4 = saved_x/saved_y from PRTY) and transitions
+;   back to the surface, loading overworld sound data.
+;
+;   52 CALLERS:
+;   Every command handler, every combat resolution, every spell effect
+;   ends by jumping here. This is the narrowest bottleneck in the entire
+;   engine — all game flow passes through this single point.
+;
+; ---------------------------------------------------------------------------
+game_loop_end_turn jsr  $03AF           ; ProDOS event handler (inter-turn)
+            lda  #$03
+            ldx  #$A3
+            ldy  #$33
+            jsr  $03A3           ; ProDOS MLI setup for display refresh
+            cmp  #$1A            ; Ready for next turn?
+            bne  game_loop_end_turn   ; Not yet → retry (wait for I/O)
+            lda  $E2             ; Load location_type from PRTY
+            bne  game_loop_check_dungeon   ; Non-zero → not overworld
+            pha                  ; Save location_type
+            jsr  check_surface_only     ; Overworld turn processing
+            pla                  ; Restore location_type
+
+; --- Dispatch by location type ---
+game_loop_check_dungeon cmp  #$01            ; Dungeon?
+            bne  game_loop_check_surface
+            jsr  $1800           ; Render 3D dungeon view
+            jmp  dungeon_turn_process      ; Process dungeon turn
+game_loop_check_surface cmp  #$80            ; Combat?
+            bne  game_loop_check_town
+            jmp  render_combat_loop_start      ; Enter combat subsystem
+game_loop_check_town cmp  #$02            ; Town or castle?
+            bcc  game_loop_call_terrain   ; Below 2 → surface movement
+            lda  $00             ; Check map X position
+            beq  game_loop_load_saved_x   ; X=0 → at map edge, exit town
+            lda  $01             ; Check map Y position
+            bne  game_loop_call_terrain   ; Y≠0 → still in town
+
+; --- Exit town/castle: restore overworld position ---
+game_loop_load_saved_x lda  $E3             ; Restore saved_x from PRTY
+            sta  $00             ; → map_cursor_x
+            lda  $E4             ; Restore saved_y from PRTY
+            sta  $01             ; → map_cursor_y
+            lda  #$FF
+            sta  $0F             ; Force map reload flag
+            lda  #$00
+            sta  $E2             ; Set location_type = overworld
+            sta  $B1             ; Clear display update
+            sta  $B0             ; Clear disk I/O request
 
 ; === while loop starts here [nest:15] ===
 ; XREF: 1 ref (1 branch) from game_loop_get_music
@@ -2850,55 +3289,82 @@ game_loop_get_music lda  $B2             ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
             DB      $A5,$0E,$85,$E0,$20,$7D,$65,$A9,$01,$85,$B1
 ; --- End data region (67 bytes) ---
 
-; XREF: 2 refs (2 branches) from game_loop_check_town, game_loop_check_town
-game_loop_call_terrain jsr  move_process_turn        ; Call $007470(A)
-            jsr  move_display_party_status       ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1213]
-            jsr  $46FC           ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
-            cmp  #$88            ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
-            bne  game_loop_check_tile   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
-            jsr  world_move_handler      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1217]
-; XREF: 1 ref (1 branch) from game_loop_call_terrain
-game_loop_check_tile jsr  $46FC           ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
-            cmp  #$30            ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
-            bne  game_loop_check_location   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
-            jsr  shop_handle      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1221]
-; XREF: 1 ref (1 branch) from game_loop_check_tile
-game_loop_check_location jsr  check_location        ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-            beq  game_loop_clear_flag   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-            jmp  game_loop_check_special   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-; XREF: 1 ref (1 branch) from game_loop_check_location
-game_loop_clear_flag lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
-            sta  $CB             ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
-            lda  #$0B            ; A=$000B X=$00A3 Y=$00D3 ; [SP-1223]
-            jsr  $46E4           ; A=$000B X=$00A3 Y=$00D3 ; [SP-1225]
-            sta  $02             ; A=$000B X=$00A3 Y=$00D3 ; [SP-1225]
-            lda  #$0B            ; A=$000B X=$00A3 Y=$00D3 ; [SP-1225]
-            jsr  $46E4           ; Call $0046E4(1 stack)
-            sta  $03             ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
-            cmp  #$05            ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
-            bne  game_loop_combat_lookup   ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
-            lda  $02             ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
-            cmp  #$05            ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
-            beq  game_loop_combat_lookup2   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
-; XREF: 1 ref (1 branch) from game_loop_clear_flag
-game_loop_combat_lookup jsr  combat_tile_at_xy      ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
-            cmp  #$10            ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
-            bne  game_loop_jmp_input   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
-            lda  #$7A            ; A=$007A X=$00A3 Y=$00D3 ; [SP-1229]
-            sta  ($FE),Y         ; A=$007A X=$00A3 Y=$00D3 ; [SP-1229]
-            jsr  $0328           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1231]
-            lda  #$F7            ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1231]
-            jsr  $4705           ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1233]
-            jsr  $0230           ; Call $000230(A)
-; XREF: 1 ref (1 branch) from game_loop_combat_lookup
-game_loop_jmp_input jmp  world_move_start   ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1235]
-; XREF: 1 ref (1 branch) from game_loop_clear_flag
-game_loop_combat_lookup2 jsr  combat_tile_at_xy      ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1237]
-            lda  #$7A            ; A=$007A X=$00A3 Y=$00D3 ; [SP-1237]
-            sta  ($FE),Y         ; A=$007A X=$00A3 Y=$00D3 ; [SP-1237]
-            jsr  $0328           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1239]
-            jsr  char_combat_turn       ; A=$007A X=$00A3 Y=$00D3 ; [SP-1241]
-            jsr  $0230           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1243]
+; ---------------------------------------------------------------------------
+; game_loop_call_terrain — Overworld turn: process movement + check tiles
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: The overworld (non-dungeon, non-combat) turn handler.
+;            Runs after every player action on the surface or in towns.
+;
+;   TURN SEQUENCE:
+;   1. move_process_turn: Apply poison, food depletion, MP regen
+;   2. Refresh party status display
+;   3. Check tile $88 = sign/message → show sign text
+;   4. Check tile $30 = shop → enter shop interface
+;   5. Check if at a special location (shrine, fountain, etc.)
+;   6. If at special location: generate random combat position
+;      on the 11×11 grid, check for occupied tile ($10 = impassable),
+;      and either place the encounter or skip
+;
+;   RANDOM ENCOUNTER PLACEMENT:
+;   The encounter spawner generates random (X,Y) on the 11×11 grid
+;   ($46E4 with range 11). Position (5,5) is special — it's the center
+;   where the party stands, so a hit there triggers char_combat_turn
+;   (environmental damage) instead of normal placement.
+;
+;   For non-center positions, if combat_tile_at_xy returns $10 (wall),
+;   the encounter is placed with tile $7A (encounter marker) and the
+;   display is flashed. Otherwise, the turn ends normally.
+;
+; ---------------------------------------------------------------------------
+game_loop_call_terrain jsr  move_process_turn        ; Per-turn maintenance
+            jsr  move_display_party_status       ; Refresh HP/status sidebar
+            jsr  $46FC           ; Get tile at current position
+            cmp  #$88            ; Sign/message tile?
+            bne  game_loop_check_tile
+            jsr  world_move_handler      ; Yes → display sign text
+game_loop_check_tile jsr  $46FC           ; Re-check current tile
+            cmp  #$30            ; Shop tile?
+            bne  game_loop_check_location
+            jsr  shop_handle      ; Yes → enter shop transaction
+game_loop_check_location jsr  check_location        ; At a special location?
+            beq  game_loop_clear_flag   ; Yes → process special encounter
+            jmp  game_loop_check_special   ; No → check remaining specials
+
+; --- At special location: generate random encounter position ---
+game_loop_clear_flag lda  #$00
+            sta  $CB             ; Clear light timer
+            lda  #$0B            ; Range: 0-10 (11×11 combat grid)
+            jsr  $46E4           ; Random encounter X
+            sta  $02
+            lda  #$0B
+            jsr  $46E4           ; Random encounter Y
+            sta  $03
+            cmp  #$05            ; Y = center (5)?
+            bne  game_loop_combat_lookup
+            lda  $02
+            cmp  #$05            ; X = center (5)?
+            beq  game_loop_combat_lookup2   ; Both center → party position
+
+; --- Place encounter at random grid position ---
+game_loop_combat_lookup jsr  combat_tile_at_xy      ; Look up tile at (X,Y)
+            cmp  #$10            ; Impassable tile?
+            bne  game_loop_jmp_input   ; No → can't place here, skip
+            lda  #$7A            ; Encounter marker tile
+            sta  ($FE),Y         ; Place on combat grid
+            jsr  $0328           ; Commit to display
+            lda  #$F7            ; Flash effect
+            jsr  $4705
+            jsr  $0230           ; Sync display
+game_loop_jmp_input jmp  world_move_start   ; Return to overworld input
+
+; --- Encounter at party center → environmental damage ---
+game_loop_combat_lookup2 jsr  combat_tile_at_xy      ; Look up center tile
+            lda  #$7A            ; Encounter marker
+            sta  ($FE),Y         ; Place at center
+            jsr  $0328           ; Commit
+            jsr  char_combat_turn       ; Apply environmental damage to party
+            jsr  $0230           ; Sync display
 ; XREF: 1 ref (1 jump) from game_loop_check_location
 game_loop_check_special lda  $6E3E           ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
             cmp  #$20            ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
@@ -2906,82 +3372,113 @@ game_loop_check_special lda  $6E3E           ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1
             jmp  world_move_start   ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
 
 ; ---------------------------------------------------------------------------
-; check_location  [3 calls]
-;   Called by: game_loop_check_location
+; check_location — Test if party is at a special coordinate
 ; ---------------------------------------------------------------------------
-
-; FUNC $006F43: register -> A:X [L]
-; Proto: uint32_t func_006F43(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from $008428, $0080DE, game_loop_check_location
-check_location    lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
-            cmp  #$80            ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  check_location_compare     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
-            lda  $835E           ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
-; XREF: 1 ref (1 branch) from check_location
-check_location_compare cmp  #$03            ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  check_location_not_found     ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
-            lda  $E3             ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
-            cmp  $79B8           ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  check_location_not_found     ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
-            lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1243]
-            rts                  ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1241]
-; XREF: 2 refs (2 branches) from check_location_compare, check_location_compare
-check_location_not_found lda  #$FF            ; A=$00FF X=$00A3 Y=$00D3 ; [SP-1241]
-            rts                  ; A=$00FF X=$00A3 Y=$00D3 ; [SP-1239]
-
+;
+;   PURPOSE: Checks whether the party's current position matches a
+;            predefined special location coordinate. Used by the game
+;            loop to trigger location-specific events (shrines, fountains,
+;            the Time Lord, etc.).
+;
+;   ALGORITHM:
+;   - If in combat ($E2 = $80): use combat map identifier ($835E)
+;   - Otherwise: check if $E2 = 3 (Ambrosia) AND saved_x matches
+;     the expected coordinate at $79B8
+;   - Returns A=0 (ZF set) if at the special location
+;   - Returns A=$FF (ZF clear) if not
+;
+;   This is called 3 times from different contexts — the game loop,
+;   combat rendering, and dungeon processing all need to know if the
+;   party is at a quest-critical location.
+;
 ; ---------------------------------------------------------------------------
-; check_surface_only  [2 calls, 1 branch]
-;   Called by: game_loop_end_turn
-; ---------------------------------------------------------------------------
-
-; FUNC $006F5D: register -> A:X []
-; Proto: uint32_t func_006F5D(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 3 refs (2 calls) (1 branch) from $005044, game_loop_end_turn, game_loop_check_special
-check_surface_only lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
-            beq  toggle_music     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
-            rts                  ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
+check_location    lda  $E2             ; Load location_type
+            cmp  #$80            ; In combat?
+            bne  check_location_compare     ; No → use location_type directly
+            lda  $835E           ; Yes → use combat map ID instead
+check_location_compare cmp  #$03            ; Location type 3 (Ambrosia)?
+            bne  check_location_not_found     ; No → not at special location
+            lda  $E3             ; Check saved_x coordinate
+            cmp  $79B8           ; Match expected X?
+            bne  check_location_not_found     ; No → not at special location
+            lda  #$00            ; Found! Return 0 (ZF set)
+            rts
+check_location_not_found lda  #$FF            ; Not found. Return $FF (ZF clear)
+            rts
 
 ; ---------------------------------------------------------------------------
-; toggle_music  [1 call, 1 branch]
-;   Calls: advance_turn
+; check_surface_only — Gate for overworld-only processing
 ; ---------------------------------------------------------------------------
-; XREF: 2 refs (1 call) (1 branch) from check_surface_only, $006171
-toggle_music dec  turn_counter_1     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
-            bne  toggle_music_phase2  ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
-            lda  #$0C            ; A=$000C X=$00A3 Y=$00D3 ; [SP-1237]
-            sta  turn_counter_1     ; A=$000C X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F69 ; [SP-1237]
-            lda  $6FA1           ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1237]
-            jsr  advance_turn        ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
-            sta  $6FA1           ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239] ; WARNING: Self-modifying code -> $6FA1
-; XREF: 1 ref (1 branch) from toggle_music
-toggle_music_phase2 dec  turn_counter_2     ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
-            bne  toggle_music_update  ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
-            lda  #$04            ; A=$0004 X=$00A3 Y=$00D3 ; [SP-1239]
-            sta  turn_counter_2     ; A=$0004 X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F7C ; [SP-1239]
-            lda  $6FA4           ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1239]
-            jsr  advance_turn        ; Call $006F8B(A)
-            sta  $6FA4           ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241] ; WARNING: Self-modifying code -> $6FA4
-; XREF: 1 ref (1 branch) from toggle_music_phase2
-toggle_music_update jmp  advance_turn_update     ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
+;
+;   PURPOSE: Quick filter that only runs overworld logic when the party
+;            is on the Sosaria surface ($E2 = 0). If in any other
+;            location type (dungeon, town, combat), returns immediately.
+;
+; ---------------------------------------------------------------------------
+check_surface_only lda  $E2             ; Load location_type
+            beq  toggle_music     ; Zero = overworld → process
+            rts                  ; Non-zero → skip (not on surface)
 
 ; ---------------------------------------------------------------------------
-; advance_turn  [2 calls]
-;   Called by: toggle_music_phase2, toggle_music
+; toggle_music — Overworld day/night cycle and moongate phase tracking
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Manages two periodic counters that drive the overworld's
+;            time-based events:
+;
+;   COUNTER 1 (turn_counter_1, period = 12 turns):
+;   Controls moongate phase cycling. Every 12 overworld moves, the
+;   moongate phase ($6FA1) advances by 1, wrapping at $B8 back to $B0.
+;   This gives 8 phases ($B0-$B7) matching Ultima III's 8 moongate
+;   positions. The moongates physically move around the map on each
+;   phase change — a landmark game mechanic that required players to
+;   track lunar cycles to use the fast-travel system.
+;
+;   COUNTER 2 (turn_counter_2, period = 4 turns):
+;   Controls NPC animation cycling ($6FA4). Every 4 moves, NPC
+;   appearance tiles advance, creating the illusion of movement
+;   even when NPCs are standing still.
+;
+;   SELF-MODIFYING CODE:
+;   The phase values are stored back into the instruction stream
+;   (STA $6FA1 / STA $6FA4) — the operand bytes serve double duty
+;   as both code and data. This saves 2 bytes of ZP allocation.
+;
+; ---------------------------------------------------------------------------
+toggle_music dec  turn_counter_1     ; Decrement moongate phase timer
+            bne  toggle_music_phase2  ; Not zero → skip phase advance
+            lda  #$0C            ; Reset counter to 12 turns
+            sta  turn_counter_1
+            lda  $6FA1           ; Load current moongate phase
+            jsr  advance_turn        ; Advance: phase + 1, wrap at $B8
+            sta  $6FA1           ; Store back (self-modifying code)
+toggle_music_phase2 dec  turn_counter_2     ; Decrement NPC animation timer
+            bne  toggle_music_update  ; Not zero → skip
+            lda  #$04            ; Reset counter to 4 turns
+            sta  turn_counter_2
+            lda  $6FA4           ; Load current NPC animation phase
+            jsr  advance_turn        ; Advance + wrap
+            sta  $6FA4           ; Store back (self-modifying code)
+toggle_music_update jmp  advance_turn_update     ; Continue to overworld update
 
-; FUNC $006F8B: register -> A:X []
-; Proto: uint32_t func_006F8B(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 2 refs (2 calls) from toggle_music_phase2, toggle_music
-advance_turn    clc                  ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
-            adc  #$01            ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
-            cmp  #$B8            ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
-            bcc  advance_turn_done     ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
-            lda  #$B0            ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
-; XREF: 1 ref (1 branch) from advance_turn
-advance_turn_done rts                  ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1239]
+; ---------------------------------------------------------------------------
+; advance_turn — Increment phase counter with wrap-around
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Adds 1 to A, wrapping from $B7 back to $B0. This gives
+;            8 states ($B0-$B7) — matching the 8 moongate phases
+;            (one per lunar position) and 8 NPC animation frames.
+;
+;   The range $B0-$B7 maps to page $00B0+ in the tile table,
+;   where the engine stores the 8 moongate appearance tiles.
+;
+; ---------------------------------------------------------------------------
+advance_turn    clc
+            adc  #$01            ; Phase + 1
+            cmp  #$B8            ; Past maximum ($B7)?
+            bcc  advance_turn_done     ; No → return as-is
+            lda  #$B0            ; Yes → wrap to $B0
+advance_turn_done rts
 ; XREF: 1 ref (1 jump) from toggle_music_update
 advance_turn_update jsr  move_save_cursor_pos     ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
             ldy  #$00            ; A=$00B0 X=$00A3 Y=$0000 ; [SP-1241]
@@ -3009,25 +3506,56 @@ turn_counter_2
 ; --- End data region (86 bytes) ---
 
 
+; ###########################################################################
+; ###                                                                     ###
+; ###              COMBAT SYSTEM ($7087-$75AD)                            ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Ultima III's tactical combat system operates on an 11×11 tile grid
+;   (CON files at $9900). Up to 4 party members and 8 monsters are
+;   placed on the grid. Combat is turn-based: each party member selects
+;   an action (Attack, Cast, Retreat, etc.), then monsters act via
+;   simple AI. Combat ends when all monsters are defeated or all party
+;   members die.
+;
+;   COMBAT INNOVATIONS (1983):
+;   Ultima III was the FIRST CRPG to feature a separate tactical combat
+;   screen. Prior CRPGs (including Ultima I and II, Wizardry, and
+;   Bard's Tale predecessors) used either menu-based combat or the
+;   overworld map. The 11×11 grid with positioned combatants, terrain
+;   effects, and movement was revolutionary — it became the template
+;   for every tactical RPG that followed.
+;
+;   BCD ARITHMETIC:
+;   All combat math (HP, damage, gold, XP) uses BCD (Binary Coded
+;   Decimal) via the 6502's SED/CLD decimal mode. This simplifies
+;   display (each nibble IS a digit) at the cost of more complex
+;   arithmetic. The combat_bcd_multiply function implements BCD
+;   multiplication via repeated addition.
+;
 ; ---------------------------------------------------------------------------
-; combat_init  [2 calls, 2 branches]
-;   Called by: game_loop_check_key, game_loop_food_deduct
-;   Calls: input_wait_key
+
 ; ---------------------------------------------------------------------------
-; XREF: 4 refs (2 calls) (2 branches) from game_loop_check_key, combat_init, combat_init, game_loop_food_deduct
-combat_init      jsr  input_wait_key     ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-            cmp  #$B0            ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-            bcc  combat_init          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-; === End of while loop ===
+; combat_init — Wait for player number input to start combat round
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Waits for the player to press a digit key (0-9) to select
+;            which party member acts next. Keys outside $B0-$B9
+;            (high-ASCII '0'-'9') are rejected and the loop retries.
+;
+; ---------------------------------------------------------------------------
+combat_init      jsr  input_wait_key     ; Wait for keypress
+            cmp  #$B0            ; Key < '0'?
+            bcc  combat_init     ; Yes → reject, try again
 
-            cmp  #$BA            ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-            bcs  combat_init          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-; === End of while loop ===
+            cmp  #$BA            ; Key > '9'?
+            bcs  combat_init     ; Yes → reject, try again
 
-            pha                  ; A=$00A8 X=$0008 Y=$0000 ; [SP-1248]
-            and  #$7F            ; A=A&$7F X=$0008 Y=$0000 ; [SP-1248]
-            jsr  $46CC           ; A=A&$7F X=$0008 Y=$0000 ; [SP-1250]
-            jsr  $46BA           ; Call $0046BA(A)
+            pha                  ; Save key for later
+            and  #$7F            ; Strip high bit for display
+            jsr  $46CC           ; Echo character to screen
+            jsr  $46BA           ; Print inline string:
             DB      $FF
             brk  #$AD            ; A=A&$7F X=$0008 Y=$0000 ; [SP-1252]
 
@@ -3038,106 +3566,167 @@ combat_init      jsr  input_wait_key     ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
 
 
 ; ---------------------------------------------------------------------------
-; combat_setup  [5 calls, 2 branches]
-;   Called by: char_use_powder, file_overlay_data
-;   Calls: input_wait_key
+; combat_setup — Prompt player to select a party member (1-4)
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Displays the character selection prompt and waits for a valid
+;            keypress ($B1-$B4 = high-ASCII '1'-'4'). Used whenever the
+;            game needs the player to choose which party member should
+;            act — combat, spellcasting, equipping, etc. Loops until a
+;            valid digit is entered, rejecting keys outside the range.
+;
+;   INPUT: Waits for keypress via input_wait_key (animating while waiting)
+;   VALIDATION: Only accepts $B0-$B4 (high-ASCII '0'-'4')
+;   OUTPUT: Falls through to combat_parse_input to store slot index
+;
+;   WHY $AA: The $AA sentinel stored at $62A5 marks the "waiting for
+;   player input" state — checked elsewhere to detect if the game is
+;   mid-prompt (prevents re-entrant animation callbacks).
+;
 ; XREF: 7 refs (5 calls) (2 branches) from char_use_powder, $0066D6, $008F7D, file_overlay_data, combat_setup, ...
-combat_setup    lda  #$AA            ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
-            sta  $62A5           ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
-            jsr  input_wait_key     ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
-            cmp  #$B0            ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
-            bcc  combat_setup        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
+combat_setup    lda  #$AA            ; Set "awaiting input" sentinel
+            sta  $62A5           ; Store sentinel at input state flag
+            jsr  input_wait_key     ; Wait for key (animating world)
+            cmp  #$B0            ; Key < '0'? (high-ASCII)
+            bcc  combat_setup        ; Too low → retry
 ; === End of while loop ===
 
-            cmp  #$B5            ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
-            bcs  combat_setup        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
+            cmp  #$B5            ; Key >= '5'?
+            bcs  combat_setup        ; Too high → retry (only 1-4 valid)
 ; === End of while loop ===
 
-            pha                  ; A=$00AA X=$0008 Y=$0000 ; [SP-1252]
-            and  #$7F            ; A=A&$7F X=$0008 Y=$0000 ; [SP-1252]
-            jsr  $46CC           ; Call $0046CC(A, 1 stack)
-            jsr  $46BA           ; A=A&$7F X=$0008 Y=$0000 ; [SP-1256]
+            pha                  ; Save keypress
+            and  #$7F            ; Strip high bit for display
+            jsr  $46CC           ; Print the digit character
+            jsr  $46BA           ; Print inline string (prompt suffix)
             DB      $FF
-            brk  #$68            ; A=A&$7F X=$0008 Y=$0000 ; [SP-1256]
-            sec                  ; A=A&$7F X=$0008 Y=$0000 ; [SP-1256]
+            brk  #$68            ; (inline string data bytes)
+            sec                  ; Set carry for subtraction below
 
 ; ---------------------------------------------------------------------------
-; combat_parse_input
+; combat_parse_input — Convert '1'-'4' keypress to slot index
 ; ---------------------------------------------------------------------------
-combat_parse_input  sbc  #$B0            ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
-            sta  $D5             ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
-            dec  $D5             ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
-            cmp  #$00            ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
-            rts                  ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1254]
+;
+;   PURPOSE: Converts the raw keypress ($B1-$B4) to a 0-based slot index
+;            by subtracting $B0 then decrementing. Stores in $D5, which
+;            is the standard party member index used throughout the engine.
+;
+;   PARAMS:  A = keypress from stack ($B1-$B4)
+;   RETURNS: $D5 = 0-based slot index (0-3)
+;            Z flag set if slot 0 selected
+;
+combat_parse_input  sbc  #$B0            ; Convert high-ASCII '1'-'4' → 1-4
+            sta  $D5             ; Store as slot index
+            dec  $D5             ; Adjust to 0-based (1→0, 2→1, etc.)
+            cmp  #$00            ; Set Z flag for caller
+            rts
 
 ; ---------------------------------------------------------------------------
-; combat_read_key  [16 calls, 1 branch]
+; combat_read_key — Read keyboard input during combat (with timeout)
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: The combat-specific keyboard reader. Unlike input_wait_key
+;            (which animates the world while waiting), this routine polls
+;            $C000 directly — combat has its own display update cadence
+;            controlled by the combat loop, not the generic animation tick.
+;
+;   SELF-MODIFYING CODE: Writes $B7 to $705C on entry (marks "in combat
+;   input" state), then restores $50 on keypress. This modifies a byte
+;   in the combat data blob — a flag that other routines check to
+;   determine if the player is currently being prompted.
+;
+;   KEY HANDLING:
+;     $8D = Return → accept (return to caller)
+;     $9B = Escape → cancel entire action (pops stack, prints inline msg)
+;     Other → reject, loop back for another keypress
+;
+;   PARAMS:  None
+;   RETURNS: A = key code (high-ASCII, with bit 7 set)
+;            Only Return ($8D) exits normally; Escape aborts the caller
+;
 ; XREF: 17 refs (16 calls) from $006C0A, $006DBD, $006D6E, $006D52, $006D16, ...
-combat_read_key     lda  #$B7            ; A=$00B7 X=$0008 Y=$0000 ; [SP-1254]
-            sta  $705C           ; A=$00B7 X=$0008 Y=$0000 ; [SP-1254] ; WARNING: Self-modifying code -> $705C
-            ldx  #$50            ; A=$00B7 X=$0050 Y=$0000 ; [SP-1254]
+combat_read_key     lda  #$B7            ; "In combat input" sentinel
+            sta  $705C           ; SMC: set combat input flag
+            ldx  #$50            ; Restore value for when key received
 
-; === while loop starts here [nest:15] ===
+; --- Poll keyboard hardware until key pressed ---
 ; XREF: 1 ref (1 branch) from combat_key_wait
-combat_key_wait  lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bpl  combat_key_wait      ; A=[$C000] X=$0050 Y=$0000 ; [SP-1254]
+combat_key_wait  lda  $C000           ; Read keyboard data register (bit 7 = key ready)
+            bpl  combat_key_wait      ; No key → keep polling
 ; === End of while loop ===
 
-            bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            pha                  ; A=[$C000] X=$0050 Y=$0000 ; [SP-1255]
-            lda  boot_init_data_2     ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
-            stx  $705C           ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255] ; WARNING: Self-modifying code -> $705C
-            cmp  $62A5           ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
-            bne  combat_key_check_enter      ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
-            rts                  ; A=[$506F] X=$0050 Y=$0000 ; [SP-1253]
+            bit  $C010           ; Clear keyboard strobe (acknowledge key)
+            pha                  ; Save keypress on stack
+            lda  boot_init_data_2     ; Load game state byte
+            stx  $705C           ; SMC: restore $50 (clear combat input flag)
+            cmp  $62A5           ; Check if game state matches sentinel
+            bne  combat_key_check_enter ; Mismatch → process key normally
+            rts                  ; Match → abort (special state)
+; --- Check for Return key ($8D) ---
 ; XREF: 1 ref (1 branch) from combat_key_wait
-combat_key_check_enter  pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
-            cmp  #$8D            ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
-            bne  combat_key_check_esc      ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
-            rts                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+combat_key_check_enter  pla                  ; Restore keypress
+            cmp  #$8D            ; Return key? (high-ASCII CR)
+            bne  combat_key_check_esc ; No → check Escape
+            rts                  ; Yes → accept input, return to caller
+; --- Check for Escape key ($9B) → abort the entire action ---
 ; XREF: 1 ref (1 branch) from combat_key_check_enter
-combat_key_check_esc  cmp  #$9B            ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            bne  combat_read_key         ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+combat_key_check_esc  cmp  #$9B            ; Escape key?
+            bne  combat_read_key         ; No → reject, wait for another key
 ; === End of while loop ===
 
-            pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1249]
-            pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1248]
-            jsr  $46BA           ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+; --- Escape pressed: unwind stack and print cancel message ---
+            pla                  ; Discard saved return address (lo)
+            pla                  ; Discard saved return address (hi)
+            jsr  $46BA           ; Print inline cancel message
             DB      $FF
-            brk  #$4C            ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            and  $6E,X           ; -> $00BE ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+            brk  #$4C            ; (inline string data continuation)
+            and  $6E,X           ; -> $00BE (inline data bytes)
 
 ; ---------------------------------------------------------------------------
-; combat_bcd_multiply  [1 call]
-;   Called by: input_spell_check_done
+; combat_bcd_multiply — BCD multiplication via repeated addition
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Multiplies A × X in BCD mode. Result stored in $D0.
+;            Used to compute spell costs, damage, and experience.
+;
+;   PARAMS:  A = multiplicand (BCD value)
+;            X = multiplier (binary count of additions)
+;   RETURNS: A = $D0 = A × X (BCD product)
+;
+;   ALGORITHM:
+;   Since the 6502's decimal mode (SED) only provides BCD addition and
+;   subtraction — NOT multiplication — this implements multiply as
+;   repeated BCD addition: result += multiplicand, X times. This is
+;   O(X) which could be slow for large multipliers, but game values
+;   rarely exceed 99 (2-digit BCD), so X is always small.
+;
+;   WHY BCD?
+;   In 1983, BCD simplified display: each nibble IS a decimal digit.
+;   Converting binary to decimal for screen output on a 1 MHz 6502
+;   requires expensive division loops. With BCD, display is trivial
+;   (just extract nibbles), but arithmetic is slightly more complex.
+;   Garriott's team chose BCD for ALL game math — a pragmatic tradeoff
+;   that pervades the entire codebase.
+;
+; ---------------------------------------------------------------------------
+combat_bcd_multiply  sed                  ; Enter BCD mode
+            sta  $F0             ; Save multiplicand
+            clc
+            lda  #$00            ; Accumulator = 0
+            cpx  #$00            ; Multiplier = 0?
+            bne  combat_bcd_mul_loop ; No → start adding
+            sta  $D0             ; Yes → result is 0
+            rts
 
-; FUNC $00707A: register -> A:X []
-; Proto: uint32_t func_00707A(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from input_spell_check_done
-combat_bcd_multiply  sed                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            sta  $F0             ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            clc                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            lda  #$00            ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
-            cpx  #$00            ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
-            bne  combat_bcd_mul_loop      ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
-            sta  $D0             ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
-            rts                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
+; --- Repeated addition loop: add $F0 to A, X times ---
+combat_bcd_mul_loop  clc
+            adc  $F0             ; Accumulator += multiplicand (BCD)
+            dex                  ; Decrement counter
+            bne  combat_bcd_mul_loop ; Continue until X = 0
 
-; === loop starts here (counter: X) [nest:14] ===
-; XREF: 2 refs (2 branches) from combat_bcd_multiply, combat_bcd_mul_loop
-combat_bcd_mul_loop  clc                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
-            adc  $F0             ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
-            dex                  ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
-            bne  combat_bcd_mul_loop      ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
-; === End of loop (counter: X) ===
-
-            sta  $D0             ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
-            cld                  ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
-            rts                  ; A=$0000 X=$004F Y=$0000 ; [SP-1246]
+            sta  $D0             ; Store BCD product
+            cld                  ; Exit BCD mode
+            rts
 
 ; ---
             DB      $85,$F0,$20,$F6,$46,$F8,$18,$A0,$1F,$B1,$FE,$65,$F0,$91,$FE,$A0
@@ -3182,199 +3771,265 @@ combat_exp_overflow  lda  #$99            ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             rts                  ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
 
 ; ---------------------------------------------------------------------------
-; combat_add_hp  [2 calls]
-;   Called by: move_turn_add_hp
+; combat_add_hp — Add HP to a character with max HP clamping
 ; ---------------------------------------------------------------------------
-
-; FUNC $007107: register -> A:X []
-; Proto: uint32_t func_007107(uint16_t param_A, uint16_t param_X);
-; Liveness: params(A,X) returns(A,X,Y) [4 dead stores]
-; XREF: 2 refs (2 calls) from move_turn_add_hp, $005710
-combat_add_hp  sta  $F0             ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
-            jsr  $46F6           ; Call $0046F6(A, Y)
-            sed                  ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
-            clc                  ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
-            ldy  #$1B            ; A=$0099 X=$004F Y=$001B ; [SP-1242]
-            lda  ($FE),Y         ; A=$0099 X=$004F Y=$001B ; [SP-1242]
-            adc  $F0             ; A=$0099 X=$004F Y=$001B ; [SP-1242]
-            sta  ($FE),Y         ; A=$0099 X=$004F Y=$001B ; [SP-1242]
-            ldy  #$1A            ; A=$0099 X=$004F Y=$001A ; [SP-1242]
-            lda  ($FE),Y         ; A=$0099 X=$004F Y=$001A ; [SP-1242]
-            adc  #$00            ; A=A X=$004F Y=$001A ; [SP-1242]
-            sta  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
-            bcs  combat_hp_cap_at_max      ; A=A X=$004F Y=$001A ; [SP-1242]
-            sec                  ; A=A X=$004F Y=$001A ; [SP-1242]
-            ldy  #$1D            ; A=A X=$004F Y=$001D ; [SP-1242]
-            lda  ($FE),Y         ; A=A X=$004F Y=$001D ; [SP-1242]
-            ldy  #$1B            ; A=A X=$004F Y=$001B ; [SP-1242]
-            sbc  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
-            ldy  #$1C            ; A=A X=$004F Y=$001C ; [SP-1242]
-            lda  ($FE),Y         ; A=A X=$004F Y=$001C ; [SP-1242]
-            ldy  #$1A            ; A=A X=$004F Y=$001A ; [SP-1242]
-            sbc  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
-            bcs  combat_hp_add_done      ; A=A X=$004F Y=$001A ; [SP-1242]
-; XREF: 1 ref (1 branch) from combat_add_hp
-combat_hp_cap_at_max  ldy  #$1C            ; A=A X=$004F Y=$001C ; [SP-1242]
-            lda  ($FE),Y         ; A=A X=$004F Y=$001C ; [SP-1242]
-            ldy  #$1A            ; A=A X=$004F Y=$001A ; [SP-1242]
-            sta  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
-            ldy  #$1D            ; A=A X=$004F Y=$001D ; [SP-1242]
-            lda  ($FE),Y         ; A=A X=$004F Y=$001D ; [SP-1242]
-            ldy  #$1B            ; A=A X=$004F Y=$001B ; [SP-1242]
-            sta  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
-; XREF: 1 ref (1 branch) from combat_add_hp
-combat_hp_add_done  cld                  ; A=A X=$004F Y=$001B ; [SP-1242]
-            rts                  ; A=A X=$004F Y=$001B ; [SP-1240]
+;
+;   PURPOSE: Adds a BCD healing amount to a character's current HP,
+;            clamping at their maximum HP to prevent overhealing.
+;
+;   CHARACTER RECORD HP LAYOUT (BCD16, big-endian):
+;     $1A/$1B = current HP (high/low bytes)
+;     $1C/$1D = max HP (high/low bytes)
+;
+;   ALGORITHM:
+;   1. BCD-add healing amount ($F0) to HP low byte ($1B)
+;   2. Propagate carry to HP high byte ($1A)
+;   3. If overflow (carry set) → clamp to max HP
+;   4. Otherwise compare: if HP > max_HP → clamp to max HP
+;
+;   The comparison is 16-bit BCD: subtract current from max. If borrow
+;   occurs (carry clear after SBC), current exceeds max → cap it.
+;
+;   PARAMS:  A = healing amount (BCD)
+;   RETURNS: HP clamped to max_HP
+;
+; ---------------------------------------------------------------------------
+combat_add_hp  sta  $F0             ; Save healing amount
+            jsr  $46F6           ; Setup character pointer ($FE/$FF)
+            sed                  ; Enter BCD mode for HP math
+            clc
+            ldy  #$1B            ; HP low byte offset
+            lda  ($FE),Y         ; Load current HP (low)
+            adc  $F0             ; Add healing amount (BCD)
+            sta  ($FE),Y         ; Store updated HP (low)
+            ldy  #$1A            ; HP high byte offset
+            lda  ($FE),Y         ; Load current HP (high)
+            adc  #$00            ; Propagate carry from low byte
+            sta  ($FE),Y         ; Store updated HP (high)
+            bcs  combat_hp_cap_at_max      ; Carry = BCD overflow → clamp
+; --- Compare HP against max_HP (16-bit BCD) ---
+            sec
+            ldy  #$1D            ; max_HP low byte
+            lda  ($FE),Y
+            ldy  #$1B            ; current HP low byte
+            sbc  ($FE),Y         ; max_HP_lo - HP_lo
+            ldy  #$1C            ; max_HP high byte
+            lda  ($FE),Y
+            ldy  #$1A            ; current HP high byte
+            sbc  ($FE),Y         ; max_HP_hi - HP_hi (with borrow)
+            bcs  combat_hp_add_done      ; No borrow → HP ≤ max → OK
+; --- HP exceeds max: clamp to max_HP ---
+combat_hp_cap_at_max  ldy  #$1C            ; Copy max_HP → current HP
+            lda  ($FE),Y         ; max_HP high byte
+            ldy  #$1A
+            sta  ($FE),Y         ; → HP high byte
+            ldy  #$1D
+            lda  ($FE),Y         ; max_HP low byte
+            ldy  #$1B
+            sta  ($FE),Y         ; → HP low byte
+combat_hp_add_done  cld                  ; Exit BCD mode
+            rts
 
 ; ---------------------------------------------------------------------------
-; combat_add_bcd_field  [5 calls]
-;   Called by: char_equip_none_msg, char_equip_not_owned
+; combat_add_bcd_field — Add a BCD value to a character record field
 ; ---------------------------------------------------------------------------
-
-; FUNC $007145: register -> A:X []
-; Proto: uint32_t func_007145(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: General-purpose BCD field incrementer. Adds the value in A
+;            to the character record byte at offset Y, for the character
+;            in slot X ($D5). Used for adding gold, food, experience,
+;            and other BCD-encoded quantities.
+;
+;   ALGORITHM:
+;   1. Saves addend in $F0, field offset in $F2
+;   2. Sets up character pointer via $46F6 (slot $D5 → $FE/$FF)
+;   3. Performs BCD addition in SED mode
+;   4. On overflow (carry set): clamps field to $99 (max 1-byte BCD)
+;
+;   PARAMS:  A = amount to add (BCD)
+;            Y = character record field offset
+;            X = character slot index (passed via $D5 to $46F6)
+;   RETURNS: Updated field value stored in character record
+;
+;   OVERFLOW: If the BCD addition overflows (e.g., $80 + $30 = $110,
+;   which doesn't fit in one byte), the value is clamped to $99 —
+;   the maximum single-byte BCD value (decimal 99). This prevents
+;   stat corruption while allowing gold/food to cap naturally.
+;
 ; XREF: 5 refs (5 calls) from $005F04, $005D51, $005D86, char_equip_none_msg, char_equip_not_owned
-combat_add_bcd_field     sta  $F0             ; A=A X=$004F Y=$001B ; [SP-1240]
-            sty  $F2             ; A=A X=$004F Y=$001B ; [SP-1240]
-            jsr  $46F6           ; A=A X=$004F Y=$001B ; [SP-1242]
-            ldy  $F2             ; A=A X=$004F Y=$001B ; [SP-1242]
-            sed                  ; A=A X=$004F Y=$001B ; [SP-1242]
-            clc                  ; A=A X=$004F Y=$001B ; [SP-1242]
-            lda  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
-            adc  $F0             ; A=A X=$004F Y=$001B ; [SP-1242]
-            sta  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
-            cld                  ; A=A X=$004F Y=$001B ; [SP-1242]
-            bcs  combat_bcd_overflow      ; A=A X=$004F Y=$001B ; [SP-1242]
-            rts                  ; A=A X=$004F Y=$001B ; [SP-1240]
+combat_add_bcd_field     sta  $F0             ; Save addend
+            sty  $F2             ; Save field offset
+            jsr  $46F6           ; Setup $FE/$FF → character record
+            ldy  $F2             ; Restore field offset
+            sed                  ; Enter BCD mode
+            clc
+            lda  ($FE),Y         ; Load current field value (BCD)
+            adc  $F0             ; Add the amount (BCD)
+            sta  ($FE),Y         ; Store result
+            cld                  ; Exit BCD mode
+            bcs  combat_bcd_overflow ; Carry set = overflow → clamp to $99
+            rts                  ; Normal return
+; --- BCD overflow: clamp to maximum single-byte value ---
 ; XREF: 1 ref (1 branch) from combat_add_bcd_field
-combat_bcd_overflow  lda  #$99            ; A=$0099 X=$004F Y=$001B ; [SP-1240]
-            sta  ($FE),Y         ; A=$0099 X=$004F Y=$001B ; [SP-1240]
-            rts                  ; A=$0099 X=$004F Y=$001B ; [SP-1238]
+combat_bcd_overflow  lda  #$99            ; $99 = max BCD byte (decimal 99)
+            sta  ($FE),Y         ; Clamp the field
+            rts
 
 ; ---------------------------------------------------------------------------
-; combat_bcd_to_binary  [8 calls]
-;   Called by: input_dungeon_random_pos, render_monster_attack, move_turn_regen_mp_wis, move_turn_regen_mp_str, move_turn_regen_mp_int, magic_effect_zero
+; combat_bcd_to_binary — Convert BCD byte to binary
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Converts a BCD-encoded value in A to its binary equivalent.
+;            E.g., BCD $42 (representing 42 decimal) → binary $2A (42).
+;
+;   ALGORITHM: Repeated BCD subtraction — subtract BCD 1 in a loop,
+;              counting iterations in X. The count (binary) = the value.
+;              This is O(N) where N is the decimal value. For game stats
+;              (max 99), this takes at most 99 iterations (~500 cycles).
+;
+;   PARAMS:  A = BCD value (0-99)
+;   RETURNS: A = binary equivalent
+;
+; ---------------------------------------------------------------------------
+combat_bcd_to_binary   cmp  #$00            ; Zero?
+            beq  combat_bcd_conv_done ; Yes → return 0
+            ldx  #$00            ; Binary counter
+            sed                  ; BCD mode for subtraction
 
-; FUNC $00715F: register -> A:X [L]
-; Proto: uint32_t func_00715F(uint16_t param_Y);
-; Liveness: params(Y) returns(A,X,Y) [1 dead stores]
-; XREF: 8 refs (8 calls) from input_dungeon_random_pos, render_monster_attack, $005665, move_turn_regen_mp_wis, move_turn_regen_mp_str, ...
-combat_bcd_to_binary   cmp  #$00            ; A=$0099 X=$004F Y=$001B ; [SP-1238]
-            beq  combat_bcd_conv_done    ; A=$0099 X=$004F Y=$001B ; [SP-1238]
-            ldx  #$00            ; A=$0099 X=$0000 Y=$001B ; [SP-1238]
-            sed                  ; A=$0099 X=$0000 Y=$001B ; [SP-1238]
+combat_bcd_sub_loop inx                  ; Count one BCD unit
+            sec
+            sbc  #$01            ; Subtract BCD 1
+            bne  combat_bcd_sub_loop ; Continue until BCD value = 0
 
-; === while loop starts here [nest:19] ===
-; XREF: 1 ref (1 branch) from combat_bcd_sub_loop
-combat_bcd_sub_loop inx                  ; A=$0099 X=$0001 Y=$001B ; [SP-1238]
-            sec                  ; A=$0099 X=$0001 Y=$001B ; [SP-1238]
-            sbc  #$01            ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
-            bne  combat_bcd_sub_loop    ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
-; === End of while loop ===
-
-            cld                  ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
-            txa                  ; A=$0001 X=$0001 Y=$001B ; [SP-1238]
-; XREF: 1 ref (1 branch) from combat_bcd_to_binary
-combat_bcd_conv_done rts                  ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
+            cld                  ; Exit BCD mode
+            txa                  ; A = binary count
+combat_bcd_conv_done rts
 
 ; ---------------------------------------------------------------------------
-; combat_binary_to_bcd  [9 calls]
-;   Called by: input_dungeon_gen_pos, move_turn_regen_mp_str, render_combat_resolve, move_turn_regen_mp_wis, move_turn_regen_mp_int, char_turn_next
+; combat_binary_to_bcd — Convert binary byte to BCD
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Converts a binary value in A to BCD. The inverse of
+;            combat_bcd_to_binary. E.g., binary $2A (42) → BCD $42.
+;
+;   ALGORITHM: Repeated BCD addition — add BCD 1 in a loop, counting
+;              down the binary value in $F3.
+;
+;   PARAMS:  A = binary value
+;   RETURNS: A = BCD equivalent
+;
+; ---------------------------------------------------------------------------
+combat_binary_to_bcd   sta  $F3             ; Save binary count
+            cmp  #$00            ; Zero?
+            beq  combat_bcd_conv_ret ; Yes → return 0
+            lda  #$00            ; BCD accumulator
+            sed                  ; BCD mode for addition
 
-; FUNC $00716F: register -> A:X [L]
-; Proto: uint32_t func_00716F(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 9 refs (9 calls) from $008445, input_dungeon_gen_pos, $0056EF, move_turn_regen_mp_str, render_combat_resolve, ...
-combat_binary_to_bcd   sta  $F3             ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
-            cmp  #$00            ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
-            beq  combat_bcd_conv_ret    ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
-            lda  #$00            ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
-            sed                  ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
+combat_bcd_add_loop clc
+            adc  #$01            ; Add BCD 1
+            dec  $F3             ; Decrement binary counter
+            bne  combat_bcd_add_loop ; Continue until counter = 0
 
-; === while loop starts here [nest:24] ===
-; XREF: 1 ref (1 branch) from combat_bcd_add_loop
-combat_bcd_add_loop clc                  ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
-            adc  #$01            ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            dec  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            bne  combat_bcd_add_loop    ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-; === End of while loop ===
-
-            cld                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-; XREF: 1 ref (1 branch) from combat_binary_to_bcd
-combat_bcd_conv_ret rts                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
+            cld                  ; Exit BCD mode
+combat_bcd_conv_ret rts
 
 ; ---------------------------------------------------------------------------
 ; combat_apply_damage  [12 calls]
 ;   Called by: render_combat_resolve, combat_end_flag, char_turn_loop, equip_handle, file_mark_apply_loop, move_turn_poison_damage
 ; ---------------------------------------------------------------------------
 
-; FUNC $007181: register -> A:X []
-; Proto: uint32_t func_007181(uint16_t param_A, uint16_t param_X);
-; Liveness: params(A,X) returns(A,X,Y) [2 dead stores]
-; XREF: 12 refs (12 calls) from render_combat_resolve, combat_end_flag, $005C1A, char_turn_loop, char_turn_loop, ...
-combat_apply_damage   sta  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
-            jsr  $46F6           ; Call $0046F6(A)
-            sed                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            ldy  #$1B            ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            lda  ($FE),Y         ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            sec                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            sbc  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            sta  ($FE),Y         ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            ldy  #$1A            ; A=A+$01 X=$0001 Y=$001A ; [SP-1236]
-            lda  ($FE),Y         ; A=A+$01 X=$0001 Y=$001A ; [SP-1236]
-            sbc  #$00            ; A=A X=$0001 Y=$001A ; [SP-1236]
-            sta  ($FE),Y         ; A=A X=$0001 Y=$001A ; [SP-1236]
-            cld                  ; A=A X=$0001 Y=$001A ; [SP-1236]
-            bcc  combat_unit_killed    ; A=A X=$0001 Y=$001A ; [SP-1236]
-            lda  #$00            ; A=$0000 X=$0001 Y=$001A ; [SP-1236]
-            rts                  ; A=$0000 X=$0001 Y=$001A ; [SP-1234]
-; XREF: 1 ref (1 branch) from combat_apply_damage
-combat_unit_killed lda  #$C4            ; A=$00C4 X=$0001 Y=$001A ; [SP-1234]
-            ldy  #$11            ; A=$00C4 X=$0001 Y=$0011 ; [SP-1234]
-            sta  ($FE),Y         ; A=$00C4 X=$0001 Y=$0011 ; [SP-1234]
-            lda  #$00            ; A=$0000 X=$0001 Y=$0011 ; [SP-1234]
-            ldy  #$1A            ; A=$0000 X=$0001 Y=$001A ; [SP-1234]
-            sta  ($FE),Y         ; A=$0000 X=$0001 Y=$001A ; [SP-1234]
-            ldy  #$1B            ; A=$0000 X=$0001 Y=$001B ; [SP-1234]
-            sta  ($FE),Y         ; A=$0000 X=$0001 Y=$001B ; [SP-1234]
-            jsr  combat_end_check       ; Call $007200(A, Y)
-            lda  #$FF            ; A=$00FF X=$0001 Y=$001B ; [SP-1236]
-            rts                  ; A=$00FF X=$0001 Y=$001B ; [SP-1234]
+; ---------------------------------------------------------------------------
+; combat_apply_damage — Subtract HP from a character (BCD)
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Applies damage to a character's HP field. If HP drops below
+;            zero (carry clear after BCD subtraction), the character is
+;            killed — status set to 'D' (Dead) and HP zeroed.
+;
+;   PARAMS:  A = damage amount (BCD)
+;            $D5 = character slot ID (used by $46F6 to set $FE/$FF)
+;   RETURNS: A = 0 if character survived, $FF if killed
+;
+;   CHARACTER RECORD HP LAYOUT:
+;   Offset $1A = HP high byte (BCD hundreds)
+;   Offset $1B = HP low byte (BCD tens/units)
+;   HP is a 16-bit BCD value: $1A:$1B = 0000-9999
+;
+;   DEATH HANDLING:
+;   When HP underflows (carry clear after SBC), the character's status
+;   byte (offset $11) is set to $C4 = high-ASCII 'D' (Dead), and HP
+;   is zeroed. The combat_end_check function is then called to see if
+;   the entire party has been wiped out.
+;
+; ---------------------------------------------------------------------------
+combat_apply_damage   sta  $F3             ; Save damage amount
+            jsr  $46F6           ; Setup $FE/$FF → character record
+            sed                  ; BCD mode for HP subtraction
+            ldy  #$1B            ; HP low byte offset
+            lda  ($FE),Y         ; Load current HP low
+            sec
+            sbc  $F3             ; Subtract damage (BCD)
+            sta  ($FE),Y         ; Store result
+            ldy  #$1A            ; HP high byte offset
+            lda  ($FE),Y         ; Load HP high
+            sbc  #$00            ; Propagate borrow
+            sta  ($FE),Y         ; Store result
+            cld                  ; Exit BCD mode
+            bcc  combat_unit_killed ; Carry clear = HP underflowed → dead
+            lda  #$00            ; Survived: return 0
+            rts
+
+; --- Character killed: set status to Dead, zero HP ---
+combat_unit_killed lda  #$C4            ; $C4 = high-ASCII 'D' (Dead)
+            ldy  #$11            ; Offset $11 = status byte
+            sta  ($FE),Y         ; Set status to Dead
+            lda  #$00
+            ldy  #$1A            ; Zero HP high byte
+            sta  ($FE),Y
+            ldy  #$1B            ; Zero HP low byte
+            sta  ($FE),Y
+            jsr  combat_end_check ; Check if all party members dead
+            lda  #$FF            ; Killed: return $FF
+            rts
 
 ; ---------------------------------------------------------------------------
-; combat_check_party_alive  [3 calls]
-;   Called by: boot_clear_floor, render_return_to_game
-;   Calls: move_display_party_status
+; combat_check_party_alive — Check if any party member is still alive
 ; ---------------------------------------------------------------------------
-
-; FUNC $0071B4: register -> A:X []
-; Proto: uint32_t func_0071B4(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [2 dead stores]
+;
+;   PURPOSE: Scans all party slots (3 down to 0) looking for at least one
+;            member with status 'G' (Good, $C7) or 'P' (Poisoned, $D0).
+;            If ANY alive member is found, jumps to combat_checksum_xor
+;            (the anti-cheat routine, which returns to the combat loop).
+;
+;            If ALL members are dead/ashed (no 'G' or 'P' found after
+;            scanning all 4 slots), prints "ALL PLAYERS OUT!" and triggers
+;            the game-over sequence via combat_end_check → file_save_game.
+;
+;   CALLERS: Combat damage resolution, encounter handlers
+;   PARAMS:  None (scans all 4 party slots)
+;
 ; XREF: 3 refs (3 calls) from $008808, boot_clear_floor, render_return_to_game
-combat_check_party_alive lda  #$03            ; A=$0003 X=$0001 Y=$001B ; [SP-1234]
-            sta  $D5             ; A=$0003 X=$0001 Y=$001B ; [SP-1234]
+combat_check_party_alive lda  #$03            ; Start scanning from slot 3
+            sta  $D5             ; $D5 = current slot being checked
 
-; === while loop starts here [nest:28] ===
+; --- Loop through all party slots, checking status ---
 ; XREF: 1 ref (1 branch) from combat_alive_check_loop
-combat_alive_check_loop jsr  $46F6           ; A=$0003 X=$0001 Y=$001B ; [SP-1236]
-            ldy  #$11            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            lda  ($FE),Y         ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            cmp  #$C7            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            beq  combat_checksum_xor        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            cmp  #$D0            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            beq  combat_checksum_xor        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            dec  $D5             ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            bpl  combat_alive_check_loop  ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
+combat_alive_check_loop jsr  $46F6           ; Set $FE/$FF → character record for slot $D5
+            ldy  #$11            ; Offset $11 = status byte
+            lda  ($FE),Y         ; Load status
+            cmp  #$C7            ; 'G' (Good)? → still alive
+            beq  combat_checksum_xor ; Found alive member → return to game
+            cmp  #$D0            ; 'P' (Poisoned)? → still conscious
+            beq  combat_checksum_xor ; Found alive member → return to game
+            dec  $D5             ; Try next slot down
+            bpl  combat_alive_check_loop ; More slots to check → continue
 ; === End of while loop ===
 
-            jsr  move_display_party_status       ; A=$0003 X=$0001 Y=$0011 ; [SP-1238]
-            jsr  $46BA           ; A=$0003 X=$0001 Y=$0011 ; [SP-1240]
+; --- All party members dead: print game-over message ---
+            jsr  move_display_party_status ; Display final party status
+            jsr  $46BA           ; Print inline: "ALL PLAYERS OUT!"
             DB      $FF
             DB      $FF
-            cmp  ($CC,X)         ; [SP-1240]
+            cmp  ($CC,X)         ; (inline string data continuation)
 
 ; ---
             DB      $CC,$A0,$D0,$CC,$C1,$D9,$C5,$D2,$D3,$A0,$CF,$D5,$D4,$A1,$FF,$00
@@ -3383,72 +4038,94 @@ combat_alive_check_loop jsr  $46F6           ; A=$0003 X=$0001 Y=$001B ; [SP-123
 
 
 ; ---------------------------------------------------------------------------
-; combat_checksum_xor  [1 call, 2 branches]
-;   Called by: move_turn_checksum
+; combat_checksum_xor — Anti-cheat XOR checksum over engine code
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Computes an XOR checksum over 128 bytes of engine code
+;            ($50A8-$5127) and stores it at $36/$37. This detects
+;            memory tampering — if a player uses a sector editor or
+;            memory poke to modify game values, the checksum will fail
+;            and boot_check_quit will terminate the game.
+;
+;   SELF-MODIFYING CODE:
+;   The EOR instruction's high address byte at combat_dead_xor_addr
+;   is patched from $50 to $B5 during the computation, then restored.
+;   This changes the XOR source from $50A8+ to $B5A8+ — computing
+;   the checksum over TWO different memory regions in sequence.
+;   This is a classic 6502 anti-tamper trick: the checksum routine
+;   itself is part of what's being checksummed.
+;
+; ---------------------------------------------------------------------------
+combat_checksum_xor    lda  #$B5            ; Patch EOR to read from $B5xx
+            sta  combat_dead_xor_addr ; SMC: change high byte of EOR operand
+            ldy  #$80            ; 128 bytes to checksum
+            lda  #$00            ; Clear accumulator
 
-; FUNC $0071EB: register -> A:X [L]
-; Proto: uint32_t func_0071EB(void);
-; Liveness: returns(A,X,Y) [1 dead stores]
-; XREF: 3 refs (1 call) (2 branches) from move_turn_checksum, combat_alive_check_loop, combat_alive_check_loop
-combat_checksum_xor    lda  #$B5            ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240]
-            sta  combat_dead_xor_addr     ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240] ; WARNING: Self-modifying code -> combat_dead_xor_addr
-            ldy  #$80            ; A=$00B5 X=$0001 Y=$0080 ; [SP-1240]
-            lda  #$00            ; A=$0000 X=$0001 Y=$0080 ; [SP-1240]
+; --- XOR 128 bytes from $50A8 (or $B5A8 after SMC) ---
+combat_xor_loop eor  $50A8,Y         ; XOR next byte into accumulator
+            dey                  ; Count down
+            bpl  combat_xor_loop ; Continue through all 128 bytes
 
-; === while loop starts here [nest:29] ===
-; XREF: 1 ref (1 branch) from combat_dead_xor_addr
-combat_xor_loop eor  $50A8,Y         ; -> $5128 ; A=$0000 X=$0001 Y=$0080 ; [SP-1240]
-            dey                  ; A=$0000 X=$0001 Y=$007F ; [SP-1240]
-            bpl  combat_xor_loop     ; A=$0000 X=$0001 Y=$007F ; [SP-1240]
-; === End of while loop ===
-
-            ldx  #$50            ; A=$0000 X=$0050 Y=$007F ; [SP-1240]
-            stx  combat_dead_xor_addr     ; A=$0000 X=$0050 Y=$007F ; [SP-1240] ; WARNING: Self-modifying code -> combat_dead_xor_addr
-            rts                  ; A=$0000 X=$0050 Y=$007F ; [SP-1238]
+            ldx  #$50            ; Restore original high byte
+            stx  combat_dead_xor_addr ; Unpatch the SMC
+            rts
 
 ; ---------------------------------------------------------------------------
-; combat_end_check  [1 call]
-;   Called by: combat_unit_killed
-;   Calls: file_save_game, game_main_loop
+; combat_end_check — Handle combat exit after a character is killed
 ; ---------------------------------------------------------------------------
-
-; FUNC $007200: register -> A:X [I]
-; Proto: uint32_t func_007200(uint16_t param_Y);
-; Liveness: params(Y) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: Called after a character dies in combat. Temporarily sets
+;            $E2 (location type) to $00 to enable overworld save logic,
+;            then determines whether to save state and return to the game
+;            loop. This is the critical transition point between combat
+;            and the main game state.
+;
+;   SAVE STATE LOGIC:
+;   - If location was $00 (overworld): save current position ($00/$01)
+;     back to PRTY ($E3/$E4), save transport ($0E → $E0), then call
+;     file_save_game to write PLRS+PRTY to disk immediately.
+;   - If location was $80 (combat): check $835E for sub-location state.
+;     If zero (overworld combat), save position. If non-zero (location
+;     combat), return to the game loop to handle post-combat.
+;   - Otherwise: return to game_main_loop for location-specific handling.
+;
+;   The saved location type is pushed on stack and restored on exit,
+;   so $E2 returns to its pre-call value.
+;
 ; XREF: 1 ref (1 call) from combat_unit_killed
-combat_end_check   ldx  #$00            ; A=$0000 X=$0000 Y=$007F ; [SP-1238]
-            lda  $E2             ; A=[$00E2] X=$0000 Y=$007F ; [SP-1238]
-            stx  $E2             ; A=[$00E2] X=$0000 Y=$007F ; [SP-1238]
-            pha                  ; A=[$00E2] X=$0000 Y=$007F ; [SP-1239]
-            bne  combat_end_check_surface    ; A=[$00E2] X=$0000 Y=$007F ; [SP-1239]
+combat_end_check   ldx  #$00
+            lda  $E2             ; Save current location type
+            stx  $E2             ; Temporarily set to $00 (overworld mode)
+            pha                  ; Push saved location type for later restore
+            bne  combat_end_check_surface ; Was in a location → check type
 
-; === while loop starts here [nest:28] ===
+; --- Was on overworld ($E2=0): save coordinates and transport ---
 ; XREF: 1 ref (1 branch) from combat_end_check_surface
-combat_end_save_pos lda  $00             ; A=[$0000] X=$0000 Y=$007F ; [SP-1239]
-            sta  $E3             ; A=[$0000] X=$0000 Y=$007F ; [SP-1239]
-            lda  $01             ; A=[$0001] X=$0000 Y=$007F ; [SP-1239]
-            sta  $E4             ; A=[$0001] X=$0000 Y=$007F ; [SP-1239]
-            lda  $0E             ; A=[$000E] X=$0000 Y=$007F ; [SP-1239]
-            sta  $E0             ; A=[$000E] X=$0000 Y=$007F ; [SP-1239]
-            jsr  file_save_game          ; Call $00657D(A, X, 1 stack)
-            jmp  combat_end_restore    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
+combat_end_save_pos lda  $00             ; Current X position
+            sta  $E3             ; → PRTY saved_x
+            lda  $01             ; Current Y position
+            sta  $E4             ; → PRTY saved_y
+            lda  $0E             ; Current transport mode
+            sta  $E0             ; → PRTY transport
+            jsr  file_save_game          ; Save PLRS+PRTY to disk
+            jmp  combat_end_restore    ; Restore $E2 and return
+; --- Check if we were in combat ($80) or a sub-location ---
 ; XREF: 1 ref (1 branch) from combat_end_check
-combat_end_check_surface cmp  #$80            ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
-            bne  combat_end_return_game    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
-            lda  $835E           ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
-            cmp  #$00            ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
-            beq  combat_end_save_pos    ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
+combat_end_check_surface cmp  #$80            ; Were we in combat?
+            bne  combat_end_return_game ; No → return to game loop
+            lda  $835E           ; Check saved sub-location state
+            cmp  #$00            ; Zero = overworld combat
+            beq  combat_end_save_pos ; Yes → save overworld position
 ; === End of while loop ===
 
 ; XREF: 1 ref (1 branch) from combat_end_check_surface
-combat_end_return_game jsr  game_main_loop       ; Call $0065B0(A)
+combat_end_return_game jsr  game_main_loop       ; Re-enter main game loop
 
-; === while loop starts here [nest:27] ===
+; --- Restore original location type and return ---
 ; XREF: 3 refs (2 jumps) (1 branch) from combat_end_save_pos, move_display_party_status, combat_end_restore
-combat_end_restore pla                  ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
-            sta  $E2             ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
-            rts                  ; A=[stk] X=$0000 Y=$007F ; [SP-1240]
+combat_end_restore pla                  ; Restore saved location type
+            sta  $E2             ; Put it back in $E2
+            rts
 
 ; --- Data region (102 bytes, text data) ---
             DB      $85,$F3,$A0,$00,$A9,$B7,$85,$FD,$A9,$6C,$85,$FC,$B1,$FC,$CD,$A5
@@ -3460,9 +4137,10 @@ combat_end_restore pla                  ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
             DB      $20,$05,$47,$A9,$00,$60
 ; --- End data region (102 bytes) ---
 
+; --- Return $FF flag (signals "combat ended" to callers) ---
 ; XREF: 5 refs (1 jump) (4 branches) from $00731A, combat_end_restore, combat_end_flag, combat_end_restore, combat_end_restore
-combat_end_flag lda  #$FF            ; A=$00FF X=$0000 Y=$007F ; [SP-1244]
-            rts                  ; A=$00FF X=$0000 Y=$007F ; [SP-1242]
+combat_end_flag lda  #$FF            ; $FF = "combat ended" flag
+            rts
 
 ; --- Data region (138 bytes, text data) ---
             DB      $4C,$DE,$72,$20,$E9,$58,$A9,$FC,$A2,$10,$20,$05,$47,$A9,$00,$85
@@ -3478,41 +4156,62 @@ combat_end_flag lda  #$FF            ; A=$00FF X=$0000 Y=$007F ; [SP-1244]
 
 
 ; ---------------------------------------------------------------------------
-; move_save_cursor_pos  [2 calls]
-;   Called by: move_display_party_status, advance_turn_update
+; move_save_cursor_pos / move_restore_cursor_pos — Text cursor save/restore
 ; ---------------------------------------------------------------------------
-
-; FUNC $007320: register -> A:X [L]
-; Proto: uint32_t func_007320(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y)
+;
+;   PURPOSE: Saves and restores the text cursor position ($F9=X, $FA=Y)
+;            across status display rendering. The party status sidebar
+;            moves the cursor to render each character's stats; these
+;            functions bracket that rendering to preserve the cursor for
+;            the caller's ongoing text output.
+;
+;   SELF-MODIFYING STORAGE: The saved cursor bytes are stored directly
+;   into the instruction operand bytes at $732B and move_saved_cursor_y
+;   ($732C). This is a textbook 6502 pattern: using code bytes as data
+;   storage avoids allocating precious zero-page space. The "DB $00"
+;   after the RTS is the SMC storage byte for cursor X.
+;
+;   CALLERS: move_display_party_status (every status refresh),
+;            advance_turn_update (turn counter display)
+;
 ; XREF: 2 refs (2 calls) from move_display_party_status, advance_turn_update
-move_save_cursor_pos lda  $F9             ; A=[$00F9] X=$0000 Y=$007F ; [SP-1270]
-            sta  $732B           ; A=[$00F9] X=$0000 Y=$007F ; [SP-1270]
-            lda  $FA             ; A=[$00FA] X=$0000 Y=$007F ; [SP-1270]
-            sta  move_saved_cursor_y     ; A=[$00FA] X=$0000 Y=$007F ; [SP-1270]
-            rts                  ; A=[$00FA] X=$0000 Y=$007F ; [SP-1268]
-            DB      $00
+move_save_cursor_pos lda  $F9             ; Load text cursor X
+            sta  $732B           ; SMC: save into operand byte below
+            lda  $FA             ; Load text cursor Y
+            sta  move_saved_cursor_y ; SMC: save into operand byte below
+            rts
+            DB      $00              ; SMC storage for saved cursor X
 move_saved_cursor_y
-            DB      $00
+            DB      $00              ; SMC storage for saved cursor Y
 
-; === while loop starts here (counter: Y 'j') [nest:27] ===
 ; XREF: 1 ref (1 jump) from move_status_restore
-move_restore_cursor_pos  lda  move_saved_cursor_y     ; A=[$732C] X=$0000 Y=$007F ; [SP-1271]
-            sta  $FA             ; A=[$732C] X=$0000 Y=$007F ; [SP-1271]
-            lda  $732B           ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
-            sta  $F9             ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
-            rts                  ; A=[$732B] X=$0000 Y=$007F ; [SP-1269]
+move_restore_cursor_pos  lda  move_saved_cursor_y ; Restore saved cursor Y
+            sta  $FA
+            lda  $732B           ; Restore saved cursor X
+            sta  $F9
+            rts
 
 ; ---------------------------------------------------------------------------
-; move_display_party_status  [13 calls]
-;   Called by: game_loop_call_terrain, render_combat_mon_status, dungeon_chest_status, move_turn_display_status, dungeon_turn_process, render_call_turn, char_turn_next, render_combat_status_upd
-;   Calls: move_save_cursor_pos
+; move_display_party_status — Render the party status sidebar
 ; ---------------------------------------------------------------------------
-
-; FUNC $007338: register -> A:X []
-; Liveness: returns(A,X,Y) [22 dead stores]
-; XREF: 13 refs (13 calls) from $0092BB, $00503E, $00922D, $00925B, game_loop_call_terrain, ...
-move_display_party_status   jsr  move_save_cursor_pos     ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
+;
+;   PURPOSE: Draws the right-side status display showing each party member's
+;            name, status, class, race, HP, MaxHP, MP, EXP, and level.
+;            This is the persistent UI element visible at all times — the
+;            "party roster at a glance" that defined the CRPG visual style.
+;
+;            The function saves the cursor position, iterates up to 4 party
+;            members, prints each character's stats using the inline string
+;            printer and BCD display routines, then restores the cursor.
+;
+;   NOTABLE: BCD level display at line ~3832 adds 1 to the raw EXP
+;            high-nibble to show levels starting at 1, not 0. This is
+;            why the engine stores "level - 1" in the EXP field.
+;
+;   CALLERS: 13 — called from virtually every game state transition
+;
+; XREF: 13 refs (13 calls)
+move_display_party_status   jsr  move_save_cursor_pos
             lda  #$03            ; A=$0003 X=$0000 Y=$007F ; [SP-1271]
             sta  $D5             ; A=$0003 X=$0000 Y=$007F ; [SP-1271]
             ldx  #$10            ; A=$0003 X=$0010 Y=$007F ; [SP-1271]
@@ -3630,267 +4329,370 @@ move_status_gold_overflow lda  #$99            ; A=$0099 X=$0010 Y=$0000 ; [SP-1
             rts                  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325]
 
 ; ---------------------------------------------------------------------------
-; input_wait_key  [4 calls]
-;   Called by: render_combat_wait_key, combat_setup, combat_init
+; input_wait_key — Wait for keyboard input with animation updates
 ; ---------------------------------------------------------------------------
-
-; FUNC $007446: register -> A:X []
-; Proto: uint32_t func_007446(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: The primary keyboard polling loop. While waiting for a keypress,
+;            continuously updates the display (viewport animation, creature
+;            movement) to keep the world alive. This is how Ultima III
+;            achieves its characteristic "living world" feel — monsters
+;            visibly move while the player decides their action.
+;
+;   SELF-MODIFYING CODE: The function saves X and Y registers into SMC
+;   operand bytes at input_wait_selfmod and input_wait_restore_y, then
+;   restores them after the keypress. This preserves caller state across
+;   the animation subroutine calls that clobber X/Y. SMC was a standard
+;   6502 technique for saving registers without burning stack space.
+;
+;   APPLE II KEYBOARD: $C000 reads the keyboard data register. Bit 7
+;   (high bit) is set when a key is pressed. BIT $C010 clears the
+;   keyboard strobe so the next key can be detected. This hardware
+;   latch design means you MUST clear the strobe or the same key
+;   will be "read" forever.
+;
+;   PARAMS:  X, Y = caller's values (preserved via SMC)
+;   RETURNS: A = key code (with bit 7 set, high-ASCII)
+;            X, Y = restored to caller's values
+;
 ; XREF: 4 refs (4 calls) from render_combat_wait_key, combat_setup, combat_init, $005449
-input_wait_key stx  input_wait_selfmod  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> input_wait_selfmod
-            sty  input_wait_restore_y  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> input_wait_restore_y
+input_wait_key stx  input_wait_selfmod  ; Save X via SMC (writes into operand byte below)
+            sty  input_wait_restore_y  ; Save Y via SMC
 
-; === while loop starts here [nest:32] ===
-; XREF: 1 ref (1 branch) from input_wait_poll
-input_wait_animate lda  $E2             ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
-            cmp  #$01            ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
-            beq  input_wait_poll  ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
-            jsr  $46ED           ; Call $0046ED(A)
-            jsr  $46F0           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1329]
-            jsr  $470E           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1331]
-            jsr  $0328           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1333]
-; XREF: 1 ref (1 branch) from input_wait_animate
-input_wait_poll lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bpl  input_wait_animate  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
-; === End of while loop ===
+; --- Animation loop: update display while polling keyboard ---
+input_wait_animate lda  $E2             ; Check location type
+            cmp  #$01            ; In dungeon? ($E2=1)
+            beq  input_wait_poll  ; Yes → skip overworld animation
+            jsr  $46ED           ; Update viewport animation frame
+            jsr  $46F0           ; Advance creature positions
+            jsr  $470E           ; Redraw viewport
+            jsr  $0328           ; Screen refresh (VTAB/HTAB reset)
+input_wait_poll lda  $C000           ; Read keyboard data register
+            bpl  input_wait_animate ; Bit 7 clear = no key → keep animating
 
-            bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            ldx  input_wait_selfmod  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
-            ldy  input_wait_restore_y  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
-            rts                  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1331]
+            bit  $C010           ; Key pressed! Clear keyboard strobe
+            ldx  input_wait_selfmod  ; Restore caller's X from SMC byte
+            ldy  input_wait_restore_y  ; Restore caller's Y from SMC byte
+            rts                  ; Return with key code in A
 
-; === while loop starts here [nest:32] ===
-; XREF: 2 refs from input_wait_poll, input_wait_key
+; --- SMC storage: these bytes are overwritten by input_wait_key ---
 ; *** MODIFIED AT RUNTIME by input_wait_key ($7446) ***
-input_wait_selfmod brk  #$00            ; A=[$C000] X=$0010 Y=$0000 ; [SP-1334]
+input_wait_selfmod brk  #$00            ; Holds saved X register value
             DB      $20
 
-; ---------------------------------------------------------------------------
-; move_process_turn  [3 calls]
-;   Called by: dungeon_turn_process, game_loop_call_terrain, render_call_turn
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###          TURN PROCESSING ($7470-$75AD)                              ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Per-turn party maintenance: MP regeneration, poison damage, food
+;   consumption, HP regeneration, encounter rolling, and the anti-cheat
+;   checksum verification. Called every turn from the main game loop,
+;   combat loop, and dungeon loop.
+;
 
-; FUNC $007470: register -> A:X []
-; Proto: uint32_t func_007470(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
+; ---------------------------------------------------------------------------
+; move_process_turn — Execute one turn of party maintenance
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: The "heartbeat" of the game. Every turn (movement, combat
+;            round, dungeon step), this function:
+;            1. Checks if the game state is valid ($B769 OR $55 == $FF)
+;            2. On surface ($E2=0): process party status immediately
+;            3. In locations ($E2!=0): decrement encounter counter, roll
+;               for random encounters every 4th turn
+;            4. For each party member: check class, regenerate MP based
+;               on stat/2 caps, apply poison damage, regen 1 HP per
+;               10 steps, verify anti-cheat XOR checksum
+;
+;   ENCOUNTER SYSTEM: The encounter counter (move_encounter_counter)
+;   starts at $0A (10) and decrements each turn in a location. Every
+;   4 turns (move_turn_encounter_roll resets to 4), it rolls for a
+;   random monster encounter.
+;
 ; XREF: 3 refs (3 calls) from dungeon_turn_process, game_loop_call_terrain, render_call_turn
-move_process_turn    lda  $B769           ; A=[$B769] X=$0010 Y=$0000 ; [SP-1336]
-            ora  #$55            ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
-            cmp  #$FF            ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
-            beq  input_wait_selfmod  ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
-; === End of while loop ===
+move_process_turn    lda  $B769           ; Game state validation byte
+            ora  #$55            ; OR with $55 pattern
+            cmp  #$FF            ; Should equal $FF if valid
+            beq  input_wait_selfmod ; Invalid → skip processing (abort)
 
-            lda  $E2             ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            beq  move_turn_party_loop     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            dec  move_encounter_counter     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            beq  move_turn_encounter_roll     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            rts                  ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
+            lda  $E2             ; Location type
+            beq  move_turn_party_loop   ; $E2=0 → Sosaria surface, skip encounter
+            dec  move_encounter_counter ; Decrement encounter countdown
+            beq  move_turn_encounter_roll ; Hit zero → roll for encounter
+            rts                  ; Not yet → return
 
-; === while loop starts here [nest:34] ===
+; --- Encounter countdown hit zero: reset and trigger encounter ---
 ; XREF: 1 ref (1 branch) from move_turn_encounter_roll
-move_turn_encounter_roll lda  #$04            ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
-            sta  move_encounter_counter     ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
-            ldx  #$31            ; A=$0004 X=$0031 Y=$0000 ; [SP-1336]
-            clc                  ; A=$0004 X=$0031 Y=$0000 ; [SP-1336]
-            adc  #$B3            ; A=A+$B3 X=$0031 Y=$0000 ; [SP-1336]
-            ldy  #$1B            ; A=A+$B3 X=$0031 Y=$001B ; [SP-1336]
-            jsr  $03A3           ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
-            cmp  #$32            ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
-            bne  move_turn_encounter_roll     ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
+move_turn_encounter_roll lda  #$04            ; Reset encounter timer to 4 turns
+            sta  move_encounter_counter
+            ldx  #$31            ; Set up encounter parameters
+            clc
+            adc  #$B3            ; Compute encounter type
+            ldy  #$1B
+            jsr  $03A3           ; Call Applesoft RNG/encounter handler
+            cmp  #$32            ; Check encounter result
+            bne  move_turn_encounter_roll ; No encounter → try again
 ; === End of while loop ===
 
-move_turn_party_loop lda  #$04            ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            sta  $D5             ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            dec  move_regen_counter     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            bpl  move_turn_check_next     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            lda  #$09            ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
-            sta  move_regen_counter     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
+; --- Per-turn party maintenance: MP regen, poison, HP regen, checksum ---
+move_turn_party_loop lda  #$04            ; Process up to 4 party members
+            sta  $D5             ; $D5 = member counter (4 down to 0)
+            dec  move_regen_counter ; Decrement HP regen timer (10-turn cycle)
+            bpl  move_turn_check_next ; Not yet → skip regen flag
+            lda  #$09            ; Timer expired → reset to 9 (10-turn period)
+            sta  move_regen_counter ; Regen 1 HP per 10 steps walked
 
-; === while loop starts here [nest:22] ===
+; --- Loop through each party member for turn processing ---
 ; XREF: 2 refs (1 jump) (1 branch) from move_turn_party_loop, move_turn_checksum
-move_turn_check_next dec  $D5             ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
-            bpl  move_turn_check_class     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
-            lda  $B769           ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
-            cmp  #$AA            ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
-            bne  move_turn_display_status     ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
-            pla                  ; A=[stk] X=$0031 Y=$001B ; [SP-1337]
+move_turn_check_next dec  $D5             ; Next party member (4→3→2→1→0)
+            bpl  move_turn_check_class ; More members → process this one
+            lda  $B769           ; All done — check game state flag
+            cmp  #$AA            ; $AA = game terminated
+            bne  move_turn_display_status ; Still running → refresh display
+            pla                  ; Game over → unwind stack
 ; XREF: 1 ref (1 branch) from move_turn_check_next
-move_turn_display_status jsr  move_display_party_status       ; A=[stk] X=$0031 Y=$001B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0074B0 followed by RTS ; [SP-1339]
-            rts                  ; A=[stk] X=$0031 Y=$001B ; [SP-1337]
+move_turn_display_status jsr  move_display_party_status ; Refresh party stats sidebar
+            rts
+; --- CLASS-SPECIFIC MP REGENERATION ---
+;   Each class that can cast spells regenerates 1 MP per turn, up to
+;   a cap of (governing_stat / 2). The stat is BCD, so the halving
+;   requires BCD→binary→LSR→binary→BCD conversion (O(N) loops).
+;
+;   Wizard ($D7):       cap = STR/2 (offset $14)
+;   Cleric ($C3):       cap = WIS/2 (offset $15)
+;   Lark/Druid/Alch:    cap = STR/2 (offset $14)
+;   Paladin/Illus/Druid: cap = WIS/2 (offset $15)
+;   Ranger ($D2):       cap = max(STR/2, WIS/2)
+;
 ; XREF: 1 ref (1 branch) from move_turn_check_next
-move_turn_check_class jsr  $46F6           ; A=[stk] X=$0031 Y=$001B ; [SP-1339]
-            ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
-            cmp  #$D7            ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
-            bne  move_turn_check_cleric     ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1339]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1339]
-            ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
-            bcs  move_turn_check_cleric     ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
-            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0014 ; [SP-1341]
+move_turn_check_class jsr  $46F6           ; Set $FE/$FF → character record
+            ldy  #$17            ; Offset $17 = class byte
+            lda  ($FE),Y         ; Load class
+            cmp  #$D7            ; Wizard? ('W' high-ASCII)
+            bne  move_turn_check_cleric ; No → try Cleric
+            ldy  #$19            ; Wizard: check MP (offset $19)
+            lda  ($FE),Y         ; Load current MP
+            ldy  #$14            ; Compare against STR (offset $14)
+            cmp  ($FE),Y         ; MP >= STR?
+            bcs  move_turn_check_cleric ; Already at cap → skip
+            jsr  magic_cast_spell ; Below cap → add 1 MP
 ; XREF: 2 refs (2 branches) from move_turn_check_class, move_turn_check_class
-move_turn_check_cleric ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
-            cmp  #$C3            ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
-            bne  move_turn_check_lark     ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1341]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1341]
-            ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
-            bcs  move_turn_check_lark     ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
-            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0015 ; [SP-1343]
+move_turn_check_cleric ldy  #$17            ; Reload class byte
+            lda  ($FE),Y
+            cmp  #$C3            ; Cleric? ('C')
+            bne  move_turn_check_lark ; No → try hybrid classes
+            ldy  #$19            ; Check MP
+            lda  ($FE),Y
+            ldy  #$15            ; Compare against WIS (offset $15)
+            cmp  ($FE),Y         ; MP >= WIS?
+            bcs  move_turn_check_lark ; At cap → skip
+            jsr  magic_cast_spell ; Below cap → add 1 MP
+; --- STR-based regen: Lark ($CC), Druid ($C4), Alchemist ($C1) ---
 ; XREF: 2 refs (2 branches) from move_turn_check_cleric, move_turn_check_cleric
-move_turn_check_lark ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            cmp  #$CC            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            cmp  #$C4            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            cmp  #$C1            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            jmp  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+move_turn_check_lark ldy  #$17            ; Reload class byte
+            lda  ($FE),Y
+            cmp  #$CC            ; Lark? ('L')
+            beq  move_turn_regen_mp_str ; Yes → regen to STR/2
+            cmp  #$C4            ; Druid? ('D')
+            beq  move_turn_regen_mp_str ; Yes → regen to STR/2
+            cmp  #$C1            ; Alchemist? ('A')
+            beq  move_turn_regen_mp_str ; Yes → regen to STR/2
+            jmp  move_turn_check_wizard ; None matched → check WIS-based
+; --- Compute STR/2 cap and regen if MP < cap ---
 ; XREF: 3 refs (3 branches) from move_turn_check_lark, move_turn_check_lark, move_turn_check_lark
-move_turn_regen_mp_str ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1343]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1343]
-            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0014 ; [SP-1345]
-            lsr  a               ; A=[stk] X=$0031 Y=$0014 ; [SP-1345]
-            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0014 ; [SP-1347]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            bcc  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            beq  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1349]
+move_turn_regen_mp_str ldy  #$14            ; Offset $14 = STR (BCD)
+            lda  ($FE),Y         ; Load STR
+            jsr  combat_bcd_to_binary ; BCD→binary (O(N) loop)
+            lsr  a               ; Binary divide by 2
+            jsr  combat_binary_to_bcd ; Binary→BCD (O(N) loop)
+            ldy  #$19            ; A = STR/2 as BCD; compare to MP
+            cmp  ($FE),Y         ; STR/2 vs current MP
+            bcc  move_turn_check_wizard ; MP >= cap → no regen
+            beq  move_turn_check_wizard ; MP == cap → no regen
+            jsr  magic_cast_spell ; MP < cap → add 1 MP
+; --- WIS-based regen: Paladin ($D0), Illusionist ($C9), Druid ($C4) ---
 ; XREF: 3 refs (1 jump) (2 branches) from move_turn_check_lark, move_turn_regen_mp_str, move_turn_regen_mp_str
-move_turn_check_wizard ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            cmp  #$D0            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            cmp  #$C9            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            cmp  #$C4            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            jmp  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+move_turn_check_wizard ldy  #$17            ; Reload class byte
+            lda  ($FE),Y
+            cmp  #$D0            ; Paladin? ('P')
+            beq  move_turn_regen_mp_wis ; Yes → regen to WIS/2
+            cmp  #$C9            ; Illusionist? ('I')
+            beq  move_turn_regen_mp_wis ; Yes → regen to WIS/2
+            cmp  #$C4            ; Druid? ('D') — gets BOTH STR and WIS regen
+            beq  move_turn_regen_mp_wis ; Yes → also regen to WIS/2
+            jmp  move_turn_regen_mp_int ; None → check Ranger
+; --- Compute WIS/2 cap and regen if MP < cap ---
 ; XREF: 3 refs (3 branches) from move_turn_check_wizard, move_turn_check_wizard, move_turn_check_wizard
-move_turn_regen_mp_wis ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1349]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1349]
-            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0015 ; [SP-1351]
-            lsr  a               ; A=[stk] X=$0031 Y=$0015 ; [SP-1351]
-            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0015 ; [SP-1353]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            bcc  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            beq  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1355]
+move_turn_regen_mp_wis ldy  #$15            ; Offset $15 = WIS (BCD)
+            lda  ($FE),Y         ; Load WIS
+            jsr  combat_bcd_to_binary ; BCD→binary
+            lsr  a               ; /2
+            jsr  combat_binary_to_bcd ; →BCD
+            ldy  #$19            ; Compare WIS/2 to MP
+            cmp  ($FE),Y
+            bcc  move_turn_regen_mp_int ; MP >= cap → no regen
+            beq  move_turn_regen_mp_int ; MP == cap → no regen
+            jsr  magic_cast_spell ; Below cap → add 1 MP
+; --- Ranger ($D2): dual regen — both WIS/2 AND STR/2 caps ---
+;   Rangers are the only class that regenerates MP against TWO stat
+;   caps. First checks WIS/2, then STR/2 — each can independently
+;   grant +1 MP per turn if below its respective cap. This makes
+;   Rangers the best MP regenerators in the game.
+;
 ; XREF: 3 refs (1 jump) (2 branches) from move_turn_regen_mp_wis, move_turn_check_wizard, move_turn_regen_mp_wis
-move_turn_regen_mp_int ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
-            cmp  #$D2            ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
-            bne  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
-            ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1355]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1355]
-            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0015 ; [SP-1357]
-            lsr  a               ; A=[stk] X=$0031 Y=$0015 ; [SP-1357]
-            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0015 ; [SP-1359]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            bcc  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            beq  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1359]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1359]
-            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0014 ; [SP-1361]
-            lsr  a               ; A=[stk] X=$0031 Y=$0014 ; [SP-1361]
-            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0014 ; [SP-1363]
-            ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
-            cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
+move_turn_regen_mp_int ldy  #$17            ; Reload class byte
+            lda  ($FE),Y
+            cmp  #$D2            ; Ranger? ('R')
+            bne  move_turn_poison_damage ; Not Ranger → skip to poison check
+            ldy  #$15            ; First: check WIS/2 cap
+            lda  ($FE),Y         ; Load WIS
+            jsr  combat_bcd_to_binary ; BCD→binary
+            lsr  a               ; /2
+            jsr  combat_binary_to_bcd ; →BCD
+            ldy  #$19            ; Compare WIS/2 to MP
+            cmp  ($FE),Y
+            bcc  move_turn_poison_damage ; MP >= WIS/2 cap → skip first regen
+            beq  move_turn_poison_damage ; MP == WIS/2 cap → skip first regen
+            ldy  #$14            ; Second: also check STR/2 cap
+            lda  ($FE),Y         ; Load STR
+            jsr  combat_bcd_to_binary
+            lsr  a               ; /2
+            jsr  combat_binary_to_bcd
+            ldy  #$19            ; Compare STR/2 to MP
+            cmp  ($FE),Y
 
-; === while loop starts here [nest:25] ===
+; --- Final MP regen check (shared by Ranger second cap) ---
 ; XREF: 1 ref (1 branch) from move_turn_add_exp
-move_turn_poison_check bcc  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
-            beq  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
-            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1365]
-; XREF: 5 refs (5 branches) from move_turn_poison_check, move_turn_regen_mp_int, move_turn_poison_check, move_turn_regen_mp_int, move_turn_regen_mp_int
-move_turn_poison_damage ldy  #$11            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            cmp  #$C4            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            cmp  #$C1            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            cmp  #$00            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            lda  #$10            ; A=$0010 X=$0031 Y=$0011 ; [SP-1365]
-            jsr  magic_check_mp       ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            ldy  #$11            ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            lda  ($FE),Y         ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            cmp  #$D0            ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            bne  move_turn_add_hp    ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            lda  #$01            ; A=$0001 X=$0031 Y=$0011 ; [SP-1367]
-            jsr  combat_apply_damage       ; A=$0001 X=$0031 Y=$0011 ; [SP-1369]
+move_turn_poison_check bcc  move_turn_poison_damage ; MP >= cap → no regen
+            beq  move_turn_poison_damage ; MP == cap → no regen
+            jsr  magic_cast_spell ; Below cap → add 1 MP
 
-; === while loop starts here [nest:23] ===
+; --- POISON DAMAGE & FOOD DEDUCTION ---
+;   After MP regen, check if the character is alive and process:
+;   1. Deduct $10 (BCD 16) food per turn for living characters
+;   2. If status is 'P' (Poisoned, $D0): apply 1 HP damage
+;   3. If regen counter hit zero: heal 1 HP (natural regeneration)
+;   4. Run anti-cheat checksum on every character every turn
+;
+; XREF: 5 refs (5 branches)
+move_turn_poison_damage ldy  #$11            ; Offset $11 = status byte
+            lda  ($FE),Y         ; Load status
+            cmp  #$C4            ; Dead ('D')? → skip all processing
+            beq  move_turn_checksum
+            cmp  #$C1            ; Ashes ('A')? → skip
+            beq  move_turn_checksum
+            cmp  #$00            ; Empty slot? → skip
+            beq  move_turn_checksum
+            lda  #$10            ; Deduct $10 food (BCD 16) per turn
+            jsr  magic_check_mp  ; (deducts food via BCD16 subtraction)
+            ldy  #$11            ; Re-check status after food deduction
+            lda  ($FE),Y
+            cmp  #$D0            ; Poisoned ('P')?
+            bne  move_turn_add_hp ; No → skip poison damage
+            lda  #$01            ; Yes → apply 1 HP damage
+            jsr  combat_apply_damage ; Poison tick
+
+; --- Encrypt records and print status inline ---
 ; XREF: 1 ref (1 branch) from move_turn_checksum
-move_turn_add_exp jsr  render_encrypt_records        ; A=$0001 X=$0031 Y=$0011 ; [SP-1371]
-            jsr  $46BA           ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
-            bne  move_turn_poison_check    ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
-            cmp  #$D3            ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
+move_turn_add_exp jsr  render_encrypt_records ; Re-encrypt character records
+            jsr  $46BA           ; Print inline status message
+            bne  move_turn_poison_check ; (inline data flow)
+            cmp  #$D3            ; (inline data bytes)
             DB      $CF
-            dec  $FFA1           ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
+            dec  $FFA1           ; (inline data bytes)
             DB      $00,$20,$E4,$88
+; --- Natural HP regeneration: +1 HP every 10 turns ---
 ; XREF: 1 ref (1 branch) from move_turn_poison_damage
-move_turn_add_hp lda  move_regen_counter     ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
-            bne  move_turn_checksum    ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
-            lda  #$01            ; A=$0001 X=$0031 Y=$0011 ; [SP-1376]
-            jsr  combat_add_hp      ; A=$0001 X=$0031 Y=$0011 ; [SP-1378]
-; XREF: 4 refs (4 branches) from move_turn_poison_damage, move_turn_add_hp, move_turn_poison_damage, move_turn_poison_damage
-move_turn_checksum jsr  combat_checksum_xor        ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            cmp  #$0F            ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            bne  move_turn_add_exp    ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            jmp  move_turn_check_next     ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
+move_turn_add_hp lda  move_regen_counter ; Check HP regen timer
+            bne  move_turn_checksum ; Not zero → no regen this turn
+            lda  #$01            ; Timer expired → heal 1 HP
+            jsr  combat_add_hp   ; Add 1 HP (with max HP clamping)
+; --- Anti-cheat checksum: run on every character every turn ---
+; XREF: 4 refs (4 branches)
+move_turn_checksum jsr  combat_checksum_xor ; XOR checksum over engine code
+            cmp  #$0F            ; Expected checksum value
+            bne  move_turn_add_exp ; Mismatch → tamper detected path
+            jmp  move_turn_check_next ; OK → process next party member
+
+; --- Embedded counter data (inline with code) ---
 move_encounter_counter
-            DB      $0A
+            DB      $0A              ; Encounter countdown (starts at 10)
 move_regen_counter
-            DB      $09
+            DB      $09              ; HP regen countdown (10-turn cycle)
+
+; ###########################################################################
+; ###                                                                     ###
+; ###              MAGIC SYSTEM ($75AE-$761C)                             ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Ultima III's magic system was revolutionary for 1983 CRPGs: separate
+;   Wizard and Cleric spell lists, MP regeneration tied to attributes,
+;   and class-specific spell access. The system below handles MP
+;   regeneration during overworld turns — not combat spell resolution,
+;   which lives in the data blob above (the inline-string-heavy combat
+;   spell handler at $72xx-$73xx).
+;
+;   MP REGENERATION RULES (per turn, every 10th step):
+;   - Wizards (class $D7): regen if MP < STR/2  (INT-based cap)
+;   - Clerics (class $C3): regen if MP < INT/2  (WIS-based cap)
+;   - Larks ($CC), Druids ($C4), Alchemists ($C1): regen to STR/2 cap
+;   - Paladins ($D0), Illusionists ($C9), Druids ($C4): regen to WIS/2 cap
+;   - Rangers ($D2): regen to both STR/2 AND WIS/2 caps
+;   The halving is done by BCD→binary conversion, LSR, then back to BCD.
+;   This means a stat of 50 gives a regen cap of 25 MP.
+;
 
 ; ---------------------------------------------------------------------------
-; magic_cast_spell  [5 calls]
-;   Called by: move_turn_check_class, move_turn_poison_check, move_turn_regen_mp_str, move_turn_check_cleric, move_turn_regen_mp_wis
+; magic_cast_spell — Increment a character's MP by 1 (BCD)
 ; ---------------------------------------------------------------------------
-
-; FUNC $0075AE: register -> A:X [L]
-; Proto: uint32_t func_0075AE(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: Adds 1 MP to the current character pointed to by $FE/$FF.
+;            Uses BCD mode so the increment is decimal (09→10, not 09→0A).
+;            Called during turn processing for each eligible spell-casting
+;            class, after checking that their MP is below the regen cap.
+;
+;   PARAMS:  $FE/$FF = pointer to 64-byte character record
+;   RETURNS: A = new MP value
+;   MODIFIES: Character record byte $19 (MP)
+;
 ; XREF: 5 refs (5 calls) from move_turn_check_class, move_turn_poison_check, move_turn_regen_mp_str, move_turn_check_cleric, move_turn_regen_mp_wis
-magic_cast_spell   sed                  ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            ldy  #$19            ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
-            lda  ($FE),Y         ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
-            clc                  ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
-            adc  #$01            ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
-            sta  ($FE),Y         ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
-            cld                  ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
-            rts                  ; A=A+$01 X=$0031 Y=$0019 ; [SP-1378]
+magic_cast_spell   sed                  ; Enter BCD mode for decimal increment
+            ldy  #$19            ; Y = offset to MP field in character record
+            lda  ($FE),Y         ; Load current MP (BCD)
+            clc
+            adc  #$01            ; MP += 1 (decimal: 09 becomes 10, not 0A)
+            sta  ($FE),Y         ; Store updated MP
+            cld                  ; Exit BCD mode — CRITICAL: forgetting CLD
+            rts                  ; corrupts all subsequent arithmetic
 
 ; ---------------------------------------------------------------------------
-; magic_resolve_effect  [11 calls]
-;   Called by: render_party_status_disp, char_turn_loop, char_turn_next, char_use_powder, loc_00917A, combat_end_flag, dungeon_lava
+; magic_resolve_effect — Check if a character can act (not incapacitated)
 ; ---------------------------------------------------------------------------
-
-; FUNC $0075BA: register -> A:X [I]
-; Proto: uint32_t func_0075BA(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: Checks character status byte ($11) for incapacitating conditions.
+;            Status $C7 = 'G' (Good) and $D0 = 'P' (Poisoned) are the only
+;            conditions that allow action — the character is conscious.
+;            Status $C4 = 'D' (Dead) or $C1 = 'A' (Ashes) prevent action.
+;
+;   PARAMS:  $D5 = character slot index (passed to $46F6 to set $FE/$FF)
+;   RETURNS: A = 0 if character can act, $FF if incapacitated
+;   CALLERS: Combat turn loop, party status display, dungeon traps
+;
 ; XREF: 11 refs (11 calls) from render_party_status_disp, char_turn_loop, char_turn_next, char_use_powder, loc_00917A, ...
-magic_resolve_effect   jsr  $46F6           ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
-            ldy  #$11            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            lda  ($FE),Y         ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            cmp  #$C7            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            beq  magic_effect_zero    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            cmp  #$D0            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            beq  magic_effect_zero    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            lda  #$FF            ; A=$00FF X=$0031 Y=$0011 ; [SP-1380]
-            rts                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
+magic_resolve_effect   jsr  $46F6           ; Set $FE/$FF → character record for slot $D5
+            ldy  #$11            ; Offset $11 = status byte
+            lda  ($FE),Y         ; Load status
+            cmp  #$C7            ; 'G' = Good? (high-bit ASCII)
+            beq  magic_effect_zero   ; Yes → can act (return 0)
+            cmp  #$D0            ; 'P' = Poisoned?
+            beq  magic_effect_zero   ; Yes → can act (return 0)
+            lda  #$FF            ; Incapacitated (Dead/Ashes/other)
+            rts
 ; XREF: 2 refs (2 branches) from magic_resolve_effect, magic_resolve_effect
-magic_effect_zero lda  #$00            ; A=$0000 X=$0031 Y=$0011 ; [SP-1378]
-            rts                  ; A=$0000 X=$0031 Y=$0011 ; [SP-1376]
+magic_effect_zero lda  #$00            ; Can act
+            rts
 
 ; --- Data region (75 bytes, text data) ---
             DB      $20,$F6,$46,$A0,$13,$B1,$FE,$20,$5F,$71,$85,$D3,$A0,$17,$B1,$FE
@@ -3905,48 +4707,78 @@ magic_effect_miss lda  #$FF            ; A=$00FF X=$0031 Y=$0011 ; [SP-1380]
             rts                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
 
 ; ---------------------------------------------------------------------------
-; magic_check_mp  [1 call]
-;   Called by: move_turn_poison_damage
+; magic_check_mp — Deduct food from a character (BCD16 subtraction)
 ; ---------------------------------------------------------------------------
-
-; FUNC $00761D: register -> A:X []
-; Proto: uint32_t func_00761D(uint16_t param_A, uint16_t param_X);
-; Liveness: params(A,X) returns(A,X,Y) [3 dead stores]
+;
+;   PURPOSE: Subtracts A units of food from the character at $FE/$FF.
+;            Food is stored as a 3-byte BCD16 value at offsets $20-$22
+;            (sub-morsels at $20, food_hi at $21, food_lo at $22).
+;            If food underflows (carry clear after BCD subtraction),
+;            falls through to equip_handle which zeroes food and prints
+;            "STARVING!" — a death sentence if not remedied quickly.
+;
+;   BCD16 SUBTRACTION: The 6502's SED mode only works on single bytes,
+;   so multi-byte BCD subtraction must be done byte-by-byte with carry
+;   propagation, just like binary multi-byte subtraction but in decimal
+;   mode. The bytes are processed from low ($22) to high ($20).
+;
+;   PARAMS:  A = amount to deduct (BCD)
+;            $FE/$FF = character record pointer
+;   RETURNS: Falls through to equip_handle on underflow
+;
 ; XREF: 1 ref (1 call) from move_turn_poison_damage
-magic_check_mp   sta  $D0             ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
-            sed                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
-            sec                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
-            ldy  #$22            ; A=$00FF X=$0031 Y=$0022 ; [SP-1378]
-            lda  ($FE),Y         ; A=$00FF X=$0031 Y=$0022 ; [SP-1378]
-            sbc  $D0             ; A=$00FF X=$0031 Y=$0022 ; [SP-1378]
-            sta  ($FE),Y         ; A=$00FF X=$0031 Y=$0022 ; [SP-1378]
-            dey                  ; A=$00FF X=$0031 Y=$0021 ; [SP-1378]
-            lda  ($FE),Y         ; A=$00FF X=$0031 Y=$0021 ; [SP-1378]
-            sbc  #$00            ; A=A X=$0031 Y=$0021 ; [SP-1378]
-            sta  ($FE),Y         ; A=A X=$0031 Y=$0021 ; [SP-1378]
-            dey                  ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            lda  ($FE),Y         ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            sbc  #$00            ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            sta  ($FE),Y         ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            cld                  ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            bcc  equip_handle        ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            rts                  ; A=A X=$0031 Y=$0020 ; [SP-1376]
+magic_check_mp   sta  $D0             ; Save deduction amount
+            sed                  ; Enter BCD mode
+            sec                  ; Set carry for subtraction
+            ldy  #$22            ; Start with food_lo byte
+            lda  ($FE),Y         ; Load food_lo
+            sbc  $D0             ; Subtract deduction amount
+            sta  ($FE),Y         ; Store result
+            dey                  ; Y=$21 → food_hi
+            lda  ($FE),Y         ; Load food_hi
+            sbc  #$00            ; Propagate borrow
+            sta  ($FE),Y
+            dey                  ; Y=$20 → sub-morsels
+            lda  ($FE),Y         ; Load sub-morsels
+            sbc  #$00            ; Propagate borrow
+            sta  ($FE),Y
+            cld                  ; Exit BCD mode
+            bcc  equip_handle   ; Borrow set? → food underflowed → STARVING!
+            rts                  ; Food OK, return normally
+
+; ###########################################################################
+; ###                                                                     ###
+; ###          EQUIPMENT & ECONOMY ($763B-$7960)                          ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Food depletion, starvation handling, moongate/whirlpool ship mechanics,
+;   and the "enter town/dungeon" transition logic. Also contains the food
+;   depletion rate constant at $772C (default 04 = deduct food every 4th
+;   step on the overworld). This section is heavily interleaved with
+;   inline strings for narrative messages ("STARVING!", "A HUGE SWIRLING
+;   WHIRLPOOL ENGULFS YOU AND YOUR SHIP...").
+;
 
 ; ---------------------------------------------------------------------------
-; equip_handle  [1 call, 2 branches]
-;   Called by: dungeon_trap_setup
+; equip_handle — Handle food starvation (zero food, print warning)
 ; ---------------------------------------------------------------------------
-
-; FUNC $00763B: register -> A:X []
-; Proto: uint32_t func_00763B(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [1 dead stores]
+;
+;   PURPOSE: Called when food underflows past zero. Zeros both food bytes
+;            in the character record, then prints "STARVING!" inline and
+;            applies 5 damage. In 1983, food management was a core survival
+;            mechanic — running out on the overworld was a genuine threat.
+;
+;   PARAMS:  $FE/$FF = character record pointer
+;   RETURNS: After damage application
+;
 ; XREF: 3 refs (1 call) (2 branches) from magic_check_mp, equip_load_state, dungeon_trap_setup
-equip_handle    lda  #$00            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
-            ldy  #$20            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
-            sta  ($FE),Y         ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
-            ldy  #$21            ; A=$0000 X=$0031 Y=$0021 ; [SP-1376]
-            sta  ($FE),Y         ; A=$0000 X=$0031 Y=$0021 ; [SP-1376]
-            jsr  $46BA           ; A=$0000 X=$0031 Y=$0021 ; [SP-1378]
+equip_handle    lda  #$00            ; Zero the food field
+            ldy  #$20            ; Offset $20 = sub-morsels
+            sta  ($FE),Y
+            ldy  #$21            ; Offset $21 = food_hi
+            sta  ($FE),Y
+            jsr  $46BA           ; Print inline: (next bytes are "STARVING!")
             DB      $FF
             ASC     "STARVING!"
             DB      $FF,$00,$20,$E4,$88,$A9,$F7,$20,$05,$47,$20,$E4,$88,$A9,$05,$20
@@ -4078,46 +4910,54 @@ shop_handle  lda  #$18            ; A=$0018 X=$0008 Y=$0022 ; [SP-1399]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; equip_check_class  [2 calls]
-;   Called by: shop_handle, equip_load_state
+; equip_check_class — Play "sinking ship" sound effect
 ; ---------------------------------------------------------------------------
-
-; FUNC $0077A2: register -> A:X [I]
-; Proto: uint32_t func_0077A2(void);
-; Liveness: returns(A,X,Y) [2 dead stores]
+;
+;   PURPOSE: Despite the CIDAR-generated name, this is a descending-pitch
+;            sound effect played when the player's ship sinks (whirlpool
+;            encounter). It's a classic Apple II 1-bit speaker synthesis:
+;            an outer loop sweeps the period from $40→$C0, producing a
+;            descending tone that evokes the gurgling of a sinking vessel.
+;
+;   ALGORITHM:
+;   - $F3 = period counter, starts at $40 (high pitch)
+;   - Inner X loop: PHA/PLA pairs burn 7 cycles each for timing delay
+;   - Inner Y loop (20 iterations): repeats the delay for each half-wave
+;   - BIT $C030: toggles speaker once per Y iteration
+;   - Period increments ($40→$C0): pitch drops as period lengthens
+;   - $10 (in-party flag) check: skip sound if character not active
+;
+;   WHY PHA/PLA: Same idiom as SUBS sound effects — burns exactly
+;   7 cycles per pair (PHA=3, PLA=4) for cycle-precise speaker timing.
+;   NOT redundant code despite CIDAR's "PEEPHOLE: Redundant PHA/PLA"
+;   warning. Without these delay cycles, the pitch would be too high
+;   and the waveform would alias against the CPU's instruction timing.
+;
 ; XREF: 2 refs (2 calls) from shop_handle, equip_load_state
-equip_check_class    lda  $10             ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
-            bmi  equip_class_done     ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
-            lda  #$40            ; A=$0040 X=$0008 Y=$0023 ; [SP-1411]
-            sta  $F3             ; A=$0040 X=$0008 Y=$0023 ; [SP-1411]
+equip_check_class    lda  $10             ; Check in-party flag
+            bmi  equip_class_done   ; If $FF (in party) → skip? Actually: $10 bit 7
+            lda  #$40            ; Starting period (high pitch)
+            sta  $F3
 
-; === while loop starts here [nest:25] ===
-; XREF: 1 ref (1 branch) from equip_class_push_state
-equip_class_check_offset ldy  #$14            ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
+equip_class_check_offset ldy  #$14            ; 20 half-wave cycles per pitch step
 
-; === loop starts here (counter: Y, range: 20..0, iters: 20) [nest:26] ===
-; XREF: 1 ref (1 branch) from equip_class_push_state
-equip_class_load_ptr ldx  $F3             ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
+equip_class_load_ptr ldx  $F3             ; X = current period (delay count)
 
-; === loop starts here (counter: X) [nest:27] ===
-; XREF: 1 ref (1 branch) from equip_class_push_state
-equip_class_push_state pha                  ; A=$0040 X=$0008 Y=$0014 ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $0077AE ; [SP-1412]
-            pla                  ; A=[stk] X=$0008 Y=$0014 ; [SP-1411]
-            dex                  ; A=[stk] X=$0007 Y=$0014 ; [SP-1411]
-            bne  equip_class_push_state     ; A=[stk] X=$0007 Y=$0014 ; [SP-1411]
-; === End of loop (counter: X) ===
+; --- Cycle-burn delay loop: X * 7 cycles per iteration ---
+equip_class_push_state pha                  ; } 7 cycles: PHA(3) + PLA(4)
+            pla                  ; } This is a TIMING IDIOM, not dead code
+            dex                  ; Decrement delay counter
+            bne  equip_class_push_state   ; Repeat for X iterations
 
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dey                  ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
-            bne  equip_class_load_ptr     ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
-; === End of loop (counter: Y) ===
+            bit  $C030           ; Toggle speaker — produces one half-wave
+            dey                  ; Next half-wave cycle
+            bne  equip_class_load_ptr   ; 20 toggles per pitch step
 
-            inc  $F3             ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
-            lda  $F3             ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
-            cmp  #$C0            ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
-            bcc  equip_class_check_offset     ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
-; XREF: 1 ref (1 branch) from equip_check_class
-equip_class_done rts                  ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1409]
+            inc  $F3             ; Increase period → lower pitch
+            lda  $F3
+            cmp  #$C0            ; Reached lowest pitch ($C0)?
+            bcc  equip_class_check_offset   ; No → continue descending
+equip_class_done rts
 
 ; --- Data region (415 bytes, text data) ---
             DB      $A5,$E2,$F0,$1B,$10,$03,$4C,$E6,$78,$A9,$40,$20,$E4,$46,$85,$00
@@ -4158,17 +4998,40 @@ equip_class_done rts                  ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1409]
 ; --- End data region (415 bytes) ---
 
 
-; ---------------------------------------------------------------------------
-; world_move_handler  [1 call]
-;   Called by: game_loop_call_terrain
-;   Calls: char_decrypt_records
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###          WORLD MOVEMENT ($7961-$7A0B)                               ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Overworld location entry handler. When the player steps onto a town,
+;   castle, or dungeon entrance tile, this code loads the appropriate map
+;   from disk and transitions to the location. The decrypt/encrypt calls
+;   bracket disk I/O because character records are XOR-encrypted in memory
+;   and must be decrypted before BLOAD overwrites PLRS, then re-encrypted.
+;
+;   LOCATION TABLE ($7997/$799F): Two parallel 8-byte arrays mapping
+;   location codes to starting X,Y coordinates within the location map.
+;   The location code comes from the tile type, offset by $B0 to index
+;   into the table.
+;
 
-; FUNC $007961: register -> A:X []
-; Liveness: returns(A,X,Y) [5 dead stores]
+; ---------------------------------------------------------------------------
+; world_move_handler — Enter a town, castle, or dungeon from overworld
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Transition from the Sosaria overworld into a sub-location.
+;            Decrypts character records, loads the destination map via
+;            the ProDOS BLOAD dispatcher at $0230, then re-encrypts.
+;            The double decrypt-load-encrypt pattern is needed because
+;            the BLOAD may overwrite the PLRS memory area at $4000.
+;
+;   PARAMS:  $6FA4 = location code from tile interaction
+;   RETURNS: After location load and encryption restore
+;
 ; XREF: 1 ref (1 call) from game_loop_call_terrain
-world_move_handler  jsr  $0230           ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1455]
-            jsr  char_decrypt_records       ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1457]
+world_move_handler  jsr  $0230           ; Execute ProDOS command (BLOAD map)
+            jsr  char_decrypt_records   ; Decrypt char records for disk I/O
             lda  #$FD            ; A=$00FD X=$0007 Y=$0013 ; [SP-1457]
             ldx  #$C0            ; A=$00FD X=$00C0 Y=$0013 ; [SP-1457]
             ldy  #$20            ; A=$00FD X=$00C0 Y=$0020 ; [SP-1457]
@@ -4228,18 +5091,51 @@ world_move_dungeon jsr  dungeon_handle     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-147
             jsr  tile_update     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
             jmp  boot_check_quit      ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
 
-; ---------------------------------------------------------------------------
-; dungeon_handle  [1 call]
-;   Called by: world_move_dungeon
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###          DUNGEON & CREATURE AI ($7A0C-$7C0B)                        ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Monster spawning and movement AI for the overworld. The game maintains
+;   a creature tracking system at $4F00-$4F9F with 5 parallel 32-entry
+;   arrays (columnar layout, same principle as MON files):
+;
+;     $4F00-$4F1F: creature type/tile (0 = empty slot)
+;     $4F20-$4F3F: terrain-under-creature (restored when creature moves)
+;     $4F40-$4F5F: creature X position
+;     $4F60-$4F7F: creature Y position
+;     $4F80-$4F9F: creature behavior flags ($C0=aggressive, $40=wander, $80=track)
+;
+;   Spawning is probabilistic: `dungeon_handle` rolls dice based on a
+;   13-entry type table ($7BAC) and a 13-entry terrain preference table
+;   ($7BB9). Creatures spawned at random positions within map range.
+;
+;   Movement AI (`tile_update`) iterates all 32 creature slots per turn:
+;   - $C0 (aggressive): pathfind toward player using Manhattan distance
+;   - $80 (tracking): move toward player with direction preference
+;   - $40 (wandering): random movement with direction jitter
+;   - Collision: if destination tile is impassable, try adjacent tiles
+;   - Player contact: triggers combat encounter
+;
 
-; FUNC $007A0C: register -> A:X [I]
-; Proto: uint32_t func_007A0C(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y)
+; ---------------------------------------------------------------------------
+; dungeon_handle — Spawn new overworld creatures
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Per-turn creature spawner. Only runs on Sosaria surface
+;            ($E2=0); in towns/dungeons creature spawning is handled
+;            differently. Searches for an empty slot ($4F00,X == 0),
+;            then rolls creature type and position, placing it if the
+;            terrain matches the creature's preferred type.
+;
+;   PARAMS:  $00/$01 = player X,Y position
+;   RETURNS: May populate a creature slot in $4F00-$4F9F arrays
+;
 ; XREF: 1 ref (1 call) from world_move_dungeon
-dungeon_handle lda  $E2             ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
-            beq  dungeon_check_light  ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
-            rts                  ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1474]
+dungeon_handle lda  $E2             ; Check location type
+            beq  dungeon_check_light ; $E2=0 → Sosaria surface, proceed
+            rts                  ; In town/dungeon → no overworld spawning
 ; XREF: 1 ref (1 branch) from dungeon_handle
 dungeon_check_light lda  #$86            ; A=$0086 X=$00C0 Y=$0020 ; [SP-1474]
             jsr  $46E4           ; A=$0086 X=$00C0 Y=$0020 ; [SP-1476]
@@ -4303,16 +5199,37 @@ dungeon_init_vars lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
 
 
 ; ---------------------------------------------------------------------------
-; tile_update  [1 call]
-;   Called by: world_move_dungeon
+; tile_update — Move all overworld creatures one step (AI tick)
 ; ---------------------------------------------------------------------------
-
-; FUNC $007A81: register -> A:X [I]
-; Proto: uint32_t func_007A81(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y)
+;
+;   PURPOSE: Per-turn creature movement. Iterates all 32 creature slots
+;            (index $20 down to $00). For each active creature, determines
+;            its behavior type from $4F80 flags and applies movement:
+;
+;            Behavior types (upper 2 bits of $4F80,X):
+;              $00 = dormant (no movement)
+;              $40 = wandering (random direction)
+;              $80 = tracking (pathfind toward player)
+;              $C0 = aggressive (direct pursuit + combat on contact)
+;
+;            Movement algorithm:
+;            1. Calculate direction toward player ($02/$03 = target X/Y)
+;            2. Check if target tile is passable (tile_check_passable)
+;            3. If blocked, try perpendicular directions
+;            4. If destination == player position → trigger combat
+;            5. Otherwise: save terrain under creature, move creature tile
+;
+;            The "save terrain under creature" mechanism ($4F20 array)
+;            means creatures visually replace their underlying tile and
+;            restore it when they move — a technique also used in the
+;            combat maps (CON files) for monster/PC positions.
+;
+;   PARAMS:  $00/$01 = player X,Y
+;   RETURNS: May trigger combat encounter (via char_combat_turn)
+;
 ; XREF: 1 ref (1 call) from world_move_dungeon
-tile_update lda  #$20            ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
-            sta  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
+tile_update lda  #$20            ; Start at creature slot 32 (count down)
+            sta  $D0             ; $D0 = loop counter
 
 ; === while loop starts here [nest:18] ===
 ; XREF: 8 refs (7 jumps) (1 branch) from tile_update_dec_range, tile_update_restart, tile_update_load_pos2, tile_update_read_type, tile_update_load_counter, ...
@@ -4513,43 +5430,61 @@ tile_update_wait_anim3 jsr  $46E7           ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1522
 tile_update_find_target jsr  tile_check_special     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
             jmp  tile_update_char_ptr  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
 
-; ---------------------------------------------------------------------------
-; tile_check_passable  [3 calls]
-;   Called by: tile_update_char_ptr
-;   Preserves: A
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###              TILE & MAP LOGIC ($7C0C-$7DFF)                         ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Tile passability and special tile handling. The game world is built
+;   from tile types, each with properties: passable/impassable, terrain
+;   type (water, forest, mountain), special behavior (towns, dungeons,
+;   shrines), and transport requirements (ship for water, etc.).
+;
 
-; FUNC $007C0C: register -> A:X [I]
-; Proto: uint32_t func_007C0C(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Frame: push_only [saves: A]
-; Liveness: params(A,X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from tile_update_char_ptr, tile_update_char_ptr, tile_update_char_ptr
-tile_check_passable pha                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            lda  $4F00,X         ; -> $4FC0 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            cmp  #$40            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            bcs  tile_passable_check_type  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            cmp  #$2C            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            bcc  tile_passable_check_type  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-            cmp  #$00            ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-            bne  tile_not_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-            jmp  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-; XREF: 2 refs (2 branches) from tile_check_passable, tile_check_passable
-tile_passable_check_type pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            cmp  #$04            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            cmp  #$08            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            cmp  #$0C            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            cmp  #$20            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-; XREF: 1 ref (1 branch) from tile_check_passable
-tile_not_passable lda  #$FF            ; A=$00FF X=$00C0 Y=$000D ; [SP-1529]
-            rts                  ; A=$00FF X=$00C0 Y=$000D ; [SP-1527]
-; XREF: 5 refs (1 jump) (4 branches) from tile_passable_check_type, tile_passable_check_type, tile_check_passable, tile_passable_check_type, tile_passable_check_type
-tile_is_passable lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1527]
-            rts                  ; A=$0000 X=$00C0 Y=$000D ; [SP-1525]
+; ---------------------------------------------------------------------------
+; tile_check_passable — Determine if a creature can move onto a tile
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Checks whether the creature at index X in the combat/world
+;            tracking arrays can move onto the tile type in A. Returns
+;            A=0 if passable, A=$FF if blocked.
+;
+;   TILE PASSABILITY RULES:
+;   - Creature type $2C-$3F (special range): only passable if tile = $00
+;   - Tile $04 (grass), $08 (forest), $0C (open), $20 (floor): always passable
+;   - All other tiles: impassable (walls, mountains, deep water, etc.)
+;
+;   PARAMS:  A = tile type to check
+;            X = creature index in $4F00 tracking array
+;   RETURNS: A = 0 (passable) or $FF (blocked)
+;
+; ---------------------------------------------------------------------------
+tile_check_passable pha                  ; Save tile type
+            lda  $4F00,X         ; Load creature's type/flags
+            cmp  #$40            ; Type >= $40?
+            bcs  tile_passable_check_type ; Yes → check tile normally
+            cmp  #$2C            ; Type in $2C-$3F range?
+            bcc  tile_passable_check_type ; No → check tile normally
+; --- Special creature type ($2C-$3F): only passable on empty tiles ---
+            pla                  ; Restore tile type
+            cmp  #$00            ; Is it empty?
+            bne  tile_not_passable ; No → blocked
+            jmp  tile_is_passable ; Yes → passable
+; --- Normal passability: check against allowed tile types ---
+tile_passable_check_type pla                  ; Restore tile type
+            cmp  #$04            ; Grass?
+            beq  tile_is_passable
+            cmp  #$08            ; Forest?
+            beq  tile_is_passable
+            cmp  #$0C            ; Open terrain?
+            beq  tile_is_passable
+            cmp  #$20            ; Floor?
+            beq  tile_is_passable
+tile_not_passable lda  #$FF            ; Blocked
+            rts
+tile_is_passable lda  #$00            ; Passable
+            rts
 
 ; ---------------------------------------------------------------------------
 ; tile_check_special  [3 calls]
@@ -4747,86 +5682,113 @@ render_combat_wait_key jsr  $0328           ; A=$0007 X=$0007 Y=$0001 ; [SP-1541
 ; --- End data region (137 bytes) ---
 
 
-; ===========================================================================
-; COMPUTATION (7 functions)
-; ===========================================================================
+; ###########################################################################
+; ###                                                                     ###
+; ###          MATH UTILITIES ($7DFC-$7E84)                               ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Small utility functions for signed arithmetic, distance calculation,
+;   and coordinate math. The 6502 has no native signed operations, so
+;   sign extension, absolute value, and comparison must be synthesized
+;   from unsigned instructions — a common pattern in 80s game engines.
+;
 
 ; ---------------------------------------------------------------------------
-; render_sign_extend  [6 calls, 1 jump]
-;   Called by: render_target_calc_dist, tile_check_special, tile_update_wait_anim3
+; render_sign_extend — Clamp a signed value to {-1, 0, +1}
 ; ---------------------------------------------------------------------------
-
-; FUNC $007DFC: register -> A:X [L]
-; Proto: uint32_t func_007DFC(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 7 refs (6 calls) (1 jump) from render_target_calc_dist, tile_check_special, tile_update_wait_anim3, tile_check_special, render_tile_scale, ...
-render_sign_extend   cmp  #$00            ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
-            beq  render_sign_done    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
-            bmi  render_sign_negative    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
-            lda  #$01            ; A=$0001 X=$0007 Y=$0001 ; [SP-1555]
-; XREF: 1 ref (1 branch) from render_sign_extend
-render_sign_done rts                  ; A=$0001 X=$0007 Y=$0001 ; [SP-1553]
-; XREF: 1 ref (1 branch) from render_sign_extend
-render_sign_negative lda  #$FF            ; A=$00FF X=$0007 Y=$0001 ; [SP-1553]
-            rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-
-; ---------------------------------------------------------------------------
-; render_tile_scale  [2 calls]
-;   Called by: tile_special_surface
-; ---------------------------------------------------------------------------
-
-; FUNC $007E08: register -> A:X []
-; Proto: uint32_t func_007E08(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from tile_special_surface, tile_special_surface
-render_tile_scale  asl  a               ; A=$00FF X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1551]
-            asl  a               ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-            jmp  render_sign_extend       ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-; === End of while loop ===
-
+;
+;   PURPOSE: Converts a signed difference into a direction step.
+;            Used by creature AI to determine which direction to move
+;            toward or away from the player. The result is:
+;              A > 0 (positive) → return +1
+;              A = 0            → return 0
+;              A < 0 (bit 7 set) → return $FF (-1)
+;
+;   PARAMS:  A = signed 8-bit value
+;   RETURNS: A = direction step (-1, 0, or +1)
+;
+; XREF: 7 refs (6 calls) (1 jump)
+render_sign_extend   cmp  #$00            ; Test value
+            beq  render_sign_done   ; Zero → return 0
+            bmi  render_sign_negative ; Negative (bit 7) → return -1
+            lda  #$01            ; Positive → return +1
+render_sign_done rts
+render_sign_negative lda  #$FF            ; Negative → return -1 (two's complement)
+            rts
 
 ; ---------------------------------------------------------------------------
-; render_abs_value  [4 calls]
-;   Called by: render_target_check_alive, tile_special_calc_dist
+; render_tile_scale — Scale a difference by 4x and clamp to direction
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Multiplies A by 4 (two ASL shifts) then clamps to {-1,0,+1}.
+;            Used for surface-map creature movement where distances are
+;            scaled by the viewport tile size before extracting direction.
+;
+; XREF: 2 refs (2 calls) from tile_special_surface
+render_tile_scale  asl  a               ; A *= 2
+            asl  a               ; A *= 2 (total: A *= 4)
+            jmp  render_sign_extend ; Clamp to direction step
 
-; FUNC $007E0D: register -> A:X [L]
-; Proto: uint32_t func_007E0D(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 4 refs (4 calls) from render_target_check_alive, render_target_check_alive, tile_special_calc_dist, tile_special_calc_dist
-render_abs_value    cmp  #$80            ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-            bcs  render_negate     ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-            rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1549]
-; XREF: 1 ref (1 branch) from render_abs_value
-render_negate eor  #$FF            ; A=A^$FF X=$0007 Y=$0001 ; [SP-1549]
-            clc                  ; A=A^$FF X=$0007 Y=$0001 ; [SP-1549]
-            adc  #$01            ; A=A+$01 X=$0007 Y=$0001 ; [SP-1549]
-            rts                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
 
 ; ---------------------------------------------------------------------------
-; combat_tile_at_xy  [25 calls]
-;   Called by: tile_update_bcd_food, game_loop_combat_lookup, render_combat_dec_range, render_combat_resolve, render_target_calc_dist, render_party_final, render_combat_check_mon, render_combat_mon_special
+; render_abs_value — Absolute value of a signed 8-bit number
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Returns |A| using two's complement negation. If bit 7 is set
+;            (negative), negate via EOR #$FF + 1 (standard 6502 idiom for
+;            negation since the 6502 has no NEG instruction). Used for
+;            Manhattan distance calculation in targeting/pathfinding.
+;
+;   PARAMS:  A = signed 8-bit value
+;   RETURNS: A = |A| (unsigned)
+;
+; XREF: 4 refs (4 calls) from render_target_check_alive, tile_special_calc_dist
+render_abs_value    cmp  #$80            ; Negative? (bit 7 set means $80-$FF)
+            bcs  render_negate    ; Yes → negate it
+            rts                  ; Already positive, return as-is
+render_negate eor  #$FF            ; Two's complement negation: ~A
+            clc
+            adc  #$01            ; ~A + 1 = -A (as unsigned magnitude)
+            rts
 
-; FUNC $007E18: register -> A:X [L]
-; Proto: uint32_t func_007E18(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [4 dead stores]
-; XREF: 25 refs (16 calls) from tile_update_bcd_food, game_loop_combat_lookup, $00812F, render_combat_dec_range, render_combat_resolve, ...
-combat_tile_at_xy  clc                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
-            lda  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1547]
-            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1547]
-            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            adc  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            adc  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            adc  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            adc  $02             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            sta  $FE             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            lda  #$99            ; A=$0099 X=$0007 Y=$0001 ; [SP-1547]
-            sta  $FF             ; A=$0099 X=$0007 Y=$0001 ; [SP-1547]
-            ldy  #$00            ; A=$0099 X=$0007 Y=$0000 ; [SP-1547]
-            lda  ($FE),Y         ; A=$0099 X=$0007 Y=$0000 ; [SP-1547]
-            rts                  ; A=$0099 X=$0007 Y=$0000 ; [SP-1545]
+; ---------------------------------------------------------------------------
+; combat_tile_at_xy — Read a tile from the 11x11 combat grid
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Computes the byte address within the CON file's 11x11 tile
+;            grid and returns the tile value. The grid starts at $9900
+;            (CON file load address). Uses the formula:
+;              offset = Y*11 + X  =  Y*8 + Y + Y + Y + X
+;            The Y*11 is computed without multiplication hardware:
+;              Y << 3 = Y*8, then add Y three more times = Y*11.
+;
+;   WHY $9900: CON files are BLOADed at $9900. The 11x11 grid occupies
+;   bytes $9900-$9978 (121 bytes). The remaining bytes in the 192-byte
+;   CON file hold monster/PC positions and runtime workspace.
+;
+;   PARAMS:  $02 = X coordinate (0-10)
+;            $03 = Y coordinate (0-10)
+;   RETURNS: A = tile value at (X,Y)
+;            $FE/$FF = pointer to the tile (for in-place modification)
+;   CALLERS: 25 references — combat, creature movement, rendering
+;
+; XREF: 25 refs (16 calls)
+combat_tile_at_xy  clc                  ; Clear carry for addition chain
+            lda  $03             ; A = Y coordinate
+            asl  a               ; Y*2
+            asl  a               ; Y*4
+            asl  a               ; Y*8
+            adc  $03             ; Y*9
+            adc  $03             ; Y*10
+            adc  $03             ; Y*11
+            adc  $02             ; Y*11 + X = linear offset
+            sta  $FE             ; Low byte of pointer
+            lda  #$99            ; High byte = $99 (CON grid at $9900)
+            sta  $FF
+            ldy  #$00
+            lda  ($FE),Y         ; Load tile value
+            rts
 
 ; ---------------------------------------------------------------------------
 ; render_check_solid  [3 calls]
@@ -4867,54 +5829,93 @@ render_not_solid lda  #$00            ; A=$0000 X=$0007 Y=$0000 ; [SP-1542]
             rts                  ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
 
 ; ---------------------------------------------------------------------------
-; render_viewport_flash  [1 call]
+; render_viewport_flash — Screen flash effect for magical/special events
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Produces a visual flash by toggling HGR page display twice
+;            with a timed delay between. The Apple II's soft switches at
+;            $C050-$C057 control which HGR page is visible; JSR $4705
+;            with A=$F6 toggles the page. The double toggle creates a
+;            "flash" effect visible for ~8000 cycles (X*Y delay loop =
+;            255*32 = 8160 iterations of DEX/BNE = ~40,800 cycles ≈ 40ms).
+;
+;   TILE CHECK: Only fires on certain tile types ($02=water, $04=grass,
+;   $06=brush, $10=floor) — other tiles block the flash. Returns $FF
+;   if blocked, $00 if flash fired.
+;
 ; XREF: 1 ref (1 call) from $0082B2
-render_viewport_flash cmp  #$02            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            cmp  #$04            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            cmp  #$06            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            cmp  #$10            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            lda  #$FF            ; A=$00FF X=$0007 Y=$0000 ; [SP-1540]
-            rts                  ; A=$00FF X=$0007 Y=$0000 ; [SP-1538]
-; XREF: 4 refs (4 branches) from render_viewport_flash, render_viewport_flash, render_viewport_flash, render_viewport_flash
-render_flash_activate lda  #$F6            ; A=$00F6 X=$0007 Y=$0000 ; [SP-1538]
-            jsr  $4705           ; Call $004705(A, 1 stack)
-            ldx  #$FF            ; A=$00F6 X=$00FF Y=$0000 ; [SP-1540]
-            ldy  #$20            ; A=$00F6 X=$00FF Y=$0020 ; [SP-1540]
+render_viewport_flash cmp  #$02            ; Water tile?
+            beq  render_flash_activate
+            cmp  #$04            ; Grass?
+            beq  render_flash_activate
+            cmp  #$06            ; Brush?
+            beq  render_flash_activate
+            cmp  #$10            ; Floor?
+            beq  render_flash_activate
+            lda  #$FF            ; Blocked — no flash
+            rts
+render_flash_activate lda  #$F6            ; Toggle HGR page (flash ON)
+            jsr  $4705
+            ldx  #$FF            ; Delay: X=255, Y=32
+            ldy  #$20
 
-; === loop starts here (counter: X) [nest:31] ===
-; XREF: 2 refs (2 branches) from render_flash_delay_loop, render_flash_delay_loop
-render_flash_delay_loop dex                  ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
-            bne  render_flash_delay_loop ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
-; === End of loop (counter: X) ===
+; --- Nested delay loop: ~40,800 cycles ≈ 40ms visible flash ---
+render_flash_delay_loop dex
+            bne  render_flash_delay_loop
 
-            dey                  ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
-            bne  render_flash_delay_loop ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
-; === End of loop (counter: Y) ===
+            dey
+            bne  render_flash_delay_loop
 
-            lda  #$F6            ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
-            jsr  $4705           ; A=$00F6 X=$00FE Y=$001F ; [SP-1542]
-            lda  #$00            ; A=$0000 X=$00FE Y=$001F ; [SP-1542]
-            rts                  ; A=$0000 X=$00FE Y=$001F ; [SP-1540]
+            lda  #$F6            ; Toggle HGR page back (flash OFF)
+            jsr  $4705
+            lda  #$00            ; Success — flash occurred
+            rts
+
+; ###########################################################################
+; ###                                                                     ###
+; ###          COMBAT AI & RENDERING ($7E85-$88FF)                        ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   The combat rendering system and monster AI. Ultima III's tactical
+;   combat screen was unprecedented for 1983 — an 11x11 grid where
+;   monsters and party members move independently, with ranged attacks,
+;   spell areas of effect, and terrain obstacles. This was years ahead
+;   of most CRPGs, which used abstract "lines" of combatants.
+;
+;   MONSTER TARGETING: render_find_target implements nearest-enemy
+;   selection using Manhattan distance (|dx| + |dy|), checking
+;   line-of-sight through solid tiles. Monsters target the closest
+;   alive party member they can reach.
+;
+;   COMBAT RESOLUTION: The combat loop alternates between player turns
+;   (render_party_status_disp) and monster turns (render_combat_monster_ai),
+;   with the "VICTORY!" screen triggered when all monster slots are empty.
+;
 
 ; ---------------------------------------------------------------------------
-; render_find_target  [1 call]
-;   Called by: render_combat_mon_check
-;   Calls: render_abs_value, render_sign_extend, combat_tile_at_xy, render_check_solid
+; render_find_target — Select nearest alive party member for monster AI
 ; ---------------------------------------------------------------------------
-
-; FUNC $007E85: register -> A:X [I]
-; Proto: uint32_t func_007E85(void);
-; Liveness: returns(A,X,Y) [9 dead stores]
+;
+;   PURPOSE: Scans all party members, computes Manhattan distance from
+;            the current monster, and selects the closest alive target.
+;            Used by monster AI to decide which PC to attack or pursue.
+;
+;   ALGORITHM:
+;   - $D0 = best distance so far (starts at $FF = max)
+;   - $D5 = party member index being checked (0 to party_size-1)
+;   - $D6 = index of best target found (starts at $FF = none)
+;   - For each alive member: compute |monster_x - pc_x| + |monster_y - pc_y|
+;   - If distance < best_distance: update best target
+;
+;   PARAMS:  Monster position in $4F40,X / $4F60,X
+;   RETURNS: $D6 = target slot index, $D0 = distance ($FF if no target)
+;
 ; XREF: 1 ref (1 call) from render_combat_mon_check
-render_find_target lda  #$FF            ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
-            sta  $D6             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
-            sta  $D5             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
-            sta  $D0             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
+render_find_target lda  #$FF            ; Initialize: no target found
+            sta  $D6             ; Best target index = $FF (none)
+            sta  $D5             ; Current check index (will increment to 0)
+            sta  $D0             ; Best distance = $FF (maximum)
 
 ; === while loop starts here [nest:32] ===
 ; XREF: 6 refs (3 jumps) (3 branches) from render_target_check_alive, render_target_calc_dist, render_target_check_alive, render_target_update_best, render_target_adjacent, ...
@@ -5713,21 +6714,61 @@ render_offset_xor_loop lda  $4300,X         ; A=$0007 X=A Y=$001F ; [SP-1890]
 
             rts                  ; A=A^$FF X=X-$01 Y=$001F ; [SP-1888]
 
-; ---------------------------------------------------------------------------
-; render_encrypt_records  [29 calls]
-;   Called by: render_combat_resolve, input_dungeon_gen_pos, file_mark_apply_loop, combat_end_flag, equip_handle, char_turn_next, char_turn_loop, move_turn_add_exp
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###          ANTI-CHEAT ENCRYPTION ($88BD-$8930)                        ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   Ultima III XOR-encrypts character records in RAM as an anti-tampering
+;   measure. Since the Apple II had no memory protection, players with
+;   tools like The Inspector or Locksmith could freeze the game, edit
+;   memory, and give themselves 99 of everything. Richard Garriott's
+;   solution: XOR every stat byte with $FF after each access, making
+;   raw memory inspection show garbage values.
+;
+;   Two encryption functions exist:
+;   - render_calc_offset: XOR 8 bytes at offsets $18-$1F (via table lookup)
+;     These are HP, MaxHP, EXP — the "combat stats" that players would
+;     most want to cheat. Only encrypts one character at a time.
+;   - render_encrypt_records: XOR bytes $18-$26 across ALL 25 character
+;     page entries (PLRS area). This is the bulk encryption called
+;     29 times throughout the engine — before/after every disk I/O,
+;     combat resolution, turn processing, etc.
+;
+;   The $4300/$43C0 address tables map character page indices to their
+;   base addresses in the PLRS area ($4000-$49FF). Each entry points
+;   to one 64-byte character record, giving 25 possible roster slots.
+;
 
-; FUNC $0088E4: register -> A:X []
-; Proto: uint32_t func_0088E4(void);
-; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 29 refs (16 calls) from $005713, render_combat_resolve, $0092AD, render_combat_resolve, $0092B5, ...
-render_encrypt_records    lda  $D5             ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
+; ---------------------------------------------------------------------------
+; render_encrypt_records — Bulk XOR-encrypt all character stat fields
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Toggles XOR $FF encryption on bytes $18-$26 of all active
+;            character records. Since XOR is self-inverse, the same function
+;            both encrypts and decrypts. Called before and after any
+;            operation that reads or modifies character stats.
+;
+;   ALGORITHM:
+;   - Compute starting page index: $D5 * 32 + $1F (slot offset)
+;   - For 24 character pages: XOR bytes Y=$26 down to Y=$18
+;   - Address lookup: $4300,X = low byte, $43C0,X = high byte of page
+;
+;   WHY $18-$26: These offsets cover race ($16/17/18... actually $18+)
+;   through gold ($24), encompassing all BCD stat values that a cheater
+;   would target. Name bytes ($00-$0D) are left unencrypted.
+;
+;   PARAMS:  $D5 = current character slot (determines starting offset)
+;   RETURNS: All character stats toggled between encrypted/decrypted state
+;
+; XREF: 29 refs (16 calls)
+render_encrypt_records    lda  $D5             ; Current character slot
+            asl  a               ; Slot * 2
+            asl  a               ; Slot * 4
+            asl  a               ; Slot * 8
+            asl  a               ; Slot * 16
+            asl  a               ; Slot * 32 (each page = 32-byte stride)
             clc                  ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
             adc  #$1F            ; A=A+$1F X=X-$01 Y=$001F ; [SP-1888]
             sta  $FB             ; A=A+$1F X=X-$01 Y=$001F ; [SP-1888]
@@ -5779,21 +6820,39 @@ render_encrypt_vblank ldy  #$80            ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
             jmp  render_text_read_char  ; A=$0098 X=$0000 Y=A ; [SP-1886]
 
 ; ---------------------------------------------------------------------------
-; render_draw_text_row  [14 calls]
-;   Called by: render_monster_attack, input_cmd_table
-;   Calls: render_advance_ptr
+; render_draw_text_row — Look up and print the Nth name from the name table
 ; ---------------------------------------------------------------------------
-
-; FUNC $008932: register -> A:X []
-; Proto: uint32_t func_008932(void);
-; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 14 refs (14 calls) from $00846C, render_monster_attack, $005D41, $005D76, $006D4F, ...
-render_draw_text_row tay                  ; A=$0098 X=$0000 Y=$0098 ; [SP-1886]
-            lda  #$7A            ; A=$007A X=$0000 Y=$0098 ; [SP-1886]
-            sta  $FE             ; A=$007A X=$0000 Y=$0098 ; [SP-1886]
-            lda  #$89            ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
-            sta  $FF             ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
-            ldx  #$00            ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
+;
+;   PURPOSE: The name table at $897A contains all entity names in the game
+;            as null-terminated strings packed consecutively. This function
+;            walks through the table, counting null terminators to find the
+;            Nth entry (passed in A), then prints it character by character.
+;
+;            Name table layout (921 bytes at $897A):
+;              0: "(null)"  — empty/ground
+;              1: "WATER"   — terrain names (0-13)
+;              14: "HORSE"  — transport names
+;              17: "MERCHANT" — NPC types
+;              21: "FIGHTER" — class names (21-31)
+;              32: "ORC"    — monster primary names
+;              48-63: single letters — dungeon labels
+;              64+: weapons, armor, spells, more monsters
+;
+;            The $FF delimiter between names doubles as a newline in the
+;            rendering logic (render_text_newline). This dual use of $FF
+;            is a space-saving trick — one byte serves as both separator
+;            and formatting control.
+;
+;   PARAMS:  A = name index (0-based, up to ~130 entries)
+;   RETURNS: Name printed to screen at current cursor position ($F9/$FA)
+;
+; XREF: 14 refs (14 calls)
+render_draw_text_row tay                  ; Y = name index (skip counter)
+            lda  #$7A            ; $FE/$FF → $897A (name table start)
+            sta  $FE
+            lda  #$89
+            sta  $FF
+            ldx  #$00
 
 ; === while loop starts here [nest:7] ===
 ; XREF: 2 refs (2 jumps) from render_encrypt_vblank, render_text_advance_ptr
@@ -5854,7 +6913,39 @@ render_advance_ptr    inc  $FE             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
             inc  $FF             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
             rts                  ; A=$0018 X=$0000 Y=$0097 ; [SP-1890]
 
-; --- Data region (921 bytes, text data) ---
+; ###########################################################################
+; ###                                                                     ###
+; ###          NAME TABLE ($897A, 921 bytes)                              ###
+; ###                                                                     ###
+; ###########################################################################
+;
+;   The single largest data structure in ULT3 — all entity names in the
+;   game packed as null-terminated high-ASCII strings. Every terrain type,
+;   NPC, monster, weapon, armor, spell, race, and class name lives here.
+;   Total conversion mods replace this entire region via u3edit's
+;   `patch compile-names` / `patch import` commands.
+;
+;   ENCODING: High-bit ASCII ($C1='A' through $DA='Z'). Null bytes ($00)
+;   terminate each string. The $FF bytes between some entries serve as
+;   line-break markers when rendered by render_draw_text_row.
+;
+;   BUDGET: 921 bytes total, but the last 30 bytes overlap with the BLOAD
+;   tail of the next file load, giving 891 usable bytes for names.
+;
+;   LAYOUT (by index):
+;     0-13:   Terrain names (Ground, Water, Grass, Brush, Forest, Mountains...)
+;     14-16:  Transport (Horse, Frigate, Whirlpool)
+;     17-20:  NPC types (Serpent, Man-O-War, Pirate, Merchant, Jester, Guard)
+;     21-31:  Classes (Fighter, Cleric, Wizard, Thief, Orc...)
+;     32-47:  Monster group 1 (Skeleton, Giant, Daemon, Pincher, Dragon...)
+;     48-63:  Terrain/location extras (Force Field, Lava, Moon Gate, Wall...)
+;     64-79:  Weapons (Hand, Dagger, Mace, Sling, Axe, Bow, Sword...)
+;     80-87:  Armor (Skin, Cloth, Leather, Chain, Plate...)
+;     88-102: Wizard spells (Repond, Mittar, Lorum, Dor Acron...)
+;     103-118: Cleric spells (Pontori, Appar Unem, Sanctu, Luminae...)
+;     119+:   Monster group 2 (Brigand, Cutpurse, Goblin, Troll...)
+;
+; --- Name table data (921 bytes) ---
             DB      $00,$D7,$C1,$D4,$C5,$D2,$00,$C7,$D2,$C1,$D3,$D3,$00,$C2,$D2,$D5
             DB      $D3,$C8,$00
             ASC     "FOREST"
@@ -6441,30 +7532,54 @@ dungeon_chest_status  lda  $B2             ; A=[$00B2] X=$0000 Y=$0020 ; [SP-234
 ; --- End data region (181 bytes) ---
 
 
-; ---------------------------------------------------------------------------
-; calc_hgr_scanline  [11 calls]
-;   Called by: dungeon_check_tile, dungeon_tile_table, dungeon_set_encounter, dungeon_tile_inscription, input_dungeon_gen_pos, dungeon_fountain, dungeon_lava
-; ---------------------------------------------------------------------------
+; ###########################################################################
+; ###                                                                     ###
+; ###          DUNGEON MAP LOOKUP ($93DE)                                 ###
+; ###                                                                     ###
+; ###########################################################################
 
-; FUNC $0093DE: register -> A:X []
-; Proto: uint32_t func_0093DE(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-; XREF: 11 refs (11 calls) from $005BC4, dungeon_check_tile, dungeon_tile_table, dungeon_set_encounter, dungeon_tile_inscription, ...
-calc_hgr_scanline  clc                  ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2381]
-            lda  $03             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            adc  $02             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            sta  $FE             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            clc                  ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            lda  #$10            ; A=$0010 X=$0000 Y=$0020 ; [SP-2381]
-            adc  $13             ; A=$0010 X=$0000 Y=$0020 ; [SP-2381]
-            sta  $FF             ; A=$0010 X=$0000 Y=$0020 ; [SP-2381]
-            ldy  #$00            ; A=$0010 X=$0000 Y=$0000 ; [SP-2381]
-            lda  ($FE),Y         ; A=$0010 X=$0000 Y=$0000 ; [SP-2381]
-            rts                  ; A=$0010 X=$0000 Y=$0000 ; [SP-2379]
+; ---------------------------------------------------------------------------
+; calc_hgr_scanline — Read a tile from the 16x16 dungeon grid
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Despite the CIDAR-generated name suggesting HGR graphics math,
+;            this function reads a tile from the dungeon map at $1000+.
+;            Dungeon maps are 16x16 grids per level, 8 levels per dungeon,
+;            loaded at $1000 (level 0) through $1700 (level 7).
+;
+;   ALGORITHM: offset = Y*16 + X  (Y << 4 + X)
+;     $FE = ($03 << 4) + $02    = Y*16 + X (low byte of address)
+;     $FF = $10 + $13            = base page + dungeon level
+;     Result: tile = [$1000 + level*256 + Y*16 + X]
+;
+;   WHY $13: Zero-page $13 holds the current dungeon level (0-7).
+;   Adding it to $10 offsets into the correct 256-byte level page.
+;   Each level is exactly 256 bytes (16x16), so level addressing is
+;   simply a page-number addition — elegant memory layout.
+;
+;   PARAMS:  $02 = X coordinate (0-15)
+;            $03 = Y coordinate (0-15)
+;            $13 = dungeon level (0-7)
+;   RETURNS: A = tile value at (X,Y) on current dungeon level
+;            $FE/$FF = pointer to tile (for in-place modification)
+;
+; XREF: 11 refs (11 calls)
+calc_hgr_scanline  clc
+            lda  $03             ; Y coordinate
+            asl  a               ; Y*2
+            asl  a               ; Y*4
+            asl  a               ; Y*8
+            asl  a               ; Y*16
+            adc  $02             ; Y*16 + X = offset within level
+            sta  $FE             ; Low byte of address
+            clc
+            lda  #$10            ; Base page $10 (dungeon maps at $1000)
+            adc  $13             ; + dungeon level → page $10-$17
+            sta  $FF             ; High byte of address
+            ldy  #$00
+            lda  ($FE),Y         ; Read tile value
+            rts
 
-; ---
+; --- Direction delta table (used by dungeon movement commands) ---
+;   8 entries: N(0,1), NE(0,-1), etc. — direction X/Y deltas
             DB      $00,$01,$00,$FF,$FF,$00,$01,$00,$32,$22,$0D
