@@ -385,25 +385,22 @@ if [ -d "$SOURCES_DIR" ]; then
         echo "  Applied title screen text"
     fi
 
-    # Compile and import tile graphics
+    # Compile and import tile graphics (via u3edit shapes compile)
     TILES_SRC="${SOURCES_DIR}/tiles.tiles"
     SHPS=$(find_file "SHPS")
-    if [ -f "$TILES_SRC" ] && [ -f "$SHPS" ] && [ -f "${TOOLS_DIR}/tile_compiler.py" ]; then
-        python3 "${TOOLS_DIR}/tile_compiler.py" compile "$TILES_SRC" \
-            --format json -o /tmp/voidborn_tiles.json 2>/dev/null
+    if [ -f "$TILES_SRC" ] && [ -f "$SHPS" ]; then
+        u3edit shapes compile "$TILES_SRC" --format json \
+            -o /tmp/voidborn_tiles.json 2>/dev/null
         u3edit shapes import "$SHPS" /tmp/voidborn_tiles.json 2>/dev/null || true
         rm -f /tmp/voidborn_tiles.json
         echo "  Compiled and imported tile graphics (256 tiles)"
     fi
 
-    # Compile and import overworld map
+    # Compile and import overworld map (via u3edit map compile)
     MAPA_SRC="${SOURCES_DIR}/mapa.map"
     MAPA=$(find_file "MAPA")
-    if [ -f "$MAPA_SRC" ] && [ -f "$MAPA" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
-        python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAPA_SRC" \
-            -o /tmp/voidborn_mapa.json 2>/dev/null
-        u3edit map import "$MAPA" /tmp/voidborn_mapa.json 2>/dev/null || true
-        rm -f /tmp/voidborn_mapa.json
+    if [ -f "$MAPA_SRC" ] && [ -f "$MAPA" ]; then
+        u3edit map compile "$MAPA_SRC" -o "$MAPA" 2>/dev/null || true
         echo "  Compiled and imported overworld map"
     fi
 
@@ -412,11 +409,8 @@ if [ -d "$SOURCES_DIR" ]; then
         MAP_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
         MAP_SRC="${SOURCES_DIR}/map${letter}.map"
         MAP_FILE=$(find_file "MAP${MAP_UPPER}")
-        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
-            python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAP_SRC" \
-                -o "/tmp/voidborn_map${letter}.json" 2>/dev/null
-            u3edit map import "$MAP_FILE" "/tmp/voidborn_map${letter}.json" 2>/dev/null || true
-            rm -f "/tmp/voidborn_map${letter}.json"
+        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ]; then
+            u3edit map compile "$MAP_SRC" -o "$MAP_FILE" 2>/dev/null || true
         fi
     done
     echo "  Compiled and imported 12 surface maps"
@@ -426,21 +420,20 @@ if [ -d "$SOURCES_DIR" ]; then
         MAP_UPPER=$(echo "$letter" | tr '[:lower:]' '[:upper:]')
         MAP_SRC="${SOURCES_DIR}/map${letter}.map"
         MAP_FILE=$(find_file "MAP${MAP_UPPER}")
-        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ] && [ -f "${TOOLS_DIR}/map_compiler.py" ]; then
-            python3 "${TOOLS_DIR}/map_compiler.py" compile "$MAP_SRC" \
-                --dungeon -o "/tmp/voidborn_map${letter}.json" 2>/dev/null
-            u3edit map import "$MAP_FILE" "/tmp/voidborn_map${letter}.json" 2>/dev/null || true
-            rm -f "/tmp/voidborn_map${letter}.json"
+        if [ -f "$MAP_SRC" ] && [ -f "$MAP_FILE" ]; then
+            u3edit map compile "$MAP_SRC" --dungeon -o "$MAP_FILE" 2>/dev/null || true
         fi
     done
     echo "  Compiled and imported 7 dungeon maps"
 
-    # Compile and apply name table via name_compiler
+    # Compile and apply name table (via u3edit patch compile-names)
     NAMES_SRC="${SOURCES_DIR}/names.names"
     ULT3=$(find_file "ULT3")
-    if [ -f "$NAMES_SRC" ] && [ -f "$ULT3" ] && [ -f "${TOOLS_DIR}/name_compiler.py" ]; then
-        NAMETABLE_HEX=$(python3 "${TOOLS_DIR}/name_compiler.py" compile "$NAMES_SRC")
-        u3edit patch edit "$ULT3" --region name-table --data "$NAMETABLE_HEX" 2>/dev/null || true
+    if [ -f "$NAMES_SRC" ] && [ -f "$ULT3" ]; then
+        u3edit patch compile-names "$NAMES_SRC" \
+            -o /tmp/voidborn_names.json 2>/dev/null
+        u3edit patch import "$ULT3" /tmp/voidborn_names.json 2>/dev/null || true
+        rm -f /tmp/voidborn_names.json
         echo "  Compiled and applied Voidborn name table"
     fi
 
@@ -483,9 +476,9 @@ if [ -d "$SOURCES_DIR" ]; then
         bash "${ENGINE_DIR}/scenario_build.sh" "${SCRIPT_DIR}" \
             --apply-to "$GAME_DIR" 2>/dev/null || true
         echo "  Applied engine inline string patches via reassembly"
-    elif [ -f "$BIN_PATCHES" ] && [ -f "$ULT3" ] && [ -f "${ENGINE_TOOLS}/string_patcher.py" ]; then
+    elif [ -f "$BIN_PATCHES" ] && [ -f "$ULT3" ]; then
         echo "  Applying engine string patches (binary, in-place)..."
-        python3 "${ENGINE_TOOLS}/string_patcher.py" "$ULT3" "$BIN_PATCHES" \
+        u3edit patch strings-import "$ULT3" "$BIN_PATCHES" \
             --backup 2>/dev/null || true
         echo "  Applied engine inline string patches via binary patcher"
     fi
@@ -512,24 +505,21 @@ echo "  roster import         - Bulk character data from JSON"
 echo "  save edit/import      - Party state (position, transport, sentinel)"
 echo "  bestiary edit/import  - Monster stats and flags (13 encounter files)"
 echo "  combat edit/import    - Battlefield tiles and positions (9 maps)"
+echo "  map compile/decompile - Text-art .map <-> binary MAP (20 maps)"
 echo "  map set/fill/replace  - Overworld tile manipulation"
-echo "  map find              - Tile location search"
-echo "  map import            - Full map replacement from JSON (20 maps)"
 echo "  special edit/import   - Shrine/fountain tile editing (4 locations)"
 echo "  tlk edit/build        - Dialog text replacement and full rewrite (19 files)"
 echo "  text edit             - Game text string editing"
-echo "  patch edit            - Engine binary: names, moongates, food rate"
-echo "  shapes import         - Tile graphics from compiled sources (256 tiles)"
+echo "  patch edit/import     - Engine binary: names, moongates, food rate"
+echo "  patch compile-names   - Text-first .names -> engine name-table JSON"
+echo "  patch strings-import  - Engine inline string patches (binary, in-place)"
+echo "  shapes compile        - Text-art .tiles -> SHPS binary (256 tiles)"
+echo "  shapes import         - Tile graphics from compiled sources"
 echo "  sound import          - Sound data replacement (SOSA/SOSM/MBS)"
 echo "  ddrw import           - Dungeon drawing data replacement"
 echo ""
-echo "Pipeline tools used:"
-echo "  tile_compiler.py      - Text-art tile definitions -> SHPS binary (256 tiles)"
-echo "  map_compiler.py       - Text-art maps -> MAP binary (20 maps)"
-echo "  name_compiler.py      - Text names -> engine name-table patch (921 bytes)"
+echo "External tools used:"
 echo "  shop_apply.py         - Text-matching shop overlay string replacer (8 shops)"
-echo "  source_patcher.py     - Source-level ASC directive patcher (no length limits)"
-echo "  string_patcher.py     - Binary-level inline string patcher (in-place fallback)"
 echo "  scenario_build.sh     - Source patch + asmiigs reassembly pipeline"
 echo "  verify.py             - Asset coverage verification"
 echo ""

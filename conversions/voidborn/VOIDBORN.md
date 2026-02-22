@@ -354,17 +354,15 @@ bash apply.sh /path/to/GAME/
 
 # Or step by step:
 # 1. Compile and import tile graphics (256 tiles)
-python ../tools/tile_compiler.py compile sources/tiles.tiles --format json > /tmp/tiles.json
+u3edit shapes compile sources/tiles.tiles --format json -o /tmp/tiles.json
 u3edit shapes import SHPS /tmp/tiles.json --backup
 
 # 2. Compile and import maps (20 maps total)
 for letter in a b c d e f g h i j k l z; do
-    python ../tools/map_compiler.py compile sources/map${letter}.map -o /tmp/map.json
-    u3edit map import MAP$(echo $letter | tr a-z A-Z) /tmp/map.json --backup
+    u3edit map compile sources/map${letter}.map -o MAP$(echo $letter | tr a-z A-Z)
 done
 for letter in m n o p q r s; do
-    python ../tools/map_compiler.py compile sources/map${letter}.map --dungeon -o /tmp/map.json
-    u3edit map import MAP$(echo $letter | tr a-z A-Z) /tmp/map.json --backup
+    u3edit map compile sources/map${letter}.map --dungeon -o MAP$(echo $letter | tr a-z A-Z)
 done
 
 # 3. Build all dialog (19 files)
@@ -378,8 +376,8 @@ for letter in a b c d e f g h i j k l z; do
 done
 
 # 5. Compile and apply name table
-python ../tools/name_compiler.py compile sources/names.names | \
-    xargs u3edit patch edit ULT3 --region name-table --data
+u3edit patch compile-names sources/names.names -o /tmp/names.json
+u3edit patch import ULT3 /tmp/names.json
 
 # 6. Apply engine inline string patches
 # Option A: Binary (in-place, length constrained)
