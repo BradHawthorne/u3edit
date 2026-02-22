@@ -12917,3 +12917,388 @@ class TestDiffFileDispatch:
             f.write(bytes(42))
         fd = diff_file(p1, p2)
         assert fd is None
+
+
+# =============================================================================
+# Combat cmd_import
+# =============================================================================
+
+class TestCombatCmdImport:
+    """Test combat.py cmd_import."""
+
+    def test_import_tiles_and_positions(self, tmp_path):
+        """Import tiles and positions from JSON."""
+        from u3edit.combat import cmd_import as combat_import
+        data = bytearray(CON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'CONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # Build JSON with some tiles and monster/PC positions
+        jdata = {
+            'tiles': [['.' for _ in range(11)] for _ in range(11)],
+            'monsters': [{'x': 5, 'y': 3}],
+            'pcs': [{'x': 1, 'y': 1}],
+        }
+        json_path = os.path.join(str(tmp_path), 'con.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=False)
+        combat_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        # Check monster X position (offset 0x80)
+        from u3edit.constants import CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET
+        assert result[CON_MONSTER_X_OFFSET] == 5
+        assert result[CON_MONSTER_Y_OFFSET] == 3
+
+    def test_import_dry_run(self, tmp_path):
+        """Import with dry-run doesn't write."""
+        from u3edit.combat import cmd_import as combat_import
+        data = bytearray(CON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'CONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'tiles': [['~' for _ in range(11)] for _ in range(11)]}
+        json_path = os.path.join(str(tmp_path), 'con.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=True)
+        combat_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(CON_FILE_SIZE)  # unchanged
+
+    def test_import_clamps_out_of_bounds(self, tmp_path):
+        """Positions outside grid bounds are clamped."""
+        from u3edit.combat import cmd_import as combat_import
+        from u3edit.constants import CON_MONSTER_X_OFFSET, CON_MAP_WIDTH
+        data = bytearray(CON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'CONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'monsters': [{'x': 99, 'y': -5}]}
+        json_path = os.path.join(str(tmp_path), 'con.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=False)
+        combat_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[CON_MONSTER_X_OFFSET] == CON_MAP_WIDTH - 1
+        from u3edit.constants import CON_MONSTER_Y_OFFSET
+        assert result[CON_MONSTER_Y_OFFSET] == 0
+
+
+# =============================================================================
+# Special cmd_view / cmd_import
+# =============================================================================
+
+class TestSpecialCmdViewImport:
+    """Test special.py cmd_view and cmd_import."""
+
+    def test_view_single_file(self, tmp_path, capsys):
+        """cmd_view on a single special file."""
+        from u3edit.special import cmd_view as special_view
+        data = bytearray(SPECIAL_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=path, json=False, output=None)
+        special_view(args)
+        captured = capsys.readouterr()
+        assert 'Special Location' in captured.out
+
+    def test_view_json_mode(self, tmp_path):
+        """cmd_view JSON mode produces valid output."""
+        from u3edit.special import cmd_view as special_view
+        data = bytearray(SPECIAL_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'special.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path)
+        special_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert 'tiles' in jdata
+        assert 'trailing_bytes' in jdata
+
+    def test_import_tiles(self, tmp_path):
+        """cmd_import replaces tiles from JSON."""
+        from u3edit.special import cmd_import as special_import
+        data = bytearray(SPECIAL_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # JSON with some tiles
+        tiles = [['.' for _ in range(11)] for _ in range(11)]
+        tiles[0][0] = '~'  # water at (0,0)
+        jdata = {'tiles': tiles}
+        json_path = os.path.join(str(tmp_path), 'special.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=False)
+        special_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        # Tile at (0,0) should now be water (TILE_CHARS_REVERSE['~'])
+        assert result[0] == TILE_CHARS_REVERSE['~']
+
+    def test_import_preserves_trailing_bytes(self, tmp_path):
+        """cmd_import restores trailing bytes from JSON."""
+        from u3edit.special import cmd_import as special_import
+        data = bytearray(SPECIAL_FILE_SIZE)
+        data[121] = 0xAA  # trailing byte
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'tiles': [], 'trailing_bytes': [0xBB, 0xCC]}
+        json_path = os.path.join(str(tmp_path), 'special.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=False)
+        special_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result[121] == 0xBB
+        assert result[122] == 0xCC
+
+    def test_import_dry_run(self, tmp_path):
+        """cmd_import with dry-run doesn't write."""
+        from u3edit.special import cmd_import as special_import
+        data = bytearray(SPECIAL_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'BRND')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'tiles': [['~' for _ in range(11)] for _ in range(11)]}
+        json_path = os.path.join(str(tmp_path), 'special.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path, output=None,
+            backup=False, dry_run=True)
+        special_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(SPECIAL_FILE_SIZE)  # unchanged
+
+
+# =============================================================================
+# Save cmd_import
+# =============================================================================
+
+class TestSaveCmdImport:
+    """Test save.py cmd_import."""
+
+    def test_import_party_state(self, tmp_path):
+        """Import party state from JSON."""
+        from u3edit.save import cmd_import as save_import
+        # Create PRTY file
+        prty_data = bytearray(PRTY_FILE_SIZE)
+        prty_path = os.path.join(str(tmp_path), 'PRTY')
+        with open(prty_path, 'wb') as f:
+            f.write(prty_data)
+        # Build JSON
+        jdata = {
+            'party': {
+                'transport': 'Ship',
+                'party_size': 4,
+                'x': 10,
+                'y': 20,
+            }
+        }
+        json_path = os.path.join(str(tmp_path), 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        with open(prty_path, 'rb') as f:
+            result = f.read()
+        ps = PartyState(result)
+        assert ps.party_size == 4
+        assert ps.x == 10
+        assert ps.y == 20
+
+    def test_import_dry_run(self, tmp_path):
+        """Import with dry-run doesn't write."""
+        from u3edit.save import cmd_import as save_import
+        prty_data = bytearray(PRTY_FILE_SIZE)
+        prty_path = os.path.join(str(tmp_path), 'PRTY')
+        with open(prty_path, 'wb') as f:
+            f.write(prty_data)
+        jdata = {'party': {'party_size': 4, 'x': 30}}
+        json_path = os.path.join(str(tmp_path), 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=False, dry_run=True)
+        save_import(args)
+        with open(prty_path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(PRTY_FILE_SIZE)  # unchanged
+
+
+# =============================================================================
+# Combat cmd_view text and JSON modes
+# =============================================================================
+
+class TestCombatCmdView:
+    """Test combat.py cmd_view."""
+
+    def test_view_single_file(self, tmp_path, capsys):
+        """cmd_view on a single CON file."""
+        from u3edit.combat import cmd_view as combat_view
+        data = bytearray(CON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'CONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=path, json=False, output=None, validate=False)
+        combat_view(args)
+        captured = capsys.readouterr()
+        assert 'Combat Map' in captured.out or 'CONA' in captured.out
+
+    def test_view_json_mode(self, tmp_path):
+        """cmd_view JSON mode on single file."""
+        from u3edit.combat import cmd_view as combat_view
+        data = bytearray(CON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'CONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'combat.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path, validate=False)
+        combat_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert 'tiles' in jdata
+        assert 'monsters' in jdata
+        assert 'pcs' in jdata
+
+    def test_view_directory_no_files(self, tmp_path):
+        """cmd_view on directory with no CON files exits."""
+        from u3edit.combat import cmd_view as combat_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            combat_view(args)
+
+
+# =============================================================================
+# Diff module: diff_special, diff_save, FileDiff/EntityDiff properties
+# =============================================================================
+
+class TestDiffSpecial:
+    """Test diff_special for BRND/SHRN/FNTN/TIME files."""
+
+    def test_identical_specials(self, tmp_path):
+        """Identical special files show no changes."""
+        from u3edit.diff import diff_special
+        data = bytes(SPECIAL_FILE_SIZE)
+        p1 = os.path.join(str(tmp_path), 'BRND1')
+        p2 = os.path.join(str(tmp_path), 'BRND2')
+        with open(p1, 'wb') as f:
+            f.write(data)
+        with open(p2, 'wb') as f:
+            f.write(data)
+        fd = diff_special(p1, p2, 'BRND')
+        assert fd.tile_changes == 0
+
+    def test_changed_special_tile(self, tmp_path):
+        """Changed tile in special location is detected."""
+        from u3edit.diff import diff_special
+        d1 = bytes(SPECIAL_FILE_SIZE)
+        d2 = bytearray(SPECIAL_FILE_SIZE)
+        d2[5] = 0xFF  # change a tile
+        p1 = os.path.join(str(tmp_path), 'BRND1')
+        p2 = os.path.join(str(tmp_path), 'BRND2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(bytes(d2))
+        fd = diff_special(p1, p2, 'BRND')
+        assert fd.tile_changes >= 1
+
+
+class TestDiffSave:
+    """Test diff_save comparing PRTY/PLRS directories."""
+
+    def test_identical_saves(self, tmp_path):
+        """Identical save directories show no changes."""
+        from u3edit.diff import diff_save
+        dir1 = os.path.join(str(tmp_path), 'dir1')
+        dir2 = os.path.join(str(tmp_path), 'dir2')
+        os.makedirs(dir1)
+        os.makedirs(dir2)
+        prty = bytes(PRTY_FILE_SIZE)
+        with open(os.path.join(dir1, 'PRTY'), 'wb') as f:
+            f.write(prty)
+        with open(os.path.join(dir2, 'PRTY'), 'wb') as f:
+            f.write(prty)
+        results = diff_save(dir1, dir2)
+        assert len(results) >= 1
+        assert not results[0].changed
+
+    def test_changed_party(self, tmp_path):
+        """Changed PRTY data is detected."""
+        from u3edit.diff import diff_save
+        dir1 = os.path.join(str(tmp_path), 'dir1')
+        dir2 = os.path.join(str(tmp_path), 'dir2')
+        os.makedirs(dir1)
+        os.makedirs(dir2)
+        prty1 = bytearray(PRTY_FILE_SIZE)
+        prty2 = bytearray(PRTY_FILE_SIZE)
+        prty2[PRTY_OFF_TRANSPORT] = 0x03  # change transport
+        with open(os.path.join(dir1, 'PRTY'), 'wb') as f:
+            f.write(prty1)
+        with open(os.path.join(dir2, 'PRTY'), 'wb') as f:
+            f.write(prty2)
+        results = diff_save(dir1, dir2)
+        assert any(r.changed for r in results)
+
+
+class TestDiffEntityProperties:
+    """Test EntityDiff and FileDiff property methods."""
+
+    def test_entity_diff_changed_with_fields(self):
+        """EntityDiff.changed is True when fields present."""
+        from u3edit.diff import EntityDiff, FieldDiff
+        ed = EntityDiff('test', 'label')
+        assert not ed.changed
+        ed.fields.append(FieldDiff('x', 1, 2))
+        assert ed.changed
+
+    def test_file_diff_change_count(self):
+        """FileDiff.change_count counts entities with changes."""
+        from u3edit.diff import FileDiff, EntityDiff, FieldDiff
+        fd = FileDiff('test', 'test')
+        e1 = EntityDiff('a', 'A')
+        e1.fields.append(FieldDiff('x', 1, 2))
+        e2 = EntityDiff('b', 'B')  # no changes
+        fd.entities = [e1, e2]
+        assert fd.change_count == 1
+
+    def test_game_diff_changed(self):
+        """GameDiff.changed is True when any file has changes."""
+        from u3edit.diff import GameDiff, FileDiff
+        gd = GameDiff()
+        fd = FileDiff('test', 'test')
+        gd.files.append(fd)
+        assert not gd.changed
+        fd.tile_changes = 1
+        assert gd.changed
