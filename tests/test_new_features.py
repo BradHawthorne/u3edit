@@ -13716,3 +13716,286 @@ class TestBestiaryValidate:
         warnings = validate_monster(m)
         assert any('ability1' in w.lower() or 'undefined' in w.lower()
                     for w in warnings)
+
+
+# =============================================================================
+# Map cmd_view JSON mode
+# =============================================================================
+
+class TestMapCmdView:
+    """Test map.py cmd_view JSON export."""
+
+    def test_view_overworld_json(self, tmp_path):
+        """cmd_view JSON mode for overworld map."""
+        from u3edit.map import cmd_view as map_view
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04  # grass tile
+        path = os.path.join(str(tmp_path), 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'map.json')
+        args = argparse.Namespace(
+            file=path, json=True, output=out_path, crop=None)
+        map_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert jdata['type'] == 'overworld'
+        assert 'tiles' in jdata
+        assert jdata['width'] == 64
+
+    def test_view_dungeon_json(self, tmp_path):
+        """cmd_view JSON mode for dungeon map."""
+        from u3edit.map import cmd_view as map_view
+        data = bytearray(MAP_DUNGEON_SIZE)
+        path = os.path.join(str(tmp_path), 'MAPB')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'map.json')
+        args = argparse.Namespace(
+            file=path, json=True, output=out_path, crop=None)
+        map_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert jdata['type'] == 'dungeon'
+        assert 'levels' in jdata
+
+    def test_view_invalid_crop(self, tmp_path):
+        """cmd_view with invalid --crop exits."""
+        from u3edit.map import cmd_view as map_view
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        path = os.path.join(str(tmp_path), 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, json=False, output=None, crop='a,b,c,d')
+        with pytest.raises(SystemExit):
+            map_view(args)
+
+    def test_view_text_with_crop(self, tmp_path, capsys):
+        """cmd_view text mode with valid --crop."""
+        from u3edit.map import cmd_view as map_view
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        path = os.path.join(str(tmp_path), 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, json=False, output=None, crop='0,0,10,10')
+        map_view(args)
+        captured = capsys.readouterr()
+        assert 'Map' in captured.out
+
+
+# =============================================================================
+# Save cmd_view JSON mode
+# =============================================================================
+
+class TestSaveCmdView:
+    """Test save.py cmd_view."""
+
+    def test_view_json_mode(self, tmp_path):
+        """cmd_view JSON mode with PRTY and PLRS."""
+        from u3edit.save import cmd_view as save_view
+        # Create PRTY
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[PRTY_OFF_TRANSPORT] = 0x01  # on foot
+        with open(os.path.join(str(tmp_path), 'PRTY'), 'wb') as f:
+            f.write(prty)
+        # Create PLRS (4 chars * 64 bytes)
+        plrs = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('TEST'):
+            plrs[i] = ord(ch) | 0x80
+        plrs[CHAR_STATUS] = ord('G')
+        with open(os.path.join(str(tmp_path), 'PLRS'), 'wb') as f:
+            f.write(plrs)
+        out_path = os.path.join(str(tmp_path), 'save.json')
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=True, output=out_path,
+            validate=False, brief=True)
+        save_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert 'party' in jdata
+        assert 'active_characters' in jdata
+
+    def test_view_no_prty_exits(self, tmp_path):
+        """cmd_view with no PRTY file exits."""
+        from u3edit.save import cmd_view as save_view
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=False, output=None,
+            validate=False, brief=True)
+        with pytest.raises(SystemExit):
+            save_view(args)
+
+
+# =============================================================================
+# Roster cmd_view JSON mode, cmd_create --force
+# =============================================================================
+
+class TestRosterCmdViewJson:
+    """Test roster cmd_view JSON output."""
+
+    def _make_roster(self, tmp_path, name='HERO'):
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate(name):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_view_json_output(self, tmp_path):
+        """cmd_view JSON mode exports character data."""
+        from u3edit.roster import cmd_view
+        path = self._make_roster(tmp_path)
+        out_path = os.path.join(str(tmp_path), 'roster.json')
+        args = argparse.Namespace(
+            file=path, slot=None, json=True, output=out_path,
+            validate=False)
+        cmd_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert isinstance(jdata, list)
+        assert len(jdata) >= 1
+        assert jdata[0]['name'] == 'HERO'
+
+    def test_view_json_with_validate(self, tmp_path):
+        """cmd_view JSON mode with --validate includes warnings."""
+        from u3edit.roster import cmd_view
+        path = self._make_roster(tmp_path)
+        out_path = os.path.join(str(tmp_path), 'roster.json')
+        args = argparse.Namespace(
+            file=path, slot=None, json=True, output=out_path,
+            validate=True)
+        cmd_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert 'warnings' in jdata[0]
+
+
+class TestRosterCmdCreateForce:
+    """Test roster cmd_create with --force on occupied slot."""
+
+    def test_create_force_overwrites(self, tmp_path):
+        """cmd_create with --force overwrites existing character."""
+        from u3edit.roster import cmd_create, load_roster
+        # Build roster with char in slot 0
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('OLD'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, force=True, dry_run=False, backup=False,
+            output=None, name='NEW',
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None, in_party=None, not_in_party=None,
+            sub_morsels=None)
+        cmd_create(args)
+        chars, _ = load_roster(path)
+        assert chars[0].name == 'NEW'
+
+    def test_create_dry_run_doesnt_write(self, tmp_path):
+        """cmd_create with --dry-run doesn't modify file."""
+        from u3edit.roster import cmd_create
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=5, force=False, dry_run=True, backup=False,
+            output=None, name='TEST',
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None, in_party=None, not_in_party=None,
+            sub_morsels=None)
+        cmd_create(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        assert result == bytes(ROSTER_FILE_SIZE)  # unchanged
+
+
+# =============================================================================
+# Bestiary cmd_view JSON mode
+# =============================================================================
+
+class TestBestiaryCmdViewJson:
+    """Test bestiary cmd_view JSON export."""
+
+    def test_view_json_output(self, tmp_path):
+        """cmd_view JSON mode exports monster data."""
+        from u3edit.bestiary import cmd_view as bestiary_view
+        # Create a MON file with one non-empty monster
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0x10  # tile1 for monster 0
+        data[4 * 16] = 20  # HP for monster 0
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'bestiary.json')
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=True, output=out_path,
+            validate=False, file=None)
+        bestiary_view(args)
+        with open(out_path) as f:
+            jdata = json.load(f)
+        assert 'MONA' in jdata
+        assert len(jdata['MONA']['monsters']) >= 1
+
+    def test_view_no_files_exits(self, tmp_path):
+        """cmd_view with no MON files exits."""
+        from u3edit.bestiary import cmd_view as bestiary_view
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=False, output=None,
+            validate=False, file=None)
+        with pytest.raises(SystemExit):
+            bestiary_view(args)
+
+
+# =============================================================================
+# Roster cmd_edit --all mode
+# =============================================================================
+
+class TestRosterCmdEditAll:
+    """Test roster cmd_edit with --all flag."""
+
+    def test_edit_all_applies_to_nonempty(self, tmp_path):
+        """--all flag applies edits to all non-empty slots."""
+        from u3edit.roster import cmd_edit, load_roster
+        data = bytearray(ROSTER_FILE_SIZE)
+        # Put chars in slots 0 and 2
+        for slot in (0, 2):
+            off = slot * CHAR_RECORD_SIZE
+            for i, ch in enumerate(f'HERO{slot}'):
+                data[off + i] = ord(ch) | 0x80
+            data[off + CHAR_STATUS] = ord('G')
+            data[off + CHAR_HP_HI] = 0x01
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=None, all=True,
+            dry_run=False, backup=False, output=None, validate=False,
+            name=None, str=50, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None, in_party=None, not_in_party=None,
+            sub_morsels=None)
+        cmd_edit(args)
+        chars, _ = load_roster(path)
+        assert chars[0].strength == 50
+        assert chars[2].strength == 50
+        # Slot 1 should remain empty
+        assert chars[1].is_empty
