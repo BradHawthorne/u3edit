@@ -128,7 +128,7 @@ Reusable framework for building full game replacements:
 
 ## Engine SDK (`engine/`)
 
-Buildable engine source tree using the Rosetta toolchain (asmiigs/deasmiigs). All three engine binaries reassemble byte-identical from CIDAR disassembly. **Fully symbolicated** — all 864 CIDAR-generated labels renamed to semantic names with documentation headers.
+Buildable engine source tree using the Rosetta toolchain (asmiigs/deasmiigs). All three engine binaries reassemble byte-identical from CIDAR disassembly. **Fully symbolicated** — all 864 CIDAR-generated labels renamed to semantic names. **Fully annotated** — every code function has academic-level headers documenting algorithms, Apple II hardware techniques, 6502 idioms, and historical context.
 
 - **`engine/subs/subs.s`**: SUBS shared library (3,584 bytes at $4100, 141 labels) — `print_inline_str`, `setup_char_ptr`, `play_sfx`, `get_random`, `copy_roster_to_plrs`
 - **`engine/ult3/ult3.s`**: Main engine (17,408 bytes at $5000, 351 labels) — `game_main_loop`, `combat_*`, `magic_*`, `render_*`, `equip_*`, `char_*`, `move_*`

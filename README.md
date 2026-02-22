@@ -409,7 +409,7 @@ For replacements that exceed the original length, use the source-level pipeline 
 
 ## Engine SDK
 
-The engine SDK provides byte-identical reassembly of all three engine binaries from CIDAR disassembly source, enabling source-level modifications with no length constraints. All 864 labels are fully symbolicated with semantic names and documentation headers.
+The engine SDK provides byte-identical reassembly of all three engine binaries from CIDAR disassembly source, enabling source-level modifications with no length constraints. All 864 labels are fully symbolicated with semantic names, and every code function has academic-level annotations documenting algorithms, Apple II hardware techniques (HGR double-buffering, speaker synthesis, BCD arithmetic), self-modifying code patterns, and historical context — making this the most thoroughly documented Ultima III engine source available.
 
 ```bash
 # Verify byte-identical round-trip assembly
