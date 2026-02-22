@@ -86,7 +86,7 @@ u3edit disk list game.po
 |------|-------------|----------|
 | `roster` | Character roster viewer/editor | `view`, `edit`, `create`, `import`, `check-progress` |
 | `bestiary` | Monster bestiary viewer/editor | `view`, `dump`, `edit`, `import` |
-| `map` | Overworld, town, and dungeon map viewer/editor | `view`, `overview`, `legend`, `edit`, `set`, `fill`, `replace`, `find`, `import` |
+| `map` | Overworld, town, and dungeon map viewer/editor | `view`, `overview`, `legend`, `edit`, `set`, `fill`, `replace`, `find`, `import`, `compile`, `decompile` |
 | `tlk` | NPC dialog viewer/editor | `view`, `extract`, `build`, `edit`, `search`, `import` |
 | `combat` | Combat battlefield viewer/editor | `view`, `edit`, `import` |
 | `save` | Save state viewer/editor | `view`, `edit`, `import` |
@@ -94,9 +94,9 @@ u3edit disk list game.po
 | `text` | Game text string viewer/editor | `view`, `edit`, `import` |
 | `spell` | Spell reference (wizard + cleric) | `view` |
 | `equip` | Equipment stats and class restrictions | `view` |
-| `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `edit-string`, `import`, `info` |
+| `shapes` | Tile graphics / character set editor | `view`, `export`, `edit`, `edit-string`, `import`, `info`, `compile`, `decompile` |
 | `sound` | Sound data editor (SOSA, SOSM, MBS) | `view`, `edit`, `import` |
-| `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump`, `import` |
+| `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump`, `import`, `strings`, `strings-edit`, `strings-import`, `compile-names`, `decompile-names`, `validate-names` |
 | `ddrw` | Dungeon drawing data editor | `view`, `edit`, `import` |
 | `diff` | Game data comparison tool | (compares two files or directories) |
 | `disk` | ProDOS disk image operations | `info`, `list`, `extract`, `audit` |
