@@ -9540,3 +9540,108 @@ class TestSoundCmdEditExpanded:
             dry_run=False, backup=True, output=None)
         cmd_edit(args)
         assert os.path.exists(str(path) + '.bak')
+
+
+# =============================================================================
+# Priority 3 edge case tests
+# =============================================================================
+
+class TestPartyStateEdgeCases:
+    """Tests for PartyState constructor and setter edge cases."""
+
+    def test_constructor_too_small_raises(self):
+        """PartyState with data shorter than PRTY_FILE_SIZE raises ValueError."""
+        with pytest.raises(ValueError, match='too small'):
+            PartyState(bytes(5))
+
+    def test_constructor_exact_size(self):
+        """PartyState with exact PRTY_FILE_SIZE works."""
+        party = PartyState(bytes(PRTY_FILE_SIZE))
+        assert party.party_size == 0
+
+    def test_slot_ids_clamps_high(self):
+        """Slot IDs > 19 are clamped to 19."""
+        party = PartyState(bytearray(PRTY_FILE_SIZE))
+        party.slot_ids = [99, 0, 0, 0]
+        assert party.raw[6] == 19  # clamped
+
+    def test_slot_ids_clamps_negative(self):
+        """Negative slot IDs are clamped to 0."""
+        party = PartyState(bytearray(PRTY_FILE_SIZE))
+        party.slot_ids = [-5, 0, 0, 0]
+        assert party.raw[6] == 0  # clamped
+
+    def test_location_code_setter(self):
+        """location_code setter writes raw byte directly."""
+        party = PartyState(bytearray(PRTY_FILE_SIZE))
+        party.location_code = 0x03
+        assert party.location_code == 0x03
+        assert party.raw[2] == 0x03  # PRTY_OFF_LOCATION
+
+    def test_location_code_setter_masks_to_byte(self):
+        """location_code setter masks value to 0xFF."""
+        party = PartyState(bytearray(PRTY_FILE_SIZE))
+        party.location_code = 0x1FF
+        assert party.location_code == 0xFF
+
+
+class TestCharacterNameTruncation:
+    """Tests for Character.name setter 13-char truncation."""
+
+    def test_name_13_chars_exact(self):
+        """13-character name fills exactly to the limit."""
+        from u3edit.roster import Character
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.name = 'ABCDEFGHIJKLM'  # 13 chars
+        assert char.name == 'ABCDEFGHIJKLM'
+
+    def test_name_14_chars_truncated(self):
+        """14-character name is truncated to 13."""
+        from u3edit.roster import Character
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.name = 'ABCDEFGHIJKLMN'  # 14 chars
+        assert char.name == 'ABCDEFGHIJKLM'  # truncated to 13
+        # Byte 0x0D must be null (field boundary)
+        assert char.raw[0x0D] == 0x00
+
+    def test_name_short_null_fills(self):
+        """Short name null-fills the remaining field bytes."""
+        from u3edit.roster import Character
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.name = 'AB'
+        assert char.name == 'AB'
+        # Bytes after 'AB' should be 0x00 (null-filled)
+        assert char.raw[2] == 0x00
+        assert char.raw[0x0D] == 0x00
+
+
+class TestCombatMonsterOverlap:
+    """Tests for validate_combat_map monster-monster overlap detection."""
+
+    def test_monster_monster_overlap_warns(self):
+        """Two monsters at the same position produce a warning."""
+        from u3edit.combat import CombatMap, validate_combat_map
+        data = bytearray(CON_FILE_SIZE)
+        cm = CombatMap(data)
+        # Place monster 0 and monster 1 at same position
+        cm.monster_x[0] = 5
+        cm.monster_y[0] = 5
+        cm.monster_x[1] = 5
+        cm.monster_y[1] = 5
+        warnings = validate_combat_map(cm)
+        overlap_warnings = [w for w in warnings if 'overlap' in w.lower()]
+        assert len(overlap_warnings) == 1
+        assert 'Monster 1' in overlap_warnings[0]
+
+    def test_no_overlap_no_warning(self):
+        """Monsters at different positions produce no overlap warning."""
+        from u3edit.combat import CombatMap, validate_combat_map
+        data = bytearray(CON_FILE_SIZE)
+        cm = CombatMap(data)
+        cm.monster_x[0] = 3
+        cm.monster_y[0] = 3
+        cm.monster_x[1] = 7
+        cm.monster_y[1] = 7
+        warnings = validate_combat_map(cm)
+        overlap_warnings = [w for w in warnings if 'overlap' in w.lower()]
+        assert len(overlap_warnings) == 0
