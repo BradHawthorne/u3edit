@@ -5012,820 +5012,1064 @@ frame_data_8080
             DB      $4D,$33,$36,$20,$20,$CF,$1E,$59,$4C,$4F,$42
 ; --- End data region (411 bytes) ---
 
+; ===========================================================================
+;                         ENTRY POINT ($8220)
+; ===========================================================================
+;
+; Execution begins here via JMP from $2000. This is the first code that runs
+; after the boot sector loads EXOD into memory at $2000-$86FF. The sequence:
+;
+;   1. Clear keyboard strobe (discard any key held during disk load)
+;   2. Run the full intro animation sequence (title → serpent → castle →
+;      text crawl → Exodus reveal → sound effect → final frames)
+;   3. Print "BRUN BOOT" via the inline string printer, which chains to
+;      the Applesoft BRUN command to load the next stage (BOOT binary)
+;
+; The trailing bytes after the null terminator ($86,$24,$84,$25,$20,$22,
+; $FC,$60) are dead code — a small stub that would save cursor position
+; and call $FC22 (HOME), but execution never reaches it because the
+; "BRUN BOOT" command transfers control to the BOOT loader.
+;
 ; XREF: 1 ref (1 jump) from $002000
-intro_entry  bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            jsr  intro_sequence      ; A=A+$57 X=A ; [SP-16089]
-            jsr  intro_print_string      ; A=A+$57 X=A ; [SP-16089]
+intro_entry  bit  $C010           ; Clear keyboard strobe — discard held key
+            jsr  intro_sequence   ; Run full intro animation
+            jsr  intro_print_string ; Print inline string (below)
 
-; ---
-            DB      $04 ; string length
+; --- inline string: chain-load command ---
+            DB      $04
             ASC     "BRUN"
             ASC     " BOOT"
-            DB      $8D ; CR
-            DB      $00 ; null terminator
-            DB      $86,$24,$84,$25,$20,$22,$FC,$60
+            DB      $8D             ; carriage return
+            DB      $00             ; null terminator
+            DB      $86,$24,$84,$25,$20,$22,$FC,$60  ; dead code (cursor save + HOME stub)
 ; ---
 
 
-; ---------------------------------------------------------------------------
-; intro_print_string
-;   ROM: COUT1
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_print_string — Inline String Printer ($823D)
+; ===========================================================================
+;
+; EXOD's own copy of the inline string printing pattern used throughout the
+; Ultima III engine (SUBS has print_inline_str at $4732). The technique is
+; a classic 6502 idiom: the caller uses JSR to this routine, and the null-
+; terminated string follows immediately after the JSR instruction in the
+; caller's code stream. On entry, the return address on the stack points
+; to the byte BEFORE the string (6502 JSR pushes PC+2, not PC+3).
+;
+; Algorithm:
+;   1. Pull return address from stack into $FE/$FF (string pointer - 1)
+;   2. Increment pointer, read byte — if zero, we're done
+;   3. Set high bit (ORA #$80) for Apple II screen output conventions
+;   4. Call ROM COUT ($FDED) to output the character
+;   5. Loop until null terminator
+;   6. Push final pointer value back as return address — RTS will jump
+;      to the byte after the null, resuming execution past the string
+;
+; This is functionally identical to SUBS print_inline_str but is a separate
+; copy because EXOD runs before SUBS is loaded into memory. The "BRUN BOOT"
+; string at the entry point is the only caller in EXOD.
+;
+; Entry:  Return address on stack points to string data - 1
+; Exit:   Execution resumes at byte after null terminator
+; Clobbers: A, Y, $FE/$FF
+;
+intro_print_string  pla                  ; pull return addr low → string ptr low
+            sta  $FE
+            pla                  ; pull return addr high → string ptr high
+            sta  $FF
+            ldy  #$00            ; Y stays 0 — all indexing via $FE/$FF inc
 
-; FUNC $00823D: register -> A:X []
-; Proto: uint32_t func_00823D(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-intro_print_string  pla                  ; A=[stk] X=A ; [SP-16095]
-            sta  $FE             ; A=[stk] X=A ; [SP-16095]
-            pla                  ; A=[stk] X=A ; [SP-16094]
-            sta  $FF             ; A=[stk] X=A ; [SP-16094]
-            ldy  #$00            ; A=[stk] X=A Y=$0000 ; [SP-16094]
+intro_print_next  inc  $FE             ; advance pointer (pre-increment)
+            bne  intro_print_char
+            inc  $FF             ; handle page crossing
+intro_print_char  lda  ($FE),Y         ; read next string byte
+            beq  intro_print_done ; null terminator → done
+            ora  #$80            ; set high bit for Apple II display
+            jsr  $FDED           ; ROM COUT — output character
+            jmp  intro_print_next
 
-; === while loop starts here ===
-; XREF: 1 ref (1 jump) from intro_print_char
-intro_print_next  inc  $FE             ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            bne  intro_print_char      ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            inc  $FF             ; A=[stk] X=A Y=$0000 ; [SP-16094]
-; XREF: 1 ref (1 branch) from intro_print_next
-intro_print_char  lda  ($FE),Y         ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            beq  intro_print_done      ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            ora  #$80            ; A=A|$80 X=A Y=$0000 ; [SP-16094]
-            jsr  $FDED           ; COUT - Character output routine
-            jmp  intro_print_next      ; A=A|$80 X=A Y=$0000 ; [SP-16096]
-; XREF: 1 ref (1 branch) from intro_print_char
-intro_print_done  lda  $FF             ; A=[$00FF] X=A Y=$0000 ; [SP-16096]
-            pha                  ; A=[$00FF] X=A Y=$0000 ; [SP-16097]
-            lda  $FE             ; A=[$00FE] X=A Y=$0000 ; [SP-16097]
-            pha                  ; A=[$00FE] X=A Y=$0000 ; [SP-16098]
-            rts                  ; A=[$00FE] X=A Y=$0000 ; [SP-16096]
+intro_print_done  lda  $FF             ; push final pointer as return address
+            pha                  ;   high byte first (6502 stack convention)
+            lda  $FE
+            pha                  ;   low byte second
+            rts                  ; RTS adds 1 → resumes after null terminator
 
-; ---------------------------------------------------------------------------
-; intro_sequence
-;   Calls: intro_memcpy, intro_memswap, intro_wipe_title, intro_check_key, intro_wipe_serpent, intro_load_castle, intro_text_crawl, intro_load_exodus
-;   ROM: WAIT
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_sequence — Main Intro Sequence Orchestrator ($825E)
+; ===========================================================================
+;
+; Runs the entire Ultima III title/intro animation, a carefully choreographed
+; multi-stage presentation that was a landmark for 1983 Apple II software.
+; The sequence uses HGR page 1/2 double-buffering to achieve smooth animation
+; on hardware with no vertical blank interrupt — each frame is drawn to the
+; hidden page, then the visible page is toggled via soft switches.
+;
+; Stage sequence:
+;   1. SETUP: Copy animation frame data from $2400→$8800 (4 pages) and
+;      $2800→$0800 (56 pages) to prepare HGR buffers
+;   2. MODE: Switch to full-screen HGR mode (HIRES+MIXCLR+LOWSCR+TXTCLR)
+;   3. SWAP: Swap $0400-$0800 with $8800-$8C00 (staging area ↔ HGR page 2)
+;   4. PRNG: Seed PRNG state ($19/$1A) for randomized dissolve/speaker effects
+;   5. WAIT: Drain keyboard buffer — loop clearing strobe + WAIT($FF) × 5,
+;      repeat while any key is held (prevents accidental skip from boot)
+;   6. WIPE TITLE: Dissolve title screen with 4-byte step (256 positions)
+;   7. PAUSE 2s, check for skip
+;   8. WIPE SERPENT: Dissolve serpent graphic with 2-byte step, mask transition
+;   9. PAUSE 5s, check for skip
+;  10. CASTLE: Load castle scene (no dissolve — direct blit, page 1 only)
+;  11. PAUSE 2s, TEXT CRAWL: Vertical scroll from $8000 data
+;  12. PAUSE 2s, EXODUS: Load Exodus graphic via blit
+;  13. PAUSE 6s, REVEAL: Progressive column-by-column reveal animation
+;  14. PAUSE 4s, FRAME 3 + SOUND EFFECT + FRAME 4: Final dramatic frames
+;  15. PAUSE 5s
+;  16. FINISH: Swap HGR buffers back, return
+;
+; Every pause calls intro_check_key — if the user presses any key, execution
+; short-circuits to intro_finish via stack unwinding (PLA×2 + JMP).
+;
+; Zero-page usage:
+;   $19/$1A  PRNG accumulator (seeded $E3/$9D)
+;   $1B      HGR page toggle ($00=page 1, $60=page 2)
+;
+; Called by: intro_entry
+;
+intro_sequence  ldx  #$04            ; 4 pages to copy
+            lda  #$24            ; source: $2400 (animation frame data)
+            ldy  #$88            ; dest: $8800 (HGR page 2 staging area)
+            jsr  intro_memcpy
+            ldx  #$38            ; 56 pages to copy (entire HGR area)
+            lda  #$28            ; source: $2800
+            ldy  #$08            ; dest: $0800 (HGR page 2 buffer? — actually text page 2 area)
+            jsr  intro_memcpy
 
-; FUNC $00825E: register -> A:X []
-; Liveness: returns(A,X,Y) [14 dead stores]
-intro_sequence  ldx  #$04            ; A=[$00FE] X=$0004 Y=$0000 ; [SP-16096]
-            lda  #$24            ; A=$0024 X=$0004 Y=$0000 ; [SP-16096]
-            ldy  #$88            ; A=$0024 X=$0004 Y=$0088 ; [SP-16096]
-            jsr  intro_memcpy     ; Call $0084A4(A)
-            ldx  #$38            ; A=$0024 X=$0038 Y=$0088 ; [SP-16098]
-            lda  #$28            ; A=$0028 X=$0038 Y=$0088 ; [SP-16098]
-            ldy  #$08            ; A=$0028 X=$0038 Y=$0008 ; [SP-16098]
-            jsr  intro_memcpy     ; Call $0084A4(A)
-; -- video_mode_read: Hi-res graphics mode --
-            bit  $C057           ; HIRES - Hi-res graphics mode {Video} <video_mode_read>
-            bit  $C052           ; MIXCLR - Full screen graphics {Video} <video_mode_read>
-            bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
-            bit  $C050           ; TXTCLR - Enable graphics mode {Video} <video_mode_read>
-            jsr  intro_memswap     ; A=$0028 X=$0038 Y=$0008 ; [SP-16102]
-            lda  #$E3            ; A=$00E3 X=$0038 Y=$0008 ; [SP-16102]
-            sta  $19             ; A=$00E3 X=$0038 Y=$0008 ; [SP-16102]
-            lda  #$9D            ; A=$009D X=$0038 Y=$0008 ; [SP-16102]
-            sta  $1A             ; A=$009D X=$0038 Y=$0008 ; [SP-16102]
-            lda  #$60            ; A=$0060 X=$0038 Y=$0008 ; [SP-16102]
-            sta  $1B             ; A=$0060 X=$0038 Y=$0008 ; [SP-16102]
+; --- Switch to full-screen HGR mode ---
+            bit  $C057           ; HIRES — enable hi-res graphics
+            bit  $C052           ; MIXCLR — full screen (no text window)
+            bit  $C054           ; LOWSCR — display page 1
+            bit  $C050           ; TXTCLR — graphics mode on
 
-; === while loop starts here ===
-; XREF: 1 ref (1 branch) from intro_delay_loop
-intro_wait_nokey  ldy  #$05            ; A=$0060 X=$0038 Y=$0005 ; [SP-16102]
+            jsr  intro_memswap   ; swap $0400-$0800 ↔ $8800-$8C00
 
-; === loop starts here (counter: Y, range: 5..0, iters: 5) [nest:1] ===
-; XREF: 1 ref (1 branch) from intro_delay_loop
-intro_delay_loop  lda  #$FF            ; A=$00FF X=$0038 Y=$0005 ; [SP-16102]
-            bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            dey                  ; A=$00FF X=$0038 Y=$0004 ; [SP-16104]
-            bne  intro_delay_loop      ; A=$00FF X=$0038 Y=$0004 ; [SP-16104]
-; === End of loop (counter: Y) ===
+; --- Seed PRNG for dissolve effects ---
+            lda  #$E3
+            sta  $19             ; PRNG accumulator low
+            lda  #$9D
+            sta  $1A             ; PRNG accumulator high
+            lda  #$60
+            sta  $1B             ; page toggle state ($60 = page 2 initially)
 
-            lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bmi  intro_wait_nokey      ; A=[$C000] X=$0038 Y=$0004 ; [SP-16104]
-; === End of while loop ===
+; --- Wait for keyboard to be released ---
+; Prevents accidental skip if user held a key during disk loading.
+; Outer loop: clear strobe, delay ~1.3 seconds (5 × WAIT($FF)), check KBD.
+; Repeats until no key is held.
+intro_wait_nokey  ldy  #$05            ; 5 delay iterations
 
-            jsr  intro_wipe_title       ; A=[$C000] X=$0038 Y=$0004 ; [SP-16106]
-            ldy  #$02            ; A=[$C000] X=$0038 Y=$0002 ; [SP-16106]
-            jsr  intro_check_key       ; A=[$C000] X=$0038 Y=$0002 ; [SP-16108]
-            jsr  intro_wipe_serpent     ; A=[$C000] X=$0038 Y=$0002 ; [SP-16110]
-            ldy  #$05            ; A=[$C000] X=$0038 Y=$0005 ; [SP-16110]
-            jsr  intro_check_key       ; A=[$C000] X=$0038 Y=$0005 ; [SP-16112]
-            lda  #$00            ; A=$0000 X=$0038 Y=$0005 ; [SP-16112]
-            sta  $1B             ; A=$0000 X=$0038 Y=$0005 ; [SP-16112]
-            bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
-            jsr  intro_load_castle      ; Call $00836E(A, Y)
-            ldy  #$02            ; A=$0000 X=$0038 Y=$0002 ; [SP-16114]
-            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16116]
-            jsr  intro_text_crawl     ; A=$0000 X=$0038 Y=$0002 ; [SP-16118]
-            ldy  #$02            ; A=$0000 X=$0038 Y=$0002 ; [SP-16118]
-            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16120]
-            jsr  intro_load_exodus      ; A=$0000 X=$0038 Y=$0002 ; [SP-16122]
-            ldy  #$06            ; A=$0000 X=$0038 Y=$0006 ; [SP-16122]
-            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0006 ; [SP-16124]
-            jsr  intro_reveal_anim     ; A=$0000 X=$0038 Y=$0006 ; [SP-16126]
-            ldy  #$04            ; A=$0000 X=$0038 Y=$0004 ; [SP-16126]
-            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0004 ; [SP-16128]
-            jsr  intro_load_frame_3      ; A=$0000 X=$0038 Y=$0004 ; [SP-16130]
-            jsr  intro_sound_effect     ; A=$0000 X=$0038 Y=$0004 ; [SP-16132]
-            jsr  intro_load_frame_4      ; A=$0000 X=$0038 Y=$0004 ; [SP-16134]
-            ldy  #$05            ; A=$0000 X=$0038 Y=$0005 ; [SP-16134]
-            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
+intro_delay_loop  lda  #$FF            ; maximum WAIT delay (~0.26 sec per call)
+            bit  $C010           ; clear keyboard strobe each iteration
+            jsr  $FCA8           ; ROM WAIT — delay A×(A+1)/2 cycles
+            dey
+            bne  intro_delay_loop
 
-; === while loop starts here (counter: Y 'j') ===
-; XREF: 1 ref (1 jump) from intro_key_pressed
-intro_finish  jsr  intro_memswap     ; A=$0000 X=$0038 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0082E2 followed by RTS ; [SP-16138]
-            rts                  ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
+            lda  $C000           ; read keyboard
+            bmi  intro_wait_nokey ; bit 7 set = key held → wait more
 
-; ---------------------------------------------------------------------------
-; intro_wipe_title  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit, intro_toggle_page
-; ---------------------------------------------------------------------------
+; --- Choreographed intro stages ---
+            jsr  intro_wipe_title      ; stage 6: dissolve title
+            ldy  #$02
+            jsr  intro_check_key       ; pause ~0.5s, check skip
+            jsr  intro_wipe_serpent    ; stage 8: dissolve serpent
+            ldy  #$05
+            jsr  intro_check_key       ; pause ~1.3s, check skip
+            lda  #$00
+            sta  $1B             ; lock to page 1 for castle scene
+            bit  $C054           ; ensure page 1 displayed
+            jsr  intro_load_castle     ; stage 10: castle scene
+            ldy  #$02
+            jsr  intro_check_key       ; pause ~0.5s
+            jsr  intro_text_crawl      ; stage 11: vertical text scroll
+            ldy  #$02
+            jsr  intro_check_key       ; pause ~0.5s
+            jsr  intro_load_exodus     ; stage 12: Exodus graphic
+            ldy  #$06
+            jsr  intro_check_key       ; pause ~1.5s
+            jsr  intro_reveal_anim    ; stage 13: column reveal
+            ldy  #$04
+            jsr  intro_check_key       ; pause ~1.0s
+            jsr  intro_load_frame_3   ; stage 14a: dramatic frame 3
+            jsr  intro_sound_effect   ; stage 14b: ominous sound
+            jsr  intro_load_frame_4   ; stage 14c: final frame
+            ldy  #$05
+            jsr  intro_check_key       ; pause ~1.3s
 
-; FUNC $0082E6: register -> A:X []
-; Liveness: returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_wipe_title   lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
-            sta  $0B             ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
-            lda  #$01            ; A=$0001 X=$0038 Y=$0005 ; [SP-16136]
-            sta  $0A             ; A=$0001 X=$0038 Y=$0005 ; [SP-16136]
-            lda  #$FF            ; A=$00FF X=$0038 Y=$0005 ; [SP-16136]
-            sta  $17             ; A=$00FF X=$0038 Y=$0005 ; [SP-16136]
-            lda  #$00            ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
-            sta  $18             ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
+; --- Cleanup: restore HGR buffers ---
+; Also the target for intro_key_pressed skip (via PLA×2 + JMP).
+intro_finish  jsr  intro_memswap   ; swap $0400-$0800 ↔ $8800-$8C00
+            rts
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from intro_wipe_title_loop
-intro_wipe_title_loop lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
-            ldx  #$26            ; A=$0008 X=$0026 Y=$0005 ; [SP-16136]
-            ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16136]
-            jsr  intro_hgr_blit     ; Call $0083E3(X)
-            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
-            lda  $18             ; A=[$0018] X=$0026 Y=$004D ; [SP-16140]
-            clc                  ; A=[$0018] X=$0026 Y=$004D ; [SP-16140]
-            adc  #$04            ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
-            sta  $18             ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
-            cmp  #$00            ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
-            bne  intro_wipe_title_loop    ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
-; === End of while loop ===
+; ===========================================================================
+; intro_wipe_title — Title Screen Dissolve Animation ($82E6)
+; ===========================================================================
+;
+; Progressively dissolves the title screen using a randomized pixel mask.
+; The effect works by blitting the source image through intro_hgr_blit with
+; an increasing threshold ($18) — the PRNG in the blit routine compares
+; against this threshold to decide whether each pixel transfers or stays
+; blank. Incrementing by 4 per frame creates 64 dissolve steps (256/4).
+;
+; The dissolve uses double-buffering: each frame is drawn to the hidden
+; HGR page, then intro_toggle_page swaps the visible page. This creates
+; flicker-free animation despite the Apple II having no vsync interrupt.
+;
+; After the dissolve loop, $17 is set to $00 (full transparency) and the
+; image is blitted twice more (once per page) to ensure both HGR pages
+; show the complete final image — essential because the next animation
+; stage may start on either page.
+;
+; Parameters:
+;   $0B/$0A = source high page / blit parameter ($08/$01)
+;   $17     = pixel mask ($FF = randomized dissolve)
+;   $18     = dissolve threshold (0→252, step 4)
+;   A=$08, X=$26, Y=$4D → blit dimensions for title region
+;
+intro_wipe_title   lda  #$08
+            sta  $0B             ; source high page
+            lda  #$01
+            sta  $0A             ; blit width parameter
+            lda  #$FF
+            sta  $17             ; $FF = randomized dissolve mode
+            lda  #$00
+            sta  $18             ; dissolve threshold starts at 0
 
-            lda  #$00            ; A=$0000 X=$0026 Y=$004D ; [SP-16140]
-            sta  $17             ; A=$0000 X=$0026 Y=$004D ; [SP-16140]
-            lda  #$08            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
-            ldx  #$26            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
-            ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
-            jsr  intro_hgr_blit     ; A=$0008 X=$0026 Y=$004D ; [SP-16142]
-            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
-            lda  #$08            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
-            ldx  #$26            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
-            ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
-            jsr  intro_hgr_blit     ; A=$0008 X=$0026 Y=$004D ; [SP-16146]
-            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $008326 followed by RTS ; [SP-16148]
-            rts                  ; A=$0008 X=$0026 Y=$004D ; [SP-16146]
+intro_wipe_title_loop lda  #$08            ; source page for blit
+            ldx  #$26            ; X dimension / scanline count
+            ldy  #$4D            ; Y dimension / column count
+            jsr  intro_hgr_blit  ; blit with current dissolve threshold
+            jsr  intro_toggle_page ; flip visible HGR page
+            lda  $18
+            clc
+            adc  #$04            ; advance threshold by 4 (64 total steps)
+            sta  $18
+            cmp  #$00            ; wrapped past 255 → dissolve complete
+            bne  intro_wipe_title_loop
 
-; ---------------------------------------------------------------------------
-; intro_wipe_serpent  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit, intro_toggle_page
-; ---------------------------------------------------------------------------
+; --- Final: blit complete image to both pages ---
+            lda  #$00
+            sta  $17             ; $00 = no mask (full transfer)
+            lda  #$08
+            ldx  #$26
+            ldy  #$4D
+            jsr  intro_hgr_blit  ; final blit to hidden page
+            jsr  intro_toggle_page ; swap pages
+            lda  #$08
+            ldx  #$26
+            ldy  #$4D
+            jsr  intro_hgr_blit  ; final blit to other page (now hidden)
+            jsr  intro_toggle_page ; both pages now show complete image
+            rts
 
-; FUNC $00832A: register -> A:X []
-; Liveness: returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_wipe_serpent lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
-            sta  $0B             ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
-            lda  #$05            ; A=$0005 X=$0026 Y=$004D ; [SP-16146]
-            sta  $0A             ; A=$0005 X=$0026 Y=$004D ; [SP-16146]
-            lda  #$FF            ; A=$00FF X=$0026 Y=$004D ; [SP-16146]
-            sta  $17             ; A=$00FF X=$0026 Y=$004D ; [SP-16146]
-            lda  #$00            ; A=$0000 X=$0026 Y=$004D ; [SP-16146]
-            sta  $18             ; A=$0000 X=$0026 Y=$004D ; [SP-16146]
+; ===========================================================================
+; intro_wipe_serpent — Serpent Dissolve Animation ($832A)
+; ===========================================================================
+;
+; Same dissolve technique as intro_wipe_title but with different parameters:
+; - Source at $55xx (serpent graphic in the data blob)
+; - Smaller blit region (X=$1F, Y=$2B vs title's X=$26, Y=$4D)
+; - Finer dissolve step ($02 vs title's $04) → 128 steps for smoother effect
+;
+; The serpent is the iconic sea serpent that appears in the Ultima III intro
+; between the title screen and the castle scene. The slower dissolve (half
+; the step size) gives it a more dramatic, lingering reveal.
+;
+intro_wipe_serpent lda  #$55
+            sta  $0B             ; source high page (serpent graphic)
+            lda  #$05
+            sta  $0A             ; blit width parameter
+            lda  #$FF
+            sta  $17             ; randomized dissolve mode
+            lda  #$00
+            sta  $18             ; threshold starts at 0
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from intro_wipe_serpent_loop
-intro_wipe_serpent_loop lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
-            ldx  #$1F            ; A=$0055 X=$001F Y=$004D ; [SP-16146]
-            ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16146]
-            jsr  intro_hgr_blit     ; Call $0083E3(X)
-            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [SP-16150]
-            lda  $18             ; A=[$0018] X=$001F Y=$002B ; [SP-16150]
-            clc                  ; A=[$0018] X=$001F Y=$002B ; [SP-16150]
-            adc  #$02            ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
-            sta  $18             ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
-            cmp  #$00            ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
-            bne  intro_wipe_serpent_loop  ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
-; === End of while loop ===
+intro_wipe_serpent_loop lda  #$55            ; serpent source page
+            ldx  #$1F            ; scanline count
+            ldy  #$2B            ; column count
+            jsr  intro_hgr_blit  ; blit with current threshold
+            jsr  intro_toggle_page ; flip visible page
+            lda  $18
+            clc
+            adc  #$02            ; step by 2 (128 total dissolve frames)
+            sta  $18
+            cmp  #$00            ; wrapped → dissolve complete
+            bne  intro_wipe_serpent_loop
 
-            lda  #$00            ; A=$0000 X=$001F Y=$002B ; [SP-16150]
-            sta  $17             ; A=$0000 X=$001F Y=$002B ; [SP-16150]
-            lda  #$55            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
-            ldx  #$1F            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
-            ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
-            jsr  intro_hgr_blit     ; A=$0055 X=$001F Y=$002B ; [SP-16152]
-            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [SP-16154]
-            lda  #$55            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
-            ldx  #$1F            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
-            ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
-            jsr  intro_hgr_blit     ; A=$0055 X=$001F Y=$002B ; [SP-16156]
-            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $00836A followed by RTS ; [SP-16158]
-            rts                  ; A=$0055 X=$001F Y=$002B ; [SP-16156]
+; --- Final: blit complete image to both pages ---
+            lda  #$00
+            sta  $17             ; no mask
+            lda  #$55
+            ldx  #$1F
+            ldy  #$2B
+            jsr  intro_hgr_blit  ; final blit to hidden page
+            jsr  intro_toggle_page
+            lda  #$55
+            ldx  #$1F
+            ldy  #$2B
+            jsr  intro_hgr_blit  ; final blit to other page
+            jsr  intro_toggle_page
+            rts
 
-; ---------------------------------------------------------------------------
-; intro_load_castle  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_load_castle — Castle Scene Direct Blit ($836E)
+; ===========================================================================
+;
+; Loads the castle scene graphic directly (no dissolve — $17=$00 means full
+; transfer). Unlike the title and serpent stages, this scene displays on
+; page 1 only (intro_sequence sets $1B=$00 before calling). The castle is
+; a smaller image (X=$03 scanlines, Y=$09 columns) rendered from $84xx data.
+;
+intro_load_castle  lda  #$84
+            sta  $0B             ; source high page (castle graphic)
+            lda  #$08
+            sta  $0A             ; blit width parameter
+            lda  #$00
+            sta  $17             ; no dissolve mask (direct transfer)
+            lda  #$84            ; source page for blit call
+            ldx  #$03            ; scanline count
+            ldy  #$09            ; column count
+            jsr  intro_hgr_blit
+            rts
 
-; FUNC $00836E: register -> A:X []
-; Proto: uint32_t func_00836E(void);
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_load_castle  lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
-            sta  $0B             ; A=$0084 X=$001F Y=$002B ; [SP-16156]
-            lda  #$08            ; A=$0008 X=$001F Y=$002B ; [SP-16156]
-            sta  $0A             ; A=$0008 X=$001F Y=$002B ; [SP-16156]
-            lda  #$00            ; A=$0000 X=$001F Y=$002B ; [SP-16156]
-            sta  $17             ; A=$0000 X=$001F Y=$002B ; [SP-16156]
-            lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
-            ldx  #$03            ; A=$0084 X=$0003 Y=$002B ; [SP-16156]
-            ldy  #$09            ; A=$0084 X=$0003 Y=$0009 ; [SP-16156]
-            jsr  intro_hgr_blit     ; Call $0083E3(X)
-            rts                  ; A=$0084 X=$0003 Y=$0009 ; [SP-16156]
+; ===========================================================================
+; intro_text_crawl — Vertical Text Scroll Animation ($8384)
+; ===========================================================================
+;
+; Reads coordinate pairs from a data stream at $8000 and plots character
+; pairs at each position, creating a vertical scrolling text effect over
+; the castle scene. Each entry in the data stream is a pair of bytes:
+;   byte 0 → $0A (column/X position)
+;   byte 1 → $0B = $BF - byte (row/Y position, inverted from bottom)
+;
+; The $BF subtraction maps the data's Y coordinates to Apple II HGR rows
+; counted from the bottom of the screen ($BF = scanline 191).
+;
+; A WAIT($40) delay between each character pair controls scroll speed.
+; The stream ends with a $00 byte.
+;
+; Data pointer: $00/$01, initialized to $8000
+;
+intro_text_crawl lda  #$00
+            sta  $00             ; data pointer low = $00
+            lda  #$80
+            sta  $01             ; data pointer high = $80 → read from $8000
 
-; ---------------------------------------------------------------------------
-; intro_text_crawl  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_inc_ptr, intro_plot_pair
-;   ROM: WAIT
-; ---------------------------------------------------------------------------
+intro_crawl_loop ldx  #$00
+            lda  ($00,X)         ; read next byte from data stream
+            beq  intro_crawl_done ; $00 = end of stream
+            sta  $0A             ; column position
+            jsr  intro_inc_ptr   ; advance data pointer
+            lda  #$BF            ; $BF = bottom of HGR screen (scanline 191)
+            sec
+            sbc  ($00,X)         ; subtract to get row from bottom
+            sta  $0B             ; row position
+            jsr  intro_inc_ptr   ; advance data pointer
+            jsr  intro_plot_pair ; plot character pair at ($0A, $0B)
+            lda  #$40            ; scroll delay
+            jsr  $FCA8           ; ROM WAIT
+            jmp  intro_crawl_loop
 
-; FUNC $008384: register -> A:X [I]
-; Proto: uint32_t func_008384(uint16_t param_Y);
-; Liveness: params(Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_text_crawl lda  #$00            ; A=$0000 X=$0003 Y=$0009 ; [SP-16156]
-            sta  $00             ; A=$0000 X=$0003 Y=$0009 ; [SP-16156]
-            lda  #$80            ; A=$0080 X=$0003 Y=$0009 ; [SP-16156]
-            sta  $01             ; A=$0080 X=$0003 Y=$0009 ; [SP-16156]
+intro_crawl_done rts
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 jump) from intro_crawl_loop
-intro_crawl_loop ldx  #$00            ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            lda  ($00,X)         ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            beq  intro_crawl_done  ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            sta  $0A             ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            jsr  intro_inc_ptr       ; Call $008476(A, X)
-            lda  #$BF            ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
-            sec                  ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
-            sbc  ($00,X)         ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
-            sta  $0B             ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
-            jsr  intro_inc_ptr       ; A=$00BF X=$0000 Y=$0009 ; [SP-16160]
-            jsr  intro_plot_pair    ; A=$00BF X=$0000 Y=$0009 ; [SP-16162]
-            lda  #$40            ; A=$0040 X=$0000 Y=$0009 ; [SP-16162]
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            jmp  intro_crawl_loop  ; A=$0040 X=$0000 Y=$0009 ; [SP-16164]
-; XREF: 1 ref (1 branch) from intro_crawl_loop
-intro_crawl_done rts                  ; A=$0040 X=$0000 Y=$0009 ; [SP-16162]
+; ===========================================================================
+; intro_load_exodus — Exodus Graphic Blit ($83AD)
+; ===========================================================================
+;
+; Blits the "EXODUS" title graphic from $92xx data. Direct transfer (the
+; dissolve mask $17 was set to $00 by intro_sequence before the castle stage
+; and remains $00). Larger region than the castle (X=$20 scanlines, Y=$05).
+;
+intro_load_exodus  lda  #$92
+            sta  $0B             ; source high page
+            lda  #$04
+            sta  $0A             ; blit width
+            lda  #$92            ; source page for blit
+            ldx  #$20            ; scanline count
+            ldy  #$05            ; column count
+            jsr  intro_hgr_blit
+            rts
 
-; ---------------------------------------------------------------------------
-; intro_load_exodus  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_load_frame_3 / intro_load_frame_4 — Dramatic Final Frames ($83BF/$83D1)
+; ===========================================================================
+;
+; These two functions display the final dramatic frames of the intro sequence.
+; Frame 3 blits from $A8xx, frame 4 from $98xx — both use the same dimensions
+; (X=$0D scanlines, Y=$10 columns) and blit width ($0E). They are called
+; back-to-back with a sound effect between them, creating a visual "hit" effect.
+;
+; The LDA #$A8 in frame 3 is flagged as a redundant load (already in A from
+; the STA $0B above), but it's harmless — the 6502 has no register forwarding,
+; and the original programmer likely valued clarity over the 2-cycle saving.
+;
+intro_load_frame_3  lda  #$0E
+            sta  $0A             ; blit width
+            lda  #$A8
+            sta  $0B             ; source high page (frame 3 at $A8xx)
+            lda  #$A8            ; source page (redundant but harmless)
+            ldx  #$0D            ; scanline count
+            ldy  #$10            ; column count
+            jsr  intro_hgr_blit
+            rts
 
-; FUNC $0083AD: register -> A:X []
-; Proto: uint32_t func_0083AD(void);
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_load_exodus  lda  #$92            ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
-            sta  $0B             ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
-            lda  #$04            ; A=$0004 X=$0000 Y=$0009 ; [SP-16162]
-            sta  $0A             ; A=$0004 X=$0000 Y=$0009 ; [SP-16162]
-            lda  #$92            ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
-            ldx  #$20            ; A=$0092 X=$0020 Y=$0009 ; [SP-16162]
-            ldy  #$05            ; A=$0092 X=$0020 Y=$0005 ; [SP-16162]
-            jsr  intro_hgr_blit     ; A=$0092 X=$0020 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083BB followed by RTS ; [SP-16164]
-            rts                  ; A=$0092 X=$0020 Y=$0005 ; [SP-16162]
+intro_load_frame_4  lda  #$0E
+            sta  $0A             ; blit width (same as frame 3)
+            lda  #$A8
+            sta  $0B             ; source high page (shared with frame 3)
+            lda  #$98            ; different source page ($98xx)
+            ldx  #$0D            ; scanline count
+            ldy  #$10            ; column count
+            jsr  intro_hgr_blit
+            rts
 
-; ---------------------------------------------------------------------------
-; intro_load_frame_3  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_hgr_blit — Core HGR Block Blit with Dissolve ($83E3)
+; ===========================================================================
+;
+; The central graphics routine in EXOD — a scanline-by-scanline block
+; transfer from source data to HGR screen memory, with three pixel transfer
+; modes controlled by the $17 mask byte:
+;
+;   $17 = $00: Direct transfer — every non-zero source pixel is copied.
+;              Zero source pixels are also copied (clearing the dest).
+;   $17 = $FF: Dissolve mode — non-zero source pixels are passed through
+;              a PRNG threshold test. The PRNG generates a value compared
+;              against $18: if PRNG ≤ $18, the pixel transfers; otherwise
+;              $00 is written. Increasing $18 from 0→255 creates a gradual
+;              dissolve-in effect.
+;   $17 bit 7 clear (but non-zero): Skip mode — non-zero source pixels
+;              that pass BIT $17 with N=0 are skipped (store $00).
+;
+; The PRNG is a simple additive generator: new_high = old_low + $1D + old_high,
+; new_low = old_low + $1D. This is the same PRNG used by intro_prng_mod.
+; During dissolve mode, each pixel that DOES transfer also toggles the
+; Apple II speaker ($C030), creating the distinctive "rain on a tin roof"
+; audio effect that accompanies the dissolve animation.
+;
+; Apple II HGR scanline addressing:
+;   The Apple II HGR memory layout is famously non-linear — consecutive
+;   scanlines are NOT at consecutive addresses. The lookup tables at
+;   $1B00 (low bytes) and $1BC0 (high bytes) provide the base address
+;   for each scanline. The EOR with $1B implements page selection:
+;   $1B=$00 → page 1 ($2000-$3FFF), $1B=$60 → page 2 ($4000-$5FFF).
+;
+; Parameters:
+;   A   = source start page ($0C)
+;   X   = column count per row ($0F)
+;   Y   = row count ($0E)
+;   $0A = blit width parameter (starting column offset)
+;   $0B = destination scanline start (saved/restored across call)
+;   $17 = pixel mask mode
+;   $18 = dissolve threshold (0-255)
+;   $19/$1A = PRNG state
+;
+; Zero-page workspace:
+;   $0C/$0D = source page / column counter
+;   $0E/$0F = row counter / column count
+;   $10/$11 = destination scanline address (page-selected)
+;   $12/$13 = source scanline address (always page 2 base, ORA #$40)
+;   $14     = pixel temp storage
+;   $15     = threshold aligned to 8 ($18 AND $F8)
+;
+intro_hgr_blit sta  $0C             ; source start page
+            stx  $0F             ; column count per row
+            lda  $0B
+            pha                  ; save $0B (restored at exit)
+            lda  $18
+            and  #$F8            ; align threshold to 8-pixel boundary
+            sta  $15
+            sty  $0E             ; row count
 
-; FUNC $0083BF: register -> A:X []
-; Proto: uint32_t func_0083BF(void);
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_load_frame_3  lda  #$0E            ; A=$000E X=$0020 Y=$0005 ; [SP-16162]
-            sta  $0A             ; A=$000E X=$0020 Y=$0005 ; [SP-16162]
-            lda  #$A8            ; A=$00A8 X=$0020 Y=$0005 ; [SP-16162]
-            sta  $0B             ; A=$00A8 X=$0020 Y=$0005 ; [SP-16162]
-            lda  #$A8            ; A=$00A8 X=$0020 Y=$0005 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0083C3 ; [SP-16162]
-            ldx  #$0D            ; A=$00A8 X=$000D Y=$0005 ; [SP-16162]
-            ldy  #$10            ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
-            jsr  intro_hgr_blit     ; A=$00A8 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083CD followed by RTS ; [SP-16164]
-            rts                  ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
+; --- Outer loop: one iteration per scanline row ---
+intro_blit_row lda  $0F
+            sta  $0D             ; reset column counter for this row
+            ldy  $0B             ; destination scanline index
+            lda  $1B00,Y         ; scanline base address low byte
+            sta  $10
+            lda  $1BC0,Y         ; scanline base address high byte
+            eor  $1B             ; XOR with page toggle ($00 or $60)
+            sta  $11             ; $10/$11 = dest scanline address
+            ldy  $0C             ; source scanline index
+            lda  $1B00,Y         ; source scanline base low
+            sta  $12
+            lda  $1BC0,Y         ; source scanline base high
+            ora  #$40            ; force page 2 base (source always $4000+)
+            sta  $13             ; $12/$13 = source scanline address
+            ldy  $0A             ; starting column offset
 
-; ---------------------------------------------------------------------------
-; intro_load_frame_4  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_hgr_blit
-; ---------------------------------------------------------------------------
+; --- Inner loop: one iteration per pixel column ---
+intro_blit_col lda  ($12),Y         ; read source pixel
+            beq  intro_blit_store ; source = 0 → write zero (clear dest)
+            bit  $17             ; test mask mode
+            bpl  intro_blit_store ; N=0 → skip mode, write $00 (already in A=0 path? no — falls through)
+            sta  $14             ; save source pixel
+            lda  $19             ; PRNG step: accumulate +$1D
+            adc  #$1D
+            tax
+            adc  $1A
+            sta  $19             ; update PRNG high
+            stx  $1A             ; update PRNG low
+            cmp  $18             ; compare PRNG output to dissolve threshold
+            bcc  intro_blit_draw ; PRNG < threshold → draw pixel
+            beq  intro_blit_draw ; PRNG = threshold → draw pixel
+            lda  #$00            ; PRNG > threshold → write black (pixel hidden)
+            jmp  intro_blit_store
 
-; FUNC $0083D1: register -> A:X []
-; Proto: uint32_t func_0083D1(void);
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_load_frame_4  lda  #$0E            ; A=$000E X=$000D Y=$0010 ; [SP-16162]
-            sta  $0A             ; A=$000E X=$000D Y=$0010 ; [SP-16162]
-            lda  #$A8            ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
-            sta  $0B             ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
-            lda  #$98            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            ldx  #$0D            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            ldy  #$10            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            jsr  intro_hgr_blit     ; A=$0098 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083DF followed by RTS ; [SP-16164]
-            rts                  ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
+intro_blit_draw lda  $14             ; recover saved source pixel
+            bit  $C030           ; toggle speaker — creates dissolve audio
 
-; ---------------------------------------------------------------------------
-; intro_hgr_blit  [10 calls]
-;   Called by: intro_load_castle, intro_wipe_serpent_loop, intro_load_frame_3, intro_load_frame_4, intro_wipe_title_loop, intro_load_exodus
-; ---------------------------------------------------------------------------
+intro_blit_store sta  ($10),Y         ; write pixel to dest scanline
+            iny                  ; next column
+            dec  $0D             ; decrement column counter
+            bne  intro_blit_col
 
-; FUNC $0083E3: register -> A:X [LI]
-; Proto: uint32_t func_0083E3(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y) [6 dead stores]
-; XREF: 10 refs (10 calls) from intro_load_castle, intro_wipe_serpent_loop, intro_load_frame_3, intro_wipe_serpent_loop, intro_load_frame_4, ...
-intro_hgr_blit sta  $0C             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            stx  $0F             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            lda  $0B             ; A=[$000B] X=$000D Y=$0010 ; [SP-16162]
-            pha                  ; A=[$000B] X=$000D Y=$0010 ; [SP-16163]
-            lda  $18             ; A=[$0018] X=$000D Y=$0010 ; [SP-16163]
-            and  #$F8            ; A=A&$F8 X=$000D Y=$0010 ; [SP-16163]
-            sta  $15             ; A=A&$F8 X=$000D Y=$0010 ; [SP-16163]
-            sty  $0E             ; A=A&$F8 X=$000D Y=$0010 ; [SP-16163]
+; --- Advance to next row ---
+            inc  $0B             ; next dest scanline
+            inc  $0C             ; next source scanline
+            dec  $0E             ; decrement row counter
+            bne  intro_blit_row
 
-; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 1 ref (1 branch) from intro_blit_store
-intro_blit_row lda  $0F             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            sta  $0D             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            ldy  $0B             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            lda  $1B00,Y         ; -> $1B10 ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            sta  $10             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            lda  $1BC0,Y         ; -> $1BD0 ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            eor  $1B             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            sta  $11             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            ldy  $0C             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            lda  $1B00,Y         ; -> $1B10 ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            sta  $12             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            lda  $1BC0,Y         ; -> $1BD0 ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
-            ora  #$40            ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            sta  $13             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            ldy  $0A             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
+            pla                  ; restore saved $0B
+            sta  $0B
+            rts
 
-; === while loop starts here (counter: Y 'iter_y') [nest:2] ===
-; XREF: 1 ref (1 branch) from intro_blit_store
-intro_blit_col lda  ($12),Y         ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            beq  intro_blit_store  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            bit  $17             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            bpl  intro_blit_store  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            sta  $14             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            lda  $19             ; A=[$0019] X=$000D Y=$0010 ; [SP-16163]
-            adc  #$1D            ; A=A+$1D X=$000D Y=$0010 ; [SP-16163]
-            tax                  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            adc  $1A             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            sta  $19             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            stx  $1A             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            cmp  $18             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            bcc  intro_blit_draw  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            beq  intro_blit_draw  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            lda  #$00            ; A=$0000 X=A Y=$0010 ; [SP-16163]
-            jmp  intro_blit_store  ; A=$0000 X=A Y=$0010 ; [SP-16163]
-; XREF: 2 refs (2 branches) from intro_blit_col, intro_blit_col
-intro_blit_draw lda  $14             ; A=[$0014] X=A Y=$0010 ; [SP-16163]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-; XREF: 3 refs (1 jump) (2 branches) from intro_blit_col, intro_blit_col, intro_blit_col
-intro_blit_store sta  ($10),Y         ; A=[$0014] X=A Y=$0010 ; [SP-16163]
-            iny                  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            dec  $0D             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            bne  intro_blit_col  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-; === End of while loop (counter: Y) ===
+; ===========================================================================
+; intro_plot_pair / intro_plot_pixel — HGR Pixel Plotting ($844C/$8453)
+; ===========================================================================
+;
+; intro_plot_pair plots TWO pixels at adjacent columns: first at column
+; $0A+1 (via inc/jsr/dec), then falls through to plot at column $0A.
+; This creates the double-wide pixels typical of Apple II HGR text rendering.
+;
+; intro_plot_pixel plots a single HGR pixel at position ($0A, $0B) using
+; lookup tables for the Apple II's complex HGR byte/bit mapping:
+;   $1B00/$1BC0 — scanline Y → base address (same tables as intro_hgr_blit)
+;   $1C80       — column X → pixel bitmask (which bit within the HGR byte)
+;   $1D80       — column X → byte offset (which byte within the scanline)
+;
+; The pixel is OR'd into the existing screen content (non-destructive),
+; and is written to BOTH HGR pages simultaneously — $10/$11 for one page,
+; $12/$13 for the other (EOR #$60 flips between $20xx and $40xx).
+;
+; This dual-page write ensures the text crawl is visible regardless of
+; which page is currently displayed.
+;
+intro_plot_pair inc  $0A             ; plot at column+1 first
+            jsr  intro_plot_pixel
+            dec  $0A             ; restore column, fall through to plot at column
 
-            inc  $0B             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            inc  $0C             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            dec  $0E             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            bne  intro_blit_row  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-; === End of while loop (counter: Y) ===
+intro_plot_pixel ldy  $0B             ; Y = scanline row
+            lda  $1B00,Y         ; scanline base address low
+            sta  $10             ; page 1 pointer low
+            sta  $12             ; page 2 pointer low (same base)
+            lda  $1BC0,Y         ; scanline base address high
+            sta  $11             ; page 1 pointer high
+            eor  #$60            ; flip $20↔$40 for other HGR page
+            sta  $13             ; page 2 pointer high
+            ldx  $0A             ; X = column position
+            lda  $1C80,X         ; pixel bitmask for this column
+            ldy  $1D80,X         ; byte offset for this column
+            ora  ($10),Y         ; OR pixel into page 1
+            sta  ($10),Y
+            ora  ($12),Y         ; OR pixel into page 2
+            sta  ($12),Y
+            rts
 
-            pla                  ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            sta  $0B             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            rts                  ; A=[stk] X=A Y=$0011 ; [SP-16160]
+; ===========================================================================
+; intro_inc_ptr — Increment 16-bit Data Pointer ($8476)
+; ===========================================================================
+;
+; Increments the 16-bit pointer at $00/$01 with page-crossing support.
+; Used by intro_text_crawl to advance through the coordinate data stream.
+; A minimal utility — just INC low / BNE skip / INC high.
+;
+intro_inc_ptr   inc  $00             ; increment pointer low byte
+            bne  intro_inc_ptr_done ; no page crossing → done
+            inc  $01             ; handle page crossing
+intro_inc_ptr_done rts
 
-; ---------------------------------------------------------------------------
-; intro_plot_pair  [1 call]
-;   Called by: intro_crawl_loop
-;   Calls: intro_plot_pixel
-; ---------------------------------------------------------------------------
-
-; FUNC $00844C: unknown -> A:X []
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_crawl_loop
-intro_plot_pair inc  $0A             ; A=[stk] X=A Y=$0011 ; [SP-16160]
-            jsr  intro_plot_pixel     ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            dec  $0A             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-
-; ---------------------------------------------------------------------------
-; intro_plot_pixel  [1 call]
-;   Called by: intro_plot_pair
-; ---------------------------------------------------------------------------
-
-; FUNC $008453: register -> A:X [L]
-; Proto: uint32_t func_008453(void);
-; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_plot_pair
-intro_plot_pixel ldy  $0B             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            lda  $1B00,Y         ; -> $1B11 ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            sta  $10             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            sta  $12             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            lda  $1BC0,Y         ; -> $1BD1 ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            sta  $11             ; A=[stk] X=A Y=$0011 ; [SP-16162]
-            eor  #$60            ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            sta  $13             ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            ldx  $0A             ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            lda  $1C80,X         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            ldy  $1D80,X         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            ora  ($10),Y         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            sta  ($10),Y         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            ora  ($12),Y         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            sta  ($12),Y         ; A=A^$60 X=A Y=$0011 ; [SP-16162]
-            rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-
-; ---------------------------------------------------------------------------
-; intro_inc_ptr  [2 calls]
-;   Called by: intro_crawl_loop
-; ---------------------------------------------------------------------------
-
-; FUNC $008476: register -> A:X []
-; Proto: uint32_t func_008476(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from intro_crawl_loop, intro_crawl_loop
-intro_inc_ptr   inc  $00             ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-            bne  intro_inc_ptr_done    ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-            inc  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-; XREF: 1 ref (1 branch) from intro_inc_ptr
-intro_inc_ptr_done rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16158]
-
-; --- Data region (39 bytes) ---
+; --- Dead code: alternate inline string printer (39 bytes) ---
+; Disassembles to a complete string printer using $08/$09 as pointer and
+; JMP ($0800) indirect for return. This is likely an earlier version of
+; intro_print_string that was superseded but never removed from the binary.
+; The bytes are never executed — CIDAR flagged them as a data region.
             DB      $68,$85,$08,$68,$85,$09,$E6,$08,$D0,$02,$E6,$09,$A2,$00,$A1,$08
             DB      $F0,$0C,$20,$ED,$FD,$E6,$08,$D0,$F5,$E6,$09,$4C,$8B,$84,$E6,$08
             DB      $D0,$02,$E6,$09,$6C,$08,$00
-; --- End data region (39 bytes) ---
+
+; ===========================================================================
+; intro_memcpy — Page-Aligned Block Memory Copy ($84A4)
+; ===========================================================================
+;
+; Copies X pages (256 bytes each) from source to destination. This is the
+; standard 6502 page-copy idiom: inner loop copies 256 bytes via Y counter
+; wrapping, outer loop decrements X and increments source/dest high bytes.
+;
+; Parameters:
+;   A = source high byte (stored to $01, low byte set to $00)
+;   Y = destination high byte (stored to $05, low byte set to $00)
+;   X = number of pages to copy
+;
+; Used by intro_sequence to set up animation data:
+;   Copy 4 pages from $2400 → $8800 (animation frame staging)
+;   Copy 56 pages from $2800 → $0800 (HGR buffer preparation)
+;
+intro_memcpy sta  $01             ; source high byte
+            sty  $05             ; destination high byte
+            lda  #$00
+            sta  $00             ; source low byte = $00
+            sta  $04             ; destination low byte = $00
+            ldy  #$00            ; byte counter (wraps 0→255→0)
+
+; --- Inner loop: copy 256 bytes ---
+intro_memcpy_loop lda  ($00),Y         ; read from source
+            sta  ($04),Y         ; write to destination
+            iny
+            bne  intro_memcpy_loop ; loop until Y wraps to 0
+
+; --- Outer loop: advance pages, count down ---
+            inc  $01             ; next source page
+            inc  $05             ; next destination page
+            dex                  ; decrement page counter
+            bne  intro_memcpy_loop ; more pages to copy
+
+            rts
+
+; ===========================================================================
+; intro_memswap — Swap Memory Blocks for HGR Page Flip ($84BF)
+; ===========================================================================
+;
+; Swaps 4 pages (1024 bytes) between $0400-$07FF and $8800-$8BFF.
+; The $0400 region is the Apple II text page 1 — during HGR mode this
+; memory is available as a staging buffer. $8800 sits in the EXOD data
+; area above the code section.
+;
+; Called twice by intro_sequence:
+;   1. At setup — moves text screen content to $8800 for safekeeping,
+;      copies animation staging data into $0400 for the HGR renderer
+;   2. At cleanup (intro_finish) — restores the original text screen
+;      content so the transition to BOOT text mode is clean
+;
+; Uses the stack as a temp register for the 3-way swap — the classic
+; 6502 technique when you have only A/X/Y and need to exchange two
+; memory locations without a temp ZP variable.
+;
+intro_memswap lda  #$00
+            sta  $00             ; block A low = $00
+            sta  $04             ; block B low = $00
+            lda  #$04
+            sta  $01             ; block A high = $04 → $0400
+            lda  #$88
+            sta  $05             ; block B high = $88 → $8800
+            ldy  #$00            ; byte counter
+            ldx  #$04            ; page counter (4 pages = 1024 bytes)
+
+; --- Swap loop: exchange bytes using stack as temp ---
+intro_memswap_loop lda  ($00),Y         ; read byte from block A
+            pha                  ; save on stack
+            lda  ($04),Y         ; read byte from block B
+            sta  ($00),Y         ; write to block A
+            pla                  ; recover original block A byte
+            sta  ($04),Y         ; write to block B
+            iny
+            bne  intro_memswap_loop ; loop 256 bytes per page
+
+            inc  $01             ; next page in block A
+            inc  $05             ; next page in block B
+            dex                  ; decrement page counter
+            bne  intro_memswap_loop ; more pages to swap
+
+            rts
+
+; ===========================================================================
+; intro_check_key — Interruptible Delay with Keyboard Skip ($84E6)
+; ===========================================================================
+;
+; Combines a timed delay with keyboard polling, allowing the user to skip
+; the intro at any point. Called 7 times by intro_sequence between stages.
+;
+; Algorithm:
+;   Loop Y times: WAIT($FF) then check keyboard.
+;   If no key pressed and Y > 0, continue looping.
+;   If key pressed → skip to intro_finish via stack unwinding.
+;
+; The Y parameter controls pause duration:
+;   Y=$02 ≈ 0.5 sec, Y=$04 ≈ 1.0 sec, Y=$05 ≈ 1.3 sec, Y=$06 ≈ 1.5 sec
+;
+; The skip mechanism is elegant: PLA×2 discards this function's own return
+; address from the stack, then JMP intro_finish resumes at the cleanup code
+; in intro_sequence. This works because intro_check_key is always called
+; from intro_sequence — the PLA×2 effectively returns to intro_sequence's
+; caller level, and intro_finish restores HGR buffers before returning.
+;
+; Entry: Y = number of delay iterations
+; Exit:  Normal return (no key), or skip to intro_finish (key pressed)
+;
+intro_check_key   lda  #$FF            ; maximum WAIT delay (~0.26 sec)
+            jsr  $FCA8           ; ROM WAIT
+            lda  $C000           ; read keyboard
+            bmi  intro_key_pressed ; bit 7 set = key pressed → skip
+            dey                  ; count down delay iterations
+            bne  intro_check_key  ; more iterations remaining
+
+            rts                  ; timeout — return normally
+
+; --- Key pressed: skip remaining intro ---
+intro_key_pressed bit  $C010           ; clear keyboard strobe
+            pla                  ; discard return address low byte
+            pla                  ; discard return address high byte
+            jmp  intro_finish    ; jump to cleanup in intro_sequence
 
 
-; ---------------------------------------------------------------------------
-; intro_memcpy  [2 calls]
-;   Called by: intro_sequence
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_toggle_page — HGR Page 1/2 Toggle ($84FC)
+; ===========================================================================
+;
+; Toggles the visible HGR page between page 1 ($2000) and page 2 ($4000)
+; for double-buffered animation. The page state is tracked in zero-page $1B:
+;   $1B = $00 → currently showing page 1 (after EOR → $60, show page 1)
+;   $1B = $60 → currently showing page 2 (after EOR → $00, show page 2)
+;
+; The EOR #$60 is the toggle — $60 XOR $60 = $00, $00 XOR $60 = $60.
+; The same $1B value is used by intro_hgr_blit's scanline address
+; calculation (EOR $1B) to direct drawing to the correct page.
+;
+; Apple II soft switches:
+;   $C054 (LOWSCR) = display page 1
+;   $C055 (HISCR) = display page 2
+;
+; Note the inverted logic: when $1B becomes non-zero ($60) after the EOR,
+; we show page 1 — because the drawing just completed on page 2 (the
+; hidden page), so we want to KEEP showing page 1 until the next flip.
+;
+intro_toggle_page     lda  $1B             ; current page state
+            eor  #$60            ; toggle: $00 ↔ $60
+            sta  $1B
+            bne  intro_show_page1 ; $1B=$60 → show page 1 (draw target = page 2)
+            bit  $C055           ; $1B=$00 → show page 2 (HISCR)
+            rts
+intro_show_page1  bit  $C054           ; show page 1 (LOWSCR)
+            rts
 
-; FUNC $0084A4: register -> A:X [L]
-; Proto: uint32_t func_0084A4(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from intro_sequence, intro_sequence
-intro_memcpy sta  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
-            sty  $05             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
-            lda  #$00            ; A=$0000 X=A Y=$0011 ; [SP-16158]
-            sta  $00             ; A=$0000 X=A Y=$0011 ; [SP-16158]
-            sta  $04             ; A=$0000 X=A Y=$0011 ; [SP-16158]
-            ldy  #$00            ; A=$0000 X=A Y=$0000 ; [SP-16158]
+; ===========================================================================
+; intro_sound_effect — Speaker Tone Generation ($850C)
+; ===========================================================================
+;
+; Generates the ominous sound effect played between the final intro frames.
+; The Apple II speaker is a 1-bit toggle ($C030) — reading this address
+; flips the speaker cone, producing a click. To make a tone, you toggle
+; it in a timed loop; varying the loop period changes the pitch.
+;
+; Structure:
+;   Outer loop: 5 × 256 = 1280 speaker toggles total
+;     1. Call intro_prng_mod(255) → random delay value (0-254)
+;     2. Busy-wait X cycles (DEX/BNE inner loop)
+;     3. Toggle speaker
+;     4. Decrement $14 (inner counter, 256 iterations)
+;     5. Decrement $15 (outer counter, 5 groups)
+;
+; The PRNG-modulated delay creates a randomized pitch that shifts between
+; toggles, producing a chaotic "explosion" or "thunder" effect rather than
+; a pure tone. This is a common 1980s Apple II audio technique — since the
+; speaker can only click (no amplitude or waveform control), all timbral
+; variety comes from varying the inter-click timing.
+;
+intro_sound_effect lda  #$00
+            sta  $14             ; inner loop counter (wraps from 0 → 256 iters)
+            lda  #$05
+            sta  $15             ; outer loop counter (5 groups)
 
-; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 2 refs (2 branches) from intro_memcpy_loop, intro_memcpy_loop
-intro_memcpy_loop lda  ($00),Y         ; A=$0000 X=A Y=$0000 ; [SP-16158]
-            sta  ($04),Y         ; A=$0000 X=A Y=$0000 ; [SP-16158]
-            iny                  ; A=$0000 X=A Y=$0001 ; [SP-16158]
-            bne  intro_memcpy_loop  ; A=$0000 X=A Y=$0001 ; [SP-16158]
-; === End of while loop (counter: Y) ===
+intro_sound_outer lda  #$FF            ; modulo base for PRNG → max 254
+            jsr  intro_prng_mod  ; get random delay 0-254
+            tax                  ; X = random delay count
 
-            inc  $01             ; A=$0000 X=A Y=$0001 ; [SP-16158]
-            inc  $05             ; A=$0000 X=A Y=$0001 ; [SP-16158]
-            dex                  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16158]
-            bne  intro_memcpy_loop  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16158]
-; === End of loop (counter: X) ===
+intro_sound_inner dex                  ; busy-wait loop: X cycles
+            bne  intro_sound_inner
 
-            rts                  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
+            bit  $C030           ; toggle speaker cone
+            dec  $14             ; inner counter (256 toggles per group)
+            bne  intro_sound_outer
 
-; ---------------------------------------------------------------------------
-; intro_memswap  [2 calls]
-;   Called by: intro_finish, intro_sequence
-; ---------------------------------------------------------------------------
+            dec  $15             ; outer counter (5 groups)
+            bne  intro_sound_outer
+            rts
 
-; FUNC $0084BF: register -> A:X [L]
-; Proto: uint32_t func_0084BF(void);
-; Liveness: returns(A,X,Y)
-; XREF: 2 refs (2 calls) from intro_finish, intro_sequence
-intro_memswap lda  #$00            ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
-            sta  $00             ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
-            sta  $04             ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
-            lda  #$04            ; A=$0004 X=X-$01 Y=$0001 ; [SP-16156]
-            sta  $01             ; A=$0004 X=X-$01 Y=$0001 ; [SP-16156]
-            lda  #$88            ; A=$0088 X=X-$01 Y=$0001 ; [SP-16156]
-            sta  $05             ; A=$0088 X=X-$01 Y=$0001 ; [SP-16156]
-            ldy  #$00            ; A=$0088 X=X-$01 Y=$0000 ; [SP-16156]
-            ldx  #$04            ; A=$0088 X=$0004 Y=$0000 ; [SP-16156]
-
-; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 2 refs (2 branches) from intro_memswap_loop, intro_memswap_loop
-intro_memswap_loop lda  ($00),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16156]
-            pha                  ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
-            lda  ($04),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
-            sta  ($00),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
-            pla                  ; A=[stk] X=$0004 Y=$0000 ; [SP-16156]
-            sta  ($04),Y         ; A=[stk] X=$0004 Y=$0000 ; [SP-16156]
-            iny                  ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
-            bne  intro_memswap_loop  ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
-; === End of while loop (counter: Y) ===
-
-            inc  $01             ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
-            inc  $05             ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
-            dex                  ; A=[stk] X=$0003 Y=$0001 ; [SP-16156]
-            bne  intro_memswap_loop  ; A=[stk] X=$0003 Y=$0001 ; [SP-16156]
-; === End of loop (counter: X) ===
-
-            rts                  ; A=[stk] X=$0003 Y=$0001 ; [SP-16154]
-
-; ---------------------------------------------------------------------------
-; intro_check_key  [7 calls, 1 branch]
-;   Called by: intro_delay_loop
-;   ROM: WAIT
-; ---------------------------------------------------------------------------
-
-; FUNC $0084E6: register -> A:X []
-; Proto: uint32_t func_0084E6(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 8 refs (7 calls) (1 branch) from intro_delay_loop, intro_delay_loop, intro_delay_loop, intro_delay_loop, intro_delay_loop, ...
-intro_check_key   lda  #$FF            ; A=$00FF X=$0003 Y=$0001 ; [SP-16154]
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bmi  intro_key_pressed    ; A=[$C000] X=$0003 Y=$0001 ; [SP-16156]
-            dey                  ; A=[$C000] X=$0003 Y=$0000 ; [SP-16156]
-            bne  intro_check_key       ; A=[$C000] X=$0003 Y=$0000 ; [SP-16156]
-; === End of loop (counter: Y) ===
-
-            rts                  ; A=[$C000] X=$0003 Y=$0000 ; [SP-16154]
-; XREF: 1 ref (1 branch) from intro_check_key
-intro_key_pressed bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            pla                  ; A=[stk] X=$0003 Y=$0000 ; [SP-16153]
-            pla                  ; A=[stk] X=$0003 Y=$0000 ; [SP-16152]
-            jmp  intro_finish      ; A=[stk] X=$0003 Y=$0000 ; [SP-16152]
-; === End of while loop (counter: Y) ===
-
-
-; ---------------------------------------------------------------------------
-; intro_toggle_page  [6 calls]
-;   Called by: intro_wipe_title_loop, intro_wipe_serpent_loop
-; ---------------------------------------------------------------------------
-
-; FUNC $0084FC: register -> A:X [L]
-; Proto: uint32_t func_0084FC(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 6 refs (6 calls) from intro_wipe_title_loop, intro_wipe_title_loop, intro_wipe_title_loop, intro_wipe_serpent_loop, intro_wipe_serpent_loop, ...
-intro_toggle_page     lda  $1B             ; A=[$001B] X=$0003 Y=$0000 ; [SP-16152]
-            eor  #$60            ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
-            sta  $1B             ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
-            bne  intro_show_page1      ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
-            bit  $C055           ; HISCR - Display page 2 {Video} <page_switch>
-            rts                  ; A=A^$60 X=$0003 Y=$0000 ; [SP-16150]
-; XREF: 1 ref (1 branch) from intro_toggle_page
-intro_show_page1  bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
-            rts                  ; A=A^$60 X=$0003 Y=$0000 ; [SP-16148]
-
-; ---------------------------------------------------------------------------
-; intro_sound_effect  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_prng_mod
-; ---------------------------------------------------------------------------
-
-; FUNC $00850C: register -> A:X []
-; Proto: uint32_t func_00850C(uint16_t param_Y);
-; Liveness: params(Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_sound_effect lda  #$00            ; A=$0000 X=$0003 Y=$0000 ; [SP-16148]
-            sta  $14             ; A=$0000 X=$0003 Y=$0000 ; [SP-16148]
-            lda  #$05            ; A=$0005 X=$0003 Y=$0000 ; [SP-16148]
-            sta  $15             ; A=$0005 X=$0003 Y=$0000 ; [SP-16148]
-
-; === while loop starts here ===
-; XREF: 2 refs (2 branches) from intro_sound_inner, intro_sound_inner
-intro_sound_outer lda  #$FF            ; A=$00FF X=$0003 Y=$0000 ; [SP-16148]
-            jsr  intro_prng_mod    ; A=$00FF X=$0003 Y=$0000 ; [SP-16150]
-            tax                  ; A=$00FF X=$00FF Y=$0000 ; [SP-16150]
-
-; === loop starts here (counter: X) [nest:2] ===
-; XREF: 1 ref (1 branch) from intro_sound_inner
-intro_sound_inner dex                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  intro_sound_inner  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-; === End of loop (counter: X) ===
-
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $14             ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  intro_sound_outer  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-; === End of while loop ===
-
-            dec  $15             ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  intro_sound_outer  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            rts                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
-
-; ---
+; --- Dead code: alternate sound effect routine (31 bytes) ---
+; Disassembles to a speaker routine that computes delay from ($FF - $0B) >> 2,
+; then uses a timing loop with AND #$07 + ADC $0B for pitch variation.
+; Never executed — likely an earlier draft of intro_sound_effect.
             DB      $A9,$FF,$38,$E5,$0B,$4A,$4A,$85,$14,$A9,$FF,$20,$48,$85,$29,$07
             DB      $18,$65,$0B,$AA,$CA,$D0,$FD,$2C,$30,$C0,$C6,$14,$D0,$EB,$60
-; ---
 
+; ===========================================================================
+; intro_prng_mod — PRNG with Modulo Reduction ($8548)
+; ===========================================================================
+;
+; Pseudo-random number generator that returns a value in [0, A-1].
+; The PRNG state lives in $19/$1A (shared with intro_hgr_blit's dissolve).
+;
+; Algorithm:
+;   1. Store modulo base (A) to self-modifying operand at $8569
+;   2. If A=0, return immediately (avoid division by zero)
+;   3. Advance PRNG state:
+;      new_$19 = old_$19 + old_$1A  (additive step)
+;      new_$1A = old_$19 + $17      (feedback with constant)
+;   4. Reduce $1A modulo the stored base via repeated subtraction
+;   5. Return reduced value in A
+;
+; The self-modifying code at $8569 is the CMP and SBC operand in the modulo
+; loop — STA $8569 patches the comparison target at runtime. This is the
+; standard 6502 technique for parameterized comparisons, since the 6502
+; has no divide instruction and lacks enough registers for a parameter.
+;
+; The additive generator with constant $17 and cross-feedback between
+; $19/$1A produces a reasonably well-distributed sequence for visual
+; effects, though it would not pass modern statistical tests.
+;
+intro_prng_mod sta  $8569           ; SMC: patch modulo base into CMP/SBC operand
+            cmp  #$00
+            beq  intro_prng_done ; modulo 0 → return 0 (avoid infinite loop)
+            lda  $19             ; PRNG state low
+            pha                  ; save for feedback
+            adc  $1A             ; new high = low + high
+            sta  $19
+            pla                  ; recover original low
+            clc
+            adc  #$17            ; new low = old_low + $17 (constant step)
+            sta  $1A
 
-; ---------------------------------------------------------------------------
-; intro_prng_mod  [2 calls]
-;   Called by: intro_sound_outer, intro_sound_inner
-; ---------------------------------------------------------------------------
+; --- Modulo reduction: repeated subtraction ---
+intro_prng_loop cmp  $8569           ; compare against modulo base (SMC target)
+            bcc  intro_prng_done ; A < base → done
+            sec
+            sbc  $8569           ; A -= base
+            jmp  intro_prng_loop ; repeat until A < base
 
-; FUNC $008548: register -> A:X [L]
-; Proto: uint32_t func_008548(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 2 refs (2 calls) from intro_sound_outer, intro_sound_inner
-intro_prng_mod sta  $8569           ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
-            cmp  #$00            ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
-            beq  intro_prng_done ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
-            lda  $19             ; A=[$0019] X=$00FE Y=$0000 ; [SP-16148]
-            pha                  ; A=[$0019] X=$00FE Y=$0000 ; [SP-16149]
-            adc  $1A             ; A=[$0019] X=$00FE Y=$0000 ; [SP-16149]
-            sta  $19             ; A=[$0019] X=$00FE Y=$0000 ; [SP-16149]
-            pla                  ; A=[stk] X=$00FE Y=$0000 ; [SP-16148]
-            clc                  ; A=[stk] X=$00FE Y=$0000 ; [SP-16148]
-            adc  #$17            ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            sta  $1A             ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
+intro_prng_done rts
+            DB      $00              ; padding byte
 
-; === while loop starts here ===
-; XREF: 1 ref (1 jump) from intro_prng_loop
-intro_prng_loop cmp  $8569           ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            bcc  intro_prng_done ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            sec                  ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            sbc  $8569           ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            jmp  intro_prng_loop ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-; === End of while loop ===
+; ===========================================================================
+; intro_reveal_anim — Progressive Column Reveal ($856A)
+; ===========================================================================
+;
+; Reveals the current HGR image column-by-column in a dramatic left-to-right
+; sweep. This is the animation that unveils the final Exodus graphic after
+; the direct blit. Uses page 1 only ($1B=$00).
+;
+; The animation runs 3 passes (Y=2,1,0), each with different parameters
+; loaded from data tables at $85A9-$85B7. Each pass has:
+;   - Start glyph: $85B5,Y → $71 (initial column to draw)
+;   - Step size: $85A9,Y (column increment per frame)
+;   - End glyph: $85AC,Y (termination condition for inner loop)
+;   - Start offset: $0A (screen X position, begins at $2A)
+;   - Offset step: $85AF,Y (X advance per outer iteration)
+;   - Offset end: $85B2,Y (termination for outer loop)
+;
+; The interleaved passes create a curtain-like reveal effect — the first
+; pass draws every 3rd column, the second fills in gaps, the third
+; completes the image. A WAIT($D0) delay between columns controls speed.
+;
+; After all 3 passes, a final intro_draw_column(X=0) draws glyph 0 to
+; clean up any remaining artifact at the leftmost position.
+;
+; Data tables (15 bytes at $85A9):
+;   $85A9: step sizes    [+1, -1, +1]  (alternating direction)
+;   $85AC: end glyphs    [$04, $FF, $04]
+;   $85AF: offset steps  [+1, -1, +1]
+;   $85B2: offset ends   [$34, $2B, $31]
+;   $85B5: start glyphs  [$00, $03, $00]
+;
+intro_reveal_anim lda  #$00
+            sta  $1B             ; lock to page 1
+            bit  $C054           ; ensure page 1 displayed
+            lda  #$2A
+            sta  $0A             ; starting screen X position
+            ldy  #$02            ; 3 passes: Y = 2, 1, 0
 
-; XREF: 2 refs (2 branches) from intro_prng_mod, intro_prng_loop
-intro_prng_done rts                  ; A=A+$17 X=$00FE Y=$0000 ; [SP-16146]
-            DB      $00
+; --- Outer loop: one pass per Y value ---
+intro_reveal_outer lda  $85B5,Y         ; load start glyph for this pass
+            sta  $71             ; current glyph column
 
-; ---------------------------------------------------------------------------
-; intro_reveal_anim  [1 call]
-;   Called by: intro_delay_loop
-;   Calls: intro_draw_column
-;   ROM: WAIT
-; ---------------------------------------------------------------------------
+; --- Inner loop: draw columns across the image ---
+intro_reveal_inner ldx  $71             ; X = current glyph index
+            jsr  intro_draw_column ; render one glyph column
+            lda  #$D0            ; inter-column delay
+            jsr  $FCA8           ; ROM WAIT
+            lda  $71
+            clc
+            adc  $85A9,Y         ; advance glyph by step size
+            sta  $71
+            cmp  $85AC,Y         ; reached end glyph?
+            bne  intro_reveal_inner
 
-; FUNC $00856A: register -> A:X []
-; Liveness: returns(A,X,Y) [4 dead stores]
-; XREF: 1 ref (1 call) from intro_delay_loop
-intro_reveal_anim lda  #$00            ; A=$0000 X=$00FE Y=$0000 ; [SP-16149]
-            sta  $1B             ; A=$0000 X=$00FE Y=$0000 ; [SP-16152]
-            bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
-            lda  #$2A            ; A=$002A X=$00FE Y=$0000 ; [SP-16152]
-            sta  $0A             ; A=$002A X=$00FE Y=$0000 ; [SP-16152]
-            ldy  #$02            ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
+; --- Advance screen position for next pass ---
+            lda  $0A
+            clc
+            adc  $85AF,Y         ; advance screen X by offset step
+            sta  $0A
+            cmp  $85B2,Y         ; reached offset end?
+            bne  intro_reveal_outer
 
-; === while loop starts here ===
-; XREF: 2 refs (2 branches) from intro_reveal_inner, intro_reveal_inner
-intro_reveal_outer lda  $85B5,Y         ; -> $85B7 ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
-            sta  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
+; --- Next pass (Y counts down 2→1→0) ---
+            dey
+            bpl  intro_reveal_outer ; continue while Y ≥ 0
 
-; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from intro_reveal_inner
-intro_reveal_inner ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
-            jsr  intro_draw_column    ; A=$002A X=$00FE Y=$0002 ; [SP-16154]
-            lda  #$D0            ; A=$00D0 X=$00FE Y=$0002 ; [SP-16154]
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            lda  $71             ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            clc                  ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            adc  $85A9,Y         ; -> $85AB ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            sta  $71             ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            cmp  $85AC,Y         ; -> $85AE ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            bne  intro_reveal_inner  ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-; === End of while loop ===
+; --- Final cleanup: draw glyph 0 at final position ---
+            ldx  #$00
+            jsr  intro_draw_column
+            rts
 
-            lda  $0A             ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            clc                  ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            adc  $85AF,Y         ; -> $85B1 ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            sta  $0A             ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            cmp  $85B2,Y         ; -> $85B4 ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            bne  intro_reveal_outer  ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-; === End of while loop ===
-
-            dey                  ; A=[$000A] X=$00FE Y=$0001 ; [SP-16156]
-            bpl  intro_reveal_outer  ; A=[$000A] X=$00FE Y=$0001 ; [SP-16156]
-            ldx  #$00            ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-            jsr  intro_draw_column    ; A=[$000A] X=$0000 Y=$0001 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0085A5 followed by RTS ; [SP-16158]
-            rts                  ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-
-; ---
+; --- Reveal animation parameter tables (15 bytes) ---
+;   Index:        [0]  [1]  [2]
+;   Step:          +1   -1   +1    (alternating scan direction)
+;   End glyph:    $04  $FF  $04
+;   Offset step:  +1   -1   +1
+;   Offset end:   $34  $2B  $31
+;   Start glyph:  $00  $03  $00
             DB      $01,$FF,$01,$04,$FF,$04,$01,$FF,$01,$34,$2B,$31,$00,$03,$00
-; ---
 
 
-; ---------------------------------------------------------------------------
-; intro_draw_column  [2 calls]
-;   Called by: intro_reveal_inner
-; ---------------------------------------------------------------------------
+; ===========================================================================
+; intro_draw_column — Single Glyph Column Render ($85B8)
+; ===========================================================================
+;
+; Draws a single column of the reveal animation — a vertical strip of glyph
+; data rendered to the HGR screen. This is the most complex single function
+; in EXOD, using extensive self-modifying code (SMC) to patch source and
+; glyph data addresses into LDA instructions at runtime.
+;
+; The function renders a 16-scanline tall column ($0E=$10 rows) of glyph
+; data, with each row consisting of 13 bytes ($0D) of pixel data. For
+; each scanline:
+;   1. Look up the HGR screen address via $1B00/$1BC0 tables
+;   2. Write $80 (black with high bit set) at column-1 and column+13
+;      as left/right border markers
+;   3. Copy 13 bytes from the glyph source (via SMC addresses) to the
+;      scanline, OR'ing each byte with $80 (Apple II HGR high bit)
+;
+; Self-modifying code targets (defined as EQUs at file top):
+;   intro_draw_src_lo/hi   ($85F6/$85F7) — source address for row data
+;   intro_draw_src2_lo/hi  ($85FD/$85FE) — duplicate source (used for
+;                                          border byte lookup)
+;   intro_draw_glyph_lo/hi ($862C/$862D) — glyph pixel data address
+;                                          (incremented per byte drawn)
+;
+; The $0400,X lookup fetches glyph source addresses from a table that
+; was loaded into the text page area by intro_memswap during setup.
+;
+; The column offset tables at $1D80/$1E80/$1E98/$1E9C provide the
+; byte offset within each scanline for the given screen column ($0A).
+; The carry flag from ASL selects between two table pairs, handling
+; the left/right halves of the 280-pixel screen.
+;
+; Parameters:
+;   A = saved to $1C (restored at exit)
+;   X = glyph index (×2 → $0400 lookup → source address)
+;   Y = saved to $1D (restored at exit)
+;   $0A = screen column position
+;
+; Preserves: A, X, Y (saved to $1C/$1E/$1D, restored at exit)
+;            $0A (saved/restored via stack)
+;
+intro_draw_column sta  $1C             ; save caller's A
+            stx  $1E             ; save caller's X
+            sty  $1D             ; save caller's Y
+            lda  $0A
+            pha                  ; save screen column (restored at exit)
+            lda  #$A8
+            sta  $0B             ; starting scanline = $A8
 
-; FUNC $0085B8: register -> A:X [L]
-; Proto: uint32_t func_0085B8(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y) [9 dead stores]
-; XREF: 2 refs (2 calls) from intro_reveal_inner, intro_reveal_inner
-intro_draw_column sta  $1C             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
-            stx  $1E             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
-            sty  $1D             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
-            lda  $0A             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
-            pha                  ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-            lda  #$A8            ; A=$00A8 X=$0000 Y=$0001 ; [SP-16156]
-            sta  $0B             ; A=$00A8 X=$0000 Y=$0001 ; [SP-16156]
-            txa                  ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            asl  a               ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            tax                  ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            lda  $0400,X         ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            sta  intro_draw_src_lo ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src_lo
-            sta  intro_draw_src2_lo ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src2_lo
-            lda  $0401,X         ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            sta  intro_draw_src_hi ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src_hi
-            sta  intro_draw_src2_hi ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src2_hi
-            lda  $0A             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-            asl  a               ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-            tax                  ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            bcs  intro_draw_alt_base ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            lda  $1D80,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            sta  $1F             ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            lda  $1E98,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            jmp  intro_draw_calc_src ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-; XREF: 1 ref (1 branch) from intro_draw_column
-intro_draw_alt_base lda  $1E80,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            sta  $1F             ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            lda  $1E9C,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-; XREF: 1 ref (1 jump) from intro_draw_column
-intro_draw_calc_src asl  a               ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            tax                  ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            lda  $FFFF,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            sta  intro_draw_glyph_lo ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_glyph_lo
-            inx                  ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156]
-            lda  $FFFF,X         ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156]
-            sta  intro_draw_glyph_hi ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_glyph_hi
-            lda  #$10            ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            sta  $0E             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
+; --- Look up glyph source address from $0400 table ---
+            txa                  ; glyph index
+            asl  a               ; ×2 for 16-bit table entry
+            tax
+            lda  $0400,X         ; glyph source address low byte
+            sta  intro_draw_src_lo  ; SMC: patch LDA operand
+            sta  intro_draw_src2_lo ; SMC: patch second LDA operand
+            lda  $0401,X         ; glyph source address high byte
+            sta  intro_draw_src_hi  ; SMC: patch LDA operand
+            sta  intro_draw_src2_hi ; SMC: patch second LDA operand
 
-; === while loop starts here (counter: Y 'iter_y') ===
-; XREF: 1 ref (1 branch) from intro_draw_next_byte
-intro_draw_row_loop ldy  $0B             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            lda  $1B00,Y         ; -> $1B01 ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            sta  $10             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            lda  $1BC0,Y         ; -> $1BC1 ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            eor  $1B             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            sta  $11             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            ldy  $1F             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
-            dey                  ; A=$0010 X=X+$01 Y=$0000 ; [SP-16156]
-            lda  #$80            ; A=$0080 X=X+$01 Y=$0000 ; [SP-16156]
-            sta  ($10),Y         ; A=$0080 X=X+$01 Y=$0000 ; [SP-16156]
-            lda  $1F             ; A=[$001F] X=X+$01 Y=$0000 ; [SP-16156]
-            clc                  ; A=[$001F] X=X+$01 Y=$0000 ; [SP-16156]
-            adc  #$0D            ; A=A+$0D X=X+$01 Y=$0000 ; [SP-16156]
-            tay                  ; A=A+$0D X=X+$01 Y=A ; [SP-16156]
-            lda  #$80            ; A=$0080 X=X+$01 Y=A ; [SP-16156]
-            sta  ($10),Y         ; A=$0080 X=X+$01 Y=A ; [SP-16156]
-            lda  #$0D            ; A=$000D X=X+$01 Y=A ; [SP-16156]
-            sta  $0D             ; A=$000D X=X+$01 Y=A ; [SP-16156]
-            ldy  $1F             ; A=$000D X=X+$01 Y=A ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $008614 ; [SP-16156]
+; --- Compute column byte offset from screen position ---
+            lda  $0A             ; screen column
+            asl  a               ; ×2 for 16-bit table lookup
+            tax
+            bcs  intro_draw_alt_base ; carry set → upper half of screen (col ≥ 128)
+            lda  $1D80,X         ; column offset (lower half)
+            sta  $1F
+            lda  $1E98,X         ; glyph pointer table base (lower half)
+            jmp  intro_draw_calc_src
 
-; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 1 ref (1 branch) from intro_draw_next_byte
-intro_draw_byte lda  $FFFF           ; A=[$FFFF] X=X+$01 Y=A ; [SP-16156]
-            ora  #$80            ; A=A|$80 X=X+$01 Y=A ; [SP-16156]
-            sta  ($10),Y         ; A=A|$80 X=X+$01 Y=A ; [SP-16156]
-            iny                  ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            inc  intro_draw_glyph_lo ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  intro_draw_next_byte ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            inc  intro_draw_glyph_hi ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-; XREF: 1 ref (1 branch) from intro_draw_glyph_hi
-intro_draw_next_byte dec  $0D             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  intro_draw_byte ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-; === End of while loop (counter: Y) ===
+intro_draw_alt_base lda  $1E80,X         ; column offset (upper half)
+            sta  $1F
+            lda  $1E9C,X         ; glyph pointer table base (upper half)
 
-            inc  $0B             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            dec  $0E             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  intro_draw_row_loop ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-; === End of while loop (counter: Y) ===
+; --- Resolve glyph pixel data address ---
+intro_draw_calc_src asl  a               ; ×2 for address lookup
+            tax
+            lda  $FFFF,X         ; glyph data address low (CIDAR placeholder)
+            sta  intro_draw_glyph_lo ; SMC: patch inner loop LDA operand
+            inx
+            lda  $FFFF,X         ; glyph data address high
+            sta  intro_draw_glyph_hi ; SMC: patch inner loop LDA operand
+            lda  #$10
+            sta  $0E             ; 16 scanline rows to render
 
-            pla                  ; A=[stk] X=X+$01 Y=Y+$01 ; [SP-16155]
-            sta  $0A             ; A=[stk] X=X+$01 Y=Y+$01 ; [SP-16155]
-            lda  $1C             ; A=[$001C] X=X+$01 Y=Y+$01 ; [SP-16155]
-            ldx  $1E             ; A=[$001C] X=X+$01 Y=Y+$01 ; [SP-16155]
-            ldy  $1D             ; A=[$001C] X=X+$01 Y=Y+$01 ; [SP-16155]
-            rts                  ; A=[$001C] X=X+$01 Y=Y+$01 ; [SP-16153]
+; --- Outer loop: one iteration per scanline ---
+intro_draw_row_loop ldy  $0B             ; current scanline index
+            lda  $1B00,Y         ; scanline base address low
+            sta  $10
+            lda  $1BC0,Y         ; scanline base address high
+            eor  $1B             ; apply page selection
+            sta  $11             ; $10/$11 = HGR screen address for this row
 
-; ---
+; --- Write left border marker ---
+            ldy  $1F             ; column byte offset
+            dey                  ; one byte to the left
+            lda  #$80            ; black pixel with high bit set
+            sta  ($10),Y         ; left border
+
+; --- Write right border marker ---
+            lda  $1F
+            clc
+            adc  #$0D            ; 13 bytes to the right
+            tay
+            lda  #$80
+            sta  ($10),Y         ; right border
+
+; --- Inner loop: copy 13 glyph bytes to scanline ---
+            lda  #$0D
+            sta  $0D             ; 13 bytes per row
+            ldy  $1F             ; reset to column start offset
+
+intro_draw_byte lda  $FFFF           ; SMC target: reads from glyph data
+            ora  #$80            ; set HGR high bit (Apple II color bit)
+            sta  ($10),Y         ; write pixel byte to screen
+            iny                  ; next screen byte
+            inc  intro_draw_glyph_lo ; advance glyph source pointer
+            bne  intro_draw_next_byte
+            inc  intro_draw_glyph_hi ; handle page crossing
+intro_draw_next_byte dec  $0D             ; 13 bytes per row
+            bne  intro_draw_byte
+
+; --- Advance to next scanline ---
+            inc  $0B             ; next scanline
+            dec  $0E             ; 16 rows total
+            bne  intro_draw_row_loop
+
+; --- Restore caller's registers and $0A ---
+            pla
+            sta  $0A             ; restore screen column
+            lda  $1C             ; restore A
+            ldx  $1E             ; restore X
+            ldy  $1D             ; restore Y
+            rts
+
+; --- Padding to end of code section ---
             DS      17
