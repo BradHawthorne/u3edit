@@ -279,7 +279,7 @@ def extract_overlay_strings(data: bytes) -> list[dict]:
     """
     strings = []
     i = 0
-    while i < len(data) - 3:
+    while i <= len(data) - 3:
         if data[i:i + 3] == _JSR_46BA:
             # Found JSR $46BA — extract inline text starting at i+3
             text_start = i + 3

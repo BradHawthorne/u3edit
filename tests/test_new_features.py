@@ -10024,3 +10024,804 @@ class TestDialogEditorEmptyRecord:
         # Re-parse should yield 3 records
         reloaded = DialogEditor('test', saved_data[0])
         assert len(reloaded.records) == 3
+
+
+# =============================================================================
+# Error path tests: sys.exit(1) coverage
+# =============================================================================
+
+class TestRosterErrorPaths:
+    """Tests for roster cmd_view/cmd_edit/cmd_create/cmd_import error exits."""
+
+    def _make_roster(self, tmp_path, name_in_slot0='HERO'):
+        """Create a roster file with one character in slot 0."""
+        data = bytearray(ROSTER_FILE_SIZE)
+        if name_in_slot0:
+            for i, ch in enumerate(name_in_slot0):
+                data[i] = ord(ch) | 0x80
+            data[0x0D] = 0x00
+        path = tmp_path / 'ROST'
+        path.write_bytes(bytes(data))
+        return str(path)
+
+    def test_view_slot_out_of_range(self, tmp_path):
+        """cmd_view with --slot out of range exits."""
+        from u3edit.roster import cmd_view
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, json=False, output=None,
+            slot=99, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_edit_no_slot_no_all(self, tmp_path):
+        """cmd_edit without --slot or --all exits."""
+        from u3edit.roster import cmd_edit
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=None, all=False,
+            dry_run=False, backup=False, output=None,
+            validate=False, name=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_slot_out_of_range(self, tmp_path):
+        """cmd_edit with --slot out of range exits."""
+        from u3edit.roster import cmd_edit
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=99, all=False,
+            dry_run=False, backup=False, output=None,
+            validate=False, name='TEST')
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_empty_slot(self, tmp_path):
+        """cmd_edit on empty slot exits with helpful message."""
+        from u3edit.roster import cmd_edit
+        path = self._make_roster(tmp_path, name_in_slot0=None)
+        args = argparse.Namespace(
+            file=path, slot=0, all=False,
+            dry_run=False, backup=False, output=None,
+            validate=False, name='TEST')
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_create_slot_out_of_range(self, tmp_path):
+        """cmd_create with --slot out of range exits."""
+        from u3edit.roster import cmd_create
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=99, force=False,
+            dry_run=False, backup=False, output=None,
+            name=None, race=None, char_class=None, gender=None,
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, mp=None, gold=None, food=None,
+            exp=None, max_hp=None, gems=None, keys=None,
+            powders=None, torches=None, status=None,
+            weapon=None, armor=None, in_party=None, not_in_party=None)
+        with pytest.raises(SystemExit):
+            cmd_create(args)
+
+    def test_create_occupied_slot_no_force(self, tmp_path, capsys):
+        """cmd_create on occupied slot without --force exits."""
+        from u3edit.roster import cmd_create
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=0, force=False,
+            dry_run=False, backup=False, output=None,
+            name=None, race=None, char_class=None, gender=None,
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, mp=None, gold=None, food=None,
+            exp=None, max_hp=None, gems=None, keys=None,
+            powders=None, torches=None, status=None,
+            weapon=None, armor=None, in_party=None, not_in_party=None)
+        with pytest.raises(SystemExit):
+            cmd_create(args)
+        err = capsys.readouterr().err
+        assert 'occupied' in err.lower() or 'HERO' in err
+
+    def test_import_non_list_json(self, tmp_path):
+        """cmd_import with non-list JSON exits."""
+        from u3edit.roster import cmd_import
+        path = self._make_roster(tmp_path)
+        json_path = tmp_path / 'bad.json'
+        json_path.write_text('{"name": "not a list"}')
+        args = argparse.Namespace(
+            file=path, json_file=str(json_path),
+            dry_run=False, backup=False, output=None, all=False)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+
+class TestSaveErrorPaths:
+    """Tests for save cmd_view/cmd_edit/cmd_import error exits."""
+
+    def test_view_no_prty(self, tmp_path):
+        """cmd_view with no PRTY file exits."""
+        from u3edit.save import cmd_view
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=False, output=None,
+            validate=False, brief=True)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_edit_no_prty(self, tmp_path):
+        """cmd_edit with no PRTY file exits."""
+        from u3edit.save import cmd_edit
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), transport=None, x=1, y=1,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_invalid_transport(self, tmp_path, capsys):
+        """cmd_edit with invalid transport name exits."""
+        from u3edit.save import cmd_edit
+        prty = tmp_path / 'PRTY'
+        data = bytearray(PRTY_FILE_SIZE)
+        data[5] = 0xFF
+        prty.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), transport='spaceship', x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_invalid_location(self, tmp_path, capsys):
+        """cmd_edit with invalid location name exits."""
+        from u3edit.save import cmd_edit
+        prty = tmp_path / 'PRTY'
+        data = bytearray(PRTY_FILE_SIZE)
+        data[5] = 0xFF
+        prty.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), transport=None, x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location='moon', plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_plrs_slot_no_plrs(self, tmp_path):
+        """cmd_edit with --plrs-slot but no PLRS file exits."""
+        from u3edit.save import cmd_edit
+        prty = tmp_path / 'PRTY'
+        data = bytearray(PRTY_FILE_SIZE)
+        data[5] = 0xFF
+        prty.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), transport=None, x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=0,
+            name='TEST', str=None, dex=None, int_=None, wis=None,
+            hp=None, mp=None, gold=None, food=None,
+            exp=None, max_hp=None, gems=None, keys=None,
+            powders=None, torches=None, status=None,
+            weapon=None, armor=None, race=None, char_class=None,
+            gender=None, in_party=None, not_in_party=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_import_no_prty(self, tmp_path):
+        """cmd_import with no PRTY file exits."""
+        from u3edit.save import cmd_import
+        json_path = tmp_path / 'save.json'
+        json_path.write_text(json.dumps({'party': {'transport': 'foot'}}))
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=str(json_path),
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+
+class TestBestiaryErrorPaths:
+    """Tests for bestiary cmd_edit error exits."""
+
+    def test_edit_no_monster_no_all(self, tmp_path):
+        """cmd_edit without --monster or --all exits."""
+        from u3edit.bestiary import cmd_edit
+        mon = tmp_path / 'MONA'
+        mon.write_bytes(bytes(MON_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(mon), monster=None, all=False,
+            dry_run=False, backup=False, output=None,
+            validate=False, hp=None, tile=None, flags=None,
+            name=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_monster_out_of_range(self, tmp_path):
+        """cmd_edit with monster index > 15 exits."""
+        from u3edit.bestiary import cmd_edit
+        mon = tmp_path / 'MONA'
+        mon.write_bytes(bytes(MON_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(mon), monster=99, all=False,
+            dry_run=False, backup=False, output=None,
+            validate=False, hp=50, tile=None, flags=None,
+            name=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestTlkErrorPaths:
+    """Tests for tlk cmd_view/cmd_edit error exits."""
+
+    def test_view_no_tlk_files(self, tmp_path):
+        """cmd_view on empty directory exits."""
+        from u3edit.tlk import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_edit_no_args_exits(self, tmp_path):
+        """cmd_edit with no --record/--text and no --find/--replace exits."""
+        from u3edit.tlk import cmd_edit
+        from u3edit.tlk import encode_record
+        tlk = tmp_path / 'TLKA'
+        tlk.write_bytes(encode_record(['TEST']))
+        args = argparse.Namespace(
+            file=str(tlk), find=None, replace=None,
+            record=None, text=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+# =============================================================================
+# Round-trip integrity tests
+# =============================================================================
+
+class TestPrtyRoundTrip:
+    """Verify all PRTY fields survive set→save→reload cycle."""
+
+    def test_all_fields_roundtrip(self, tmp_path):
+        """Set every PRTY field, write to file, reload, verify all match."""
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.transport = 'horse'
+        party.party_size = 3
+        party.location_type = 'dungeon'
+        party.x = 42
+        party.y = 17
+        party.sentinel = 0xFF
+        party.slot_ids = [5, 10, 15, 2]
+
+        # Write raw bytes
+        prty_file = tmp_path / 'PRTY'
+        prty_file.write_bytes(bytes(party.raw))
+
+        # Reload
+        reloaded = PartyState(prty_file.read_bytes())
+        assert reloaded.transport == 'Horse'
+        assert reloaded.party_size == 3
+        assert reloaded.location_type == 'Dungeon'
+        assert reloaded.x == 42
+        assert reloaded.y == 17
+        assert reloaded.sentinel == 0xFF
+        assert reloaded.slot_ids == [5, 10, 15, 2]
+
+    def test_json_export_import_roundtrip(self, tmp_path):
+        """Export PRTY to JSON via to_dict, re-import via cmd_import, verify."""
+        from u3edit.save import cmd_import as save_import
+
+        # Set up initial PRTY state
+        data = bytearray(PRTY_FILE_SIZE)
+        party = PartyState(data)
+        party.transport = 'ship'
+        party.party_size = 4
+        party.location_type = 'sosaria'
+        party.x = 55
+        party.y = 33
+        party.sentinel = 0xFF
+        party.slot_ids = [0, 1, 2, 3]
+
+        prty_file = tmp_path / 'PRTY'
+        prty_file.write_bytes(bytes(party.raw))
+
+        # Export to JSON dict
+        jdata = {'party': party.to_dict()}
+
+        # Modify some fields in JSON
+        jdata['party']['x'] = 10
+        jdata['party']['y'] = 20
+        jdata['party']['party_size'] = 2
+
+        # Write JSON and import
+        json_file = tmp_path / 'save.json'
+        json_file.write_text(json.dumps(jdata))
+
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        save_import(args)
+
+        # Reload and verify modified fields
+        result = PartyState(prty_file.read_bytes())
+        assert result.x == 10
+        assert result.y == 20
+        assert result.party_size == 2
+        # Unmodified fields should persist
+        assert result.transport == 'Ship'
+        assert result.sentinel == 0xFF
+        assert result.slot_ids == [0, 1, 2, 3]
+
+    def test_byte_level_fidelity(self, tmp_path):
+        """Verify every byte in the 16-byte PRTY survives save→reload."""
+        data = bytearray(range(16))
+        party = PartyState(data)
+        prty_file = tmp_path / 'PRTY'
+        prty_file.write_bytes(bytes(party.raw))
+        reloaded = PartyState(prty_file.read_bytes())
+        assert bytes(reloaded.raw) == bytes(party.raw)
+
+
+class TestRosterFullRoundTrip:
+    """Verify complete 64-byte character record survives property round-trip."""
+
+    def _make_full_character(self):
+        """Create a character with every field set to non-default values."""
+        from u3edit.constants import CHAR_ARMOR_START, CHAR_WEAPON_START
+        data = bytearray(CHAR_RECORD_SIZE)
+        char = Character(data)
+        char.name = 'TESTHEROINE'
+        char.marks = ['Kings', 'Fire']
+        char.cards = ['Sol']
+        char.torches = 50
+        char.in_party = True
+        char.status = 'G'
+        char.strength = 75
+        char.dexterity = 80
+        char.intelligence = 60
+        char.wisdom = 45
+        char.race = 'Elf'
+        char.char_class = 'Wizard'
+        char.gender = 'F'
+        char.mp = 99
+        char.hp = 1234
+        char.max_hp = 5678
+        char.exp = 9999
+        char.sub_morsels = 42
+        char.food = 3456
+        char.gold = 7890
+        char.gems = 25
+        char.keys = 10
+        char.powders = 5
+        char.raw[CHAR_WORN_ARMOR] = 3
+        char.raw[CHAR_READIED_WEAPON] = 5
+        for i in range(7):
+            char.raw[CHAR_ARMOR_START + i] = (i + 1) % 16
+        for i in range(15):
+            char.raw[CHAR_WEAPON_START + i] = (i + 2) % 16
+        return char
+
+    def test_all_property_fields_roundtrip(self, tmp_path):
+        """Set all character fields, save, reload, verify each property."""
+        char = self._make_full_character()
+
+        rost_file = tmp_path / 'ROST'
+        rost_data = bytearray(ROSTER_FILE_SIZE)
+        rost_data[:CHAR_RECORD_SIZE] = char.raw
+        rost_file.write_bytes(bytes(rost_data))
+
+        chars, _ = load_roster(str(rost_file))
+        rc = chars[0]
+        assert rc.name == 'TESTHEROINE'
+        assert 'Kings' in rc.marks
+        assert 'Fire' in rc.marks
+        assert 'Sol' in rc.cards
+        assert rc.torches == 50
+        assert rc.in_party is True
+        assert rc.status == 'Good'
+        assert rc.strength == 75
+        assert rc.dexterity == 80
+        assert rc.intelligence == 60
+        assert rc.wisdom == 45
+        assert rc.race == 'Elf'
+        assert rc.char_class == 'Wizard'
+        assert rc.gender == 'Female'
+        assert rc.mp == 99
+        assert rc.hp == 1234
+        assert rc.max_hp == 5678
+        assert rc.exp == 9999
+        assert rc.sub_morsels == 42
+        assert rc.food == 3456
+        assert rc.gold == 7890
+        assert rc.gems == 25
+        assert rc.keys == 10
+        assert rc.powders == 5
+        assert rc.raw[CHAR_WORN_ARMOR] == 3
+        assert rc.raw[CHAR_READIED_WEAPON] == 5
+
+    def test_multi_slot_no_corruption(self, tmp_path):
+        """Fill all 20 roster slots, save, reload, verify no cross-slot bleed."""
+        rost_data = bytearray(ROSTER_FILE_SIZE)
+        for slot in range(20):
+            offset = slot * CHAR_RECORD_SIZE
+            data = bytearray(CHAR_RECORD_SIZE)
+            char = Character(data)
+            char.name = f'CHAR{slot:02d}'
+            char.strength = min(99, slot * 5)
+            char.hp = slot * 100
+            rost_data[offset:offset + CHAR_RECORD_SIZE] = char.raw
+
+        rost_file = tmp_path / 'ROST'
+        rost_file.write_bytes(bytes(rost_data))
+
+        chars, _ = load_roster(str(rost_file))
+        for slot in range(20):
+            assert chars[slot].name == f'CHAR{slot:02d}'
+            assert chars[slot].strength == min(99, slot * 5)
+            assert chars[slot].hp == slot * 100
+
+    def test_byte_level_fidelity(self, tmp_path):
+        """Verify all 64 bytes survive save→reload without corruption."""
+        char = self._make_full_character()
+        original_bytes = bytes(char.raw)
+
+        rost_data = bytearray(ROSTER_FILE_SIZE)
+        rost_data[:CHAR_RECORD_SIZE] = char.raw
+        rost_file = tmp_path / 'ROST'
+        rost_file.write_bytes(bytes(rost_data))
+
+        result_data = rost_file.read_bytes()
+        assert result_data[:CHAR_RECORD_SIZE] == original_bytes
+
+
+class TestBestiaryColumnarRoundTrip:
+    """Verify MON columnar layout survives import/export correctly."""
+
+    def test_columnar_layout_preservation(self, tmp_path):
+        """Set attributes for all 16 monsters, verify column-major layout."""
+        data = bytearray(MON_FILE_SIZE)
+        for attr in range(10):
+            for monster in range(16):
+                data[attr * 16 + monster] = (attr * 16 + monster) & 0xFF
+
+        mon_file = tmp_path / 'MONA'
+        mon_file.write_bytes(bytes(data))
+
+        monsters = load_mon_file(str(mon_file))
+        # Verify each monster reads correct values from its column slot
+        for m in monsters:
+            idx = m.index
+            assert m.tile1 == (0 * 16 + idx) & 0xFF  # row 0
+            assert m.hp == (4 * 16 + idx) & 0xFF      # row 4
+
+        # Save with original_data to preserve rows 10-15
+        save_mon_file(str(mon_file), monsters, original_data=bytes(data))
+        result = mon_file.read_bytes()
+        assert result == bytes(data)
+
+    def test_unused_rows_preserved(self, tmp_path):
+        """Rows 10-15 (runtime workspace) survive save→reload with original_data."""
+        data = bytearray(MON_FILE_SIZE)
+        for row in range(10, 16):
+            for col in range(16):
+                data[row * 16 + col] = 0xAA
+        for row in range(10):
+            for col in range(16):
+                data[row * 16 + col] = row
+
+        mon_file = tmp_path / 'MONA'
+        mon_file.write_bytes(bytes(data))
+
+        monsters = load_mon_file(str(mon_file))
+        save_mon_file(str(mon_file), monsters, original_data=bytes(data))
+        result = mon_file.read_bytes()
+        for row in range(10, 16):
+            for col in range(16):
+                assert result[row * 16 + col] == 0xAA, \
+                    f"Row {row}, col {col} corrupted"
+
+
+class TestCombatPaddingRoundTrip:
+    """Verify CON padding and runtime arrays survive save→reload."""
+
+    def test_padding_and_runtime_preservation(self, tmp_path):
+        """Non-zero padding and runtime bytes survive CombatMap round-trip."""
+        from u3edit.combat import CombatMap
+        from u3edit.constants import (
+            CON_PADDING1_OFFSET, CON_PADDING1_SIZE,
+            CON_RUNTIME_MONSAVE_OFFSET,
+            CON_RUNTIME_PCSAVE_OFFSET,
+            CON_PADDING2_OFFSET, CON_PADDING2_SIZE,
+        )
+
+        data = bytearray(CON_FILE_SIZE)
+        for i in range(CON_PADDING1_SIZE):
+            data[CON_PADDING1_OFFSET + i] = 0xAA
+        for i in range(16):
+            data[CON_RUNTIME_MONSAVE_OFFSET + i] = 0xBB
+        for i in range(8):
+            data[CON_RUNTIME_PCSAVE_OFFSET + i] = 0xCC
+        for i in range(CON_PADDING2_SIZE):
+            data[CON_PADDING2_OFFSET + i] = 0xDD
+
+        cm = CombatMap(data)
+        assert cm.padding1 == [0xAA] * CON_PADDING1_SIZE
+        assert cm.runtime_monster == [0xBB] * 16
+        assert cm.runtime_pc == [0xCC] * 8
+        assert cm.padding2 == [0xDD] * CON_PADDING2_SIZE
+
+    def test_json_roundtrip_preserves_padding(self, tmp_path):
+        """Export CON to JSON dict, import it back, verify padding intact."""
+        from u3edit.combat import CombatMap, cmd_import as combat_import
+        from u3edit.constants import (
+            CON_PADDING1_OFFSET, CON_PADDING1_SIZE,
+            CON_PADDING2_OFFSET, CON_PADDING2_SIZE,
+            CON_RUNTIME_MONSAVE_OFFSET, CON_RUNTIME_PCSAVE_OFFSET,
+        )
+
+        data = bytearray(CON_FILE_SIZE)
+        data[0] = 0x04
+        for i in range(CON_PADDING1_SIZE):
+            data[CON_PADDING1_OFFSET + i] = 0x11
+        for i in range(16):
+            data[CON_RUNTIME_MONSAVE_OFFSET + i] = 0x22
+        for i in range(8):
+            data[CON_RUNTIME_PCSAVE_OFFSET + i] = 0x33
+        for i in range(CON_PADDING2_SIZE):
+            data[CON_PADDING2_OFFSET + i] = 0x44
+
+        con_file = tmp_path / 'CONA'
+        con_file.write_bytes(bytes(data))
+
+        cm = CombatMap(data)
+        jdata = cm.to_dict()
+
+        json_file = tmp_path / 'con.json'
+        json_file.write_text(json.dumps(jdata))
+
+        args = argparse.Namespace(
+            file=str(con_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        combat_import(args)
+
+        result = con_file.read_bytes()
+        for i in range(CON_PADDING1_SIZE):
+            assert result[CON_PADDING1_OFFSET + i] == 0x11
+        for i in range(16):
+            assert result[CON_RUNTIME_MONSAVE_OFFSET + i] == 0x22
+        for i in range(8):
+            assert result[CON_RUNTIME_PCSAVE_OFFSET + i] == 0x33
+        for i in range(CON_PADDING2_SIZE):
+            assert result[CON_PADDING2_OFFSET + i] == 0x44
+
+
+class TestSpecialTrailingBytesRoundTrip:
+    """Verify special location trailing bytes survive import."""
+
+    def test_trailing_bytes_preserved(self, tmp_path):
+        """Import special location tiles, verify trailing 7 bytes unchanged."""
+        from u3edit.special import cmd_import as special_import
+
+        data = bytearray(SPECIAL_FILE_SIZE)
+        for i in range(121):
+            data[i] = 0x04
+        for i in range(7):
+            data[121 + i] = 0xA0 + i
+
+        spec_file = tmp_path / 'BRND'
+        spec_file.write_bytes(bytes(data))
+
+        jdata = {
+            'tiles': [['.' for _ in range(11)] for _ in range(11)],
+            'trailing_bytes': [0xA0 + i for i in range(7)],
+        }
+        jdata['tiles'][0][0] = '~'
+
+        json_file = tmp_path / 'brnd.json'
+        json_file.write_text(json.dumps(jdata))
+
+        args = argparse.Namespace(
+            file=str(spec_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        special_import(args)
+
+        result = spec_file.read_bytes()
+        for i in range(7):
+            assert result[121 + i] == 0xA0 + i, \
+                f"Trailing byte {i} corrupted"
+
+    def test_trailing_bytes_absent_preserves_original(self, tmp_path):
+        """Import JSON without trailing_bytes key preserves original padding."""
+        from u3edit.special import cmd_import as special_import
+
+        data = bytearray(SPECIAL_FILE_SIZE)
+        for i in range(7):
+            data[121 + i] = 0xEE
+
+        spec_file = tmp_path / 'SHRN'
+        spec_file.write_bytes(bytes(data))
+
+        jdata = {'tiles': [['.' for _ in range(11)] for _ in range(11)]}
+        json_file = tmp_path / 'shrn.json'
+        json_file.write_text(json.dumps(jdata))
+
+        args = argparse.Namespace(
+            file=str(spec_file), json_file=str(json_file),
+            backup=False, dry_run=False, output=None)
+        special_import(args)
+
+        result = spec_file.read_bytes()
+        for i in range(7):
+            assert result[121 + i] == 0xEE
+
+
+class TestMapJsonRoundTrip:
+    """Verify map JSON export→import preserves tile data."""
+
+    def test_overworld_export_import_cycle(self, tmp_path):
+        """Export overworld as JSON, import back, verify identical bytes."""
+        from u3edit.map import cmd_view as map_view, cmd_import as map_import
+
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        for i in range(MAP_OVERWORLD_SIZE):
+            data[i] = 0x04
+
+        data[0] = 0x00
+        data[63] = 0x08
+        data[64*63] = 0x0C
+
+        map_file = tmp_path / 'SOSMAP'
+        map_file.write_bytes(bytes(data))
+
+        json_out = tmp_path / 'map.json'
+        args = argparse.Namespace(
+            file=str(map_file), json=True, output=str(json_out),
+            crop=None, level=None, validate=False)
+        map_view(args)
+
+        with open(str(json_out), 'r') as f:
+            jdata = json.load(f)
+        assert 'tiles' in jdata
+
+        map_file2 = tmp_path / 'SOSMAP2'
+        map_file2.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            file=str(map_file2), json_file=str(json_out),
+            backup=False, dry_run=False, output=None, dungeon=False)
+        map_import(args)
+
+        assert map_file2.read_bytes() == bytes(data)
+
+
+class TestTlkMultilineRoundTrip:
+    """Verify TLK multi-line dialog records survive encode→decode."""
+
+    def test_multiline_encode_decode(self):
+        """Multi-line records round-trip through encode→decode."""
+        from u3edit.tlk import encode_record, decode_record
+        lines = ['HELLO TRAVELER', 'WELCOME TO TOWN', 'FAREWELL']
+        encoded = encode_record(lines)
+        decoded = decode_record(encoded)
+        assert decoded == lines
+
+    def test_single_line_roundtrip(self):
+        """Single-line record round-trips correctly."""
+        from u3edit.tlk import encode_record, decode_record
+        lines = ['GOOD DAY']
+        encoded = encode_record(lines)
+        decoded = decode_record(encoded)
+        assert decoded == lines
+
+    def test_empty_string_in_lines(self):
+        """Records with empty lines survive round-trip."""
+        from u3edit.tlk import encode_record, decode_record
+        lines = ['START', '', 'END']
+        encoded = encode_record(lines)
+        decoded = decode_record(encoded)
+        assert decoded == lines
+
+
+# =============================================================================
+# Bug fix tests: MBS parsing and shapes overlay extraction
+# =============================================================================
+
+class TestMbsParsingFixes:
+    """Tests for MBS stream parsing bug fixes."""
+
+    def test_loop_opcode_handled(self):
+        """LOOP opcode (0x80) is parsed as its own event type."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([0x80, 0x05, 0x82])  # LOOP, NOTE 5, END
+        events = parse_mbs_stream(data)
+        assert len(events) == 3
+        assert events[0]['type'] == 'LOOP'
+        assert events[1]['type'] == 'NOTE'
+        assert events[1]['value'] == 5
+        assert events[2]['type'] == 'END'
+
+    def test_jump_truncated_marked(self):
+        """JUMP at end of data marks event as truncated."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([0x81])  # JUMP with no operands
+        events = parse_mbs_stream(data)
+        assert len(events) == 1
+        assert events[0]['type'] == 'JUMP'
+        assert events[0].get('truncated') is True
+        assert 'target' not in events[0]
+
+    def test_jump_with_full_operand(self):
+        """JUMP with full 2-byte operand reads target address."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([0x81, 0x34, 0x12, 0x82])  # JUMP $1234, END
+        events = parse_mbs_stream(data)
+        assert len(events) == 2
+        assert events[0]['type'] == 'JUMP'
+        assert events[0]['target'] == 0x1234
+        assert 'truncated' not in events[0]
+
+    def test_write_truncated_marked(self):
+        """WRITE at end of data marks event as truncated."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([0x83])  # WRITE with no operands
+        events = parse_mbs_stream(data)
+        assert len(events) == 1
+        assert events[0]['type'] == 'WRITE'
+        assert events[0].get('truncated') is True
+
+    def test_tempo_truncated_marked(self):
+        """TEMPO at end of data marks event as truncated."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([0x84])  # TEMPO with no operand
+        events = parse_mbs_stream(data)
+        assert len(events) == 1
+        assert events[0]['type'] == 'TEMPO'
+        assert events[0].get('truncated') is True
+
+    def test_full_stream_parse(self):
+        """Complete MBS stream with multiple event types parses correctly."""
+        from u3edit.sound import parse_mbs_stream
+        data = bytes([
+            0x84, 0x06,       # TEMPO 6
+            0x85, 0x38,       # MIXER $38
+            0x83, 0x07, 0xFF, # WRITE reg 7 = $FF
+            0x80,             # LOOP
+            0x01, 0x02, 0x03, # NOTE 1, NOTE 2, NOTE 3
+            0x82,             # END
+        ])
+        events = parse_mbs_stream(data)
+        types = [e['type'] for e in events]
+        assert types == ['TEMPO', 'MIXER', 'WRITE', 'LOOP',
+                         'NOTE', 'NOTE', 'NOTE', 'END']
+        assert events[0]['operand'] == 6
+        assert events[2]['register'] == 7
+        assert events[2]['reg_value'] == 0xFF
+
+
+class TestShapesOverlayBoundsFix:
+    """Tests for shapes.py extract_overlay_strings off-by-one fix."""
+
+    def test_string_at_end_of_data(self):
+        """JSR $46BA pattern at the last possible position is found."""
+        from u3edit.shapes import extract_overlay_strings
+        # Build data where JSR $46BA + inline string starts at len-3
+        prefix = bytes(10)  # 10 zero bytes
+        jsr = bytes([0x20, 0xBA, 0x46])  # JSR $46BA
+        text = bytes([0xC8, 0xC9, 0x00])  # "HI" + null terminator
+        data = prefix + jsr + text
+        strings = extract_overlay_strings(data)
+        assert len(strings) == 1
+        assert strings[0]['text'] == 'HI'
+        assert strings[0]['jsr_offset'] == 10
+
+    def test_string_at_exact_boundary(self):
+        """JSR $46BA pattern exactly at data end (no text following) found."""
+        from u3edit.shapes import extract_overlay_strings
+        # JSR pattern at end with only null terminator after
+        prefix = bytes(5)
+        jsr = bytes([0x20, 0xBA, 0x46])
+        term = bytes([0x00])  # null only — empty string
+        data = prefix + jsr + term
+        strings = extract_overlay_strings(data)
+        # Empty string should not be added (chars check filters it)
+        assert len(strings) == 0

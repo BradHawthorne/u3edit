@@ -159,10 +159,15 @@ def parse_mbs_stream(data: bytes, offset: int = 0) -> list[dict]:
             if b == 0x82:  # END
                 events.append(ev)
                 break
+            elif b == 0x80:  # LOOP — no operands (repeat marker)
+                events.append(ev)
+                i += 1
             elif b == 0x81:  # JUMP — 2 byte address operand
                 if i + 2 < len(data):
                     lo, hi = data[i + 1], data[i + 2]
                     ev['target'] = (hi << 8) | lo
+                else:
+                    ev['truncated'] = True
                 events.append(ev)
                 i += 3
             elif b == 0x83:  # WRITE — register + value
@@ -171,11 +176,15 @@ def parse_mbs_stream(data: bytes, offset: int = 0) -> list[dict]:
                     ev['reg_value'] = data[i + 2]
                     reg_name = AY_REGISTERS.get(data[i + 1], f'Reg {data[i+1]}')
                     ev['register_name'] = reg_name
+                else:
+                    ev['truncated'] = True
                 events.append(ev)
                 i += 3
             elif b in (0x84, 0x85):  # TEMPO, MIXER — 1 byte operand
                 if i + 1 < len(data):
                     ev['operand'] = data[i + 1]
+                else:
+                    ev['truncated'] = True
                 events.append(ev)
                 i += 2
             else:
