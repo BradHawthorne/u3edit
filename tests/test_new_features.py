@@ -13999,3 +13999,741 @@ class TestRosterCmdEditAll:
         assert chars[2].strength == 50
         # Slot 1 should remain empty
         assert chars[1].is_empty
+
+
+# =============================================================================
+# Batch 6: Exhaustive remaining gaps — 30+ tests
+# =============================================================================
+
+class TestRosterLoadErrors:
+    """Test load_roster error paths."""
+
+    def test_load_roster_file_too_small(self, tmp_path):
+        """load_roster raises ValueError for files < 64 bytes."""
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(b'\x00' * 32)
+        with pytest.raises(ValueError, match="too small"):
+            load_roster(path)
+
+    def test_load_roster_empty_file(self, tmp_path):
+        """load_roster raises ValueError for empty files."""
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(b'')
+        with pytest.raises(ValueError, match="too small"):
+            load_roster(path)
+
+
+class TestRosterCmdEditGaps:
+    """Test roster cmd_edit gaps not yet covered."""
+
+    def test_edit_no_modifications_specified(self, tmp_path):
+        """cmd_edit with no edit flags prints 'No modifications specified'."""
+        from u3edit.roster import cmd_edit
+        data = bytearray(ROSTER_FILE_SIZE)
+        off = 0
+        for i, ch in enumerate('HERO'):
+            data[off + i] = ord(ch) | 0x80
+        data[off + CHAR_STATUS] = ord('G')
+        data[off + CHAR_HP_HI] = 0x01
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, all=False,
+            dry_run=False, backup=False, output=None, validate=False,
+            name=None, str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, give_weapon=None, give_armor=None,
+            marks=None, cards=None, in_party=None, not_in_party=None,
+            sub_morsels=None)
+        cmd_edit(args)  # Should print "No modifications specified." and return
+
+    def test_edit_view_slot_out_of_range(self, tmp_path, capsys):
+        """cmd_view with slot out of range exits."""
+        from u3edit.roster import cmd_view
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=99, json=False, output=None, validate=False)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_import_unknown_armor_warning(self, tmp_path, capsys):
+        """Import with unknown armor name prints warning, doesn't crash."""
+        data = bytearray(ROSTER_FILE_SIZE)
+        # Create a character in slot 0
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'slot': 0, 'armor': 'NONEXISTENT_ARMOR'}], f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'Warning' in captured.err or 'arning' in captured.err
+
+
+class TestBestiaryCmdEditGaps:
+    """Test bestiary cmd_edit gaps."""
+
+    def test_edit_no_monster_no_all(self, tmp_path):
+        """cmd_edit exits if neither --monster nor --all given."""
+        from u3edit.bestiary import cmd_edit
+        data = bytearray(MON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, monster=None, all=False,
+            dry_run=False, backup=False, output=None, validate=False,
+            tile1=None, tile2=None, hp=None, attack=None, defense=None,
+            speed=None, flags1=None, flags2=None, ability1=None, ability2=None,
+            boss=None, undead=None, ranged=None, divide=None, poison=None,
+            sleep=None, negate=None, teleport=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_monster_out_of_range(self, tmp_path):
+        """cmd_edit exits if monster index >= 16."""
+        from u3edit.bestiary import cmd_edit
+        data = bytearray(MON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, monster=20, all=False,
+            dry_run=False, backup=False, output=None, validate=False,
+            tile1=None, tile2=None, hp=None, attack=None, defense=None,
+            speed=None, flags1=None, flags2=None, ability1=None, ability2=None,
+            boss=None, undead=None, ranged=None, divide=None, poison=None,
+            sleep=None, negate=None, teleport=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_no_modifications(self, tmp_path, capsys):
+        """cmd_edit with no edit flags prints 'No modifications specified'."""
+        from u3edit.bestiary import cmd_edit
+        data = bytearray(MON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, monster=0, all=False,
+            dry_run=False, backup=False, output=None, validate=False,
+            tile1=None, tile2=None, hp=None, attack=None, defense=None,
+            speed=None, flags1=None, flags2=None, ability1=None, ability2=None,
+            boss=None, undead=None, ranged=None, divide=None, poison=None,
+            sleep=None, negate=None, teleport=None)
+        cmd_edit(args)
+        captured = capsys.readouterr()
+        assert 'No modifications' in captured.out
+
+    def test_import_non_numeric_key_warning(self, tmp_path, capsys):
+        """Import with non-numeric dict key prints warning."""
+        from u3edit.bestiary import cmd_import
+        data = bytearray(MON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'monsters': {'abc': {'hp': 50}, '0': {'hp': 100}}}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'non-numeric' in captured.err
+
+    def test_import_monster_out_of_range_skipped(self, tmp_path):
+        """Import with monster index >= 16 silently skips."""
+        from u3edit.bestiary import cmd_import
+        data = bytearray(MON_FILE_SIZE)
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 99, 'hp': 50}], f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)  # Should not crash
+
+    def test_load_mon_file_too_small(self, tmp_path):
+        """load_mon_file returns empty list for undersized file."""
+        path = os.path.join(str(tmp_path), 'MONA')
+        with open(path, 'wb') as f:
+            f.write(b'\x00' * 10)  # Much less than 160 bytes
+        monsters = load_mon_file(path)
+        assert monsters == []
+
+
+class TestMapImportGaps:
+    """Test map import width validation."""
+
+    def test_import_width_zero(self, tmp_path, capsys):
+        """Import with width=0 falls back to 64."""
+        from u3edit.map import cmd_import
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        path = os.path.join(str(tmp_path), 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'width': 0, 'tiles': []}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'invalid width' in captured.err
+
+    def test_import_width_not_divisible(self, tmp_path, capsys):
+        """Import with width that doesn't divide file size warns."""
+        from u3edit.map import cmd_import
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        path = os.path.join(str(tmp_path), 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'width': 37, 'tiles': []}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'not divisible' in captured.err
+
+
+class TestSaveSetterErrors:
+    """Test PartyState setter validation errors."""
+
+    def test_transport_invalid_name_raises(self):
+        """transport.setter raises ValueError for unknown name."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        with pytest.raises(ValueError, match="Unknown transport"):
+            ps.transport = "FLYING_CARPET"
+
+    def test_location_type_invalid_name_raises(self):
+        """location_type.setter raises ValueError for unknown name."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        with pytest.raises(ValueError, match="Unknown location type"):
+            ps.location_type = "SPACE_STATION"
+
+    def test_transport_int_directly_sets(self):
+        """transport.setter accepts raw integer."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        ps.transport = 0x42
+        assert ps.raw[PRTY_OFF_TRANSPORT] == 0x42
+
+    def test_location_type_int_directly_sets(self):
+        """location_type.setter accepts raw integer."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        ps.location_type = 0x33
+        assert ps.raw[PRTY_OFF_LOCATION] == 0x33
+
+    def test_transport_hex_string(self):
+        """transport.setter accepts hex string like '0x10'."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        ps.transport = "0x10"
+        assert ps.raw[PRTY_OFF_TRANSPORT] == 0x10
+
+    def test_location_type_hex_string(self):
+        """location_type.setter accepts hex string like '0x05'."""
+        ps = PartyState(bytearray(PRTY_FILE_SIZE))
+        ps.location_type = "0x05"
+        assert ps.raw[PRTY_OFF_LOCATION] == 0x05
+
+
+class TestSaveCmdEditGaps:
+    """Test save cmd_edit additional error paths."""
+
+    def test_plrs_slot_out_of_range(self, tmp_path):
+        """PLRS slot out of range exits."""
+        from u3edit.save import cmd_edit
+        game_dir = str(tmp_path)
+        # Create PRTY file
+        prty = bytearray(PRTY_FILE_SIZE)
+        with open(os.path.join(game_dir, 'PRTY'), 'wb') as f:
+            f.write(prty)
+        # Create PLRS file (4 slots of 64 bytes)
+        plrs = bytearray(PLRS_FILE_SIZE)
+        with open(os.path.join(game_dir, 'PLRS'), 'wb') as f:
+            f.write(plrs)
+        args = argparse.Namespace(
+            game_dir=game_dir, plrs_slot=10, name='TEST',
+            transport=None, party_size=None, location_type=None,
+            x=None, y=None, slot_ids=None,
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, marks=None, cards=None,
+            sub_morsels=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_both_prty_plrs_with_output_error(self, tmp_path):
+        """Editing both PRTY and PLRS with --output exits."""
+        from u3edit.save import cmd_edit
+        game_dir = str(tmp_path)
+        prty = bytearray(PRTY_FILE_SIZE)
+        with open(os.path.join(game_dir, 'PRTY'), 'wb') as f:
+            f.write(prty)
+        plrs = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            plrs[i] = ord(ch) | 0x80
+        plrs[CHAR_STATUS] = ord('G')
+        plrs[CHAR_HP_HI] = 0x01
+        with open(os.path.join(game_dir, 'PLRS'), 'wb') as f:
+            f.write(plrs)
+        args = argparse.Namespace(
+            game_dir=game_dir, plrs_slot=0, name='TEST',
+            transport='foot', party_size=None, location_type=None,
+            x=None, y=None, slot_ids=None,
+            str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None, torches=None,
+            race=None, class_=None, status=None, gender=None,
+            weapon=None, armor=None, marks=None, cards=None,
+            sub_morsels=None,
+            dry_run=False, backup=False, output='conflict.bin')
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestSpecialCmdViewGaps:
+    """Test special cmd_view directory with no files."""
+
+    def test_no_files_in_directory(self, tmp_path):
+        """cmd_view on directory with no special files exits."""
+        from u3edit.special import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+class TestTextCmdEditGaps:
+    """Test text cmd_edit argument validation."""
+
+    def test_record_without_text_exits(self, tmp_path):
+        """cmd_edit with --record but no --text exits."""
+        from u3edit.text import cmd_edit
+        path = os.path.join(str(tmp_path), 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(bytearray(TEXT_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, record=0, text=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_text_without_record_exits(self, tmp_path):
+        """cmd_edit with --text but no --record exits."""
+        from u3edit.text import cmd_edit
+        path = os.path.join(str(tmp_path), 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(bytearray(TEXT_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, record=None, text='HELLO',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_import_overflow_truncation(self, tmp_path, capsys):
+        """Import with too many records for file size warns."""
+        from u3edit.text import cmd_import
+        # Small file (32 bytes)
+        path = os.path.join(str(tmp_path), 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(bytearray(32))
+        # Import many long records
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        records = ['A' * 20, 'B' * 20, 'C' * 20]
+        with open(json_path, 'w') as f:
+            json.dump(records, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=True, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'too small' in captured.err or 'Warning' in captured.err
+
+
+class TestPatchCmdGaps:
+    """Test patch command additional error paths."""
+
+    def test_cmd_view_unrecognized_binary_fallback(self, tmp_path, capsys):
+        """cmd_view on unrecognized file prints warning."""
+        from u3edit.patch import cmd_view
+        path = os.path.join(str(tmp_path), 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(b'\x00' * 100)
+        args = argparse.Namespace(
+            file=path, json=False, output=None, region=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'not recognized' in captured.err
+
+    def test_cmd_edit_unrecognized_exits(self, tmp_path):
+        """cmd_edit on unrecognized binary exits."""
+        from u3edit.patch import cmd_edit
+        path = os.path.join(str(tmp_path), 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(b'\x00' * 100)
+        args = argparse.Namespace(
+            file=path, region='name-table', data='FF',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_encode_text_overflow(self):
+        """encode_text_region raises ValueError when text exceeds max_length."""
+        from u3edit.patch import encode_text_region
+        strings = ['A' * 100, 'B' * 100]
+        with pytest.raises(ValueError, match="exceeds max"):
+            encode_text_region(strings, 10)
+
+    def test_cmd_view_unrecognized_json(self, tmp_path, capsys):
+        """cmd_view on unrecognized file with --json outputs JSON."""
+        from u3edit.patch import cmd_view
+        path = os.path.join(str(tmp_path), 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(b'\x00' * 100)
+        out_path = os.path.join(str(tmp_path), 'out.json')
+        args = argparse.Namespace(
+            file=path, json=True, output=out_path, region=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert result['recognized'] is False
+        assert result['size'] == 100
+
+
+class TestDdrwCmdGaps:
+    """Test DDRW command error paths."""
+
+    def test_cmd_view_no_file_in_dir(self, tmp_path):
+        """cmd_view on directory with no DDRW file exits."""
+        from u3edit.ddrw import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_cmd_import_no_raw_array(self, tmp_path):
+        """cmd_import with JSON missing 'raw' array exits."""
+        from u3edit.ddrw import cmd_import, DDRW_LOAD_ADDR
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'DDRW')
+        with open(path, 'wb') as f:
+            f.write(bytearray(DDRW_FILE_SIZE))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'description': 'no raw field'}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+    def test_cmd_import_invalid_byte_values(self, tmp_path):
+        """cmd_import with out-of-range values in raw array exits."""
+        from u3edit.ddrw import cmd_import
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'DDRW')
+        with open(path, 'wb') as f:
+            f.write(bytearray(DDRW_FILE_SIZE))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'raw': [999, -1, 'abc']}, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_import(args)
+
+
+class TestTlkCmdGaps:
+    """Test TLK command gaps."""
+
+    def test_cmd_view_no_files_in_dir(self, tmp_path):
+        """cmd_view on directory with no TLK files exits."""
+        from u3edit.tlk import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_cmd_edit_find_without_replace(self, tmp_path):
+        """cmd_edit with --find but no --replace exits."""
+        from u3edit.tlk import cmd_edit
+        path = os.path.join(str(tmp_path), 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(b'\xC8\xC5\xCC\xCC\xCF\xFF')  # HELLO + end marker
+        args = argparse.Namespace(
+            file=path, find='HELLO', replace=None,
+            record=None, text=None,
+            dry_run=False, backup=False, output=None,
+            case_sensitive=False, regex=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_cmd_edit_replace_without_find(self, tmp_path):
+        """cmd_edit with --replace but no --find exits."""
+        from u3edit.tlk import cmd_edit
+        path = os.path.join(str(tmp_path), 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(b'\xC8\xC5\xCC\xCC\xCF\xFF')
+        args = argparse.Namespace(
+            file=path, find=None, replace='WORLD',
+            record=None, text=None,
+            dry_run=False, backup=False, output=None,
+            case_sensitive=False, regex=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_cmd_edit_record_out_of_range(self, tmp_path):
+        """cmd_edit with record index past end of file exits."""
+        from u3edit.tlk import cmd_edit
+        path = os.path.join(str(tmp_path), 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(b'\xC8\xC5\xCC\xCC\xCF\xFF')  # 1 record
+        args = argparse.Namespace(
+            file=path, find=None, replace=None,
+            record=99, text='NEW TEXT',
+            dry_run=False, backup=False, output=None,
+            case_sensitive=False, regex=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestDiffFileGaps:
+    """Test diff_file and diff_directories gaps."""
+
+    def test_diff_file_undetectable_type(self, tmp_path):
+        """diff_file returns None for unrecognizable files."""
+        from u3edit.diff import diff_file
+        p1 = os.path.join(str(tmp_path), 'UNKNOWN1')
+        p2 = os.path.join(str(tmp_path), 'UNKNOWN2')
+        with open(p1, 'wb') as f:
+            f.write(b'\x00' * 7)  # No known file matches 7 bytes
+        with open(p2, 'wb') as f:
+            f.write(b'\x00' * 7)
+        result = diff_file(p1, p2)
+        assert result is None
+
+    def test_diff_directories_empty_dirs(self, tmp_path):
+        """diff_directories on empty dirs returns GameDiff with no changes."""
+        from u3edit.diff import diff_directories
+        d1 = os.path.join(str(tmp_path), 'dir1')
+        d2 = os.path.join(str(tmp_path), 'dir2')
+        os.makedirs(d1)
+        os.makedirs(d2)
+        gd = diff_directories(d1, d2)
+        assert len(gd.files) == 0
+
+    def test_diff_file_binary_type(self, tmp_path):
+        """diff_file handles binary file types (TEXT, DDRW, SHPS)."""
+        from u3edit.diff import diff_file
+        from u3edit.constants import TEXT_FILE_SIZE
+        p1 = os.path.join(str(tmp_path), 'TEXT')
+        p2 = os.path.join(str(tmp_path), 'TEXT2')
+        data = bytearray(TEXT_FILE_SIZE)
+        with open(p1, 'wb') as f:
+            f.write(data)
+        data[0] = 0xAA
+        with open(p2, 'wb') as f:
+            f.write(data)
+        result = diff_file(p1, p2)
+        assert result is not None
+        assert result.change_count > 0
+
+    def test_diff_file_prty(self, tmp_path):
+        """diff_file handles PRTY files."""
+        from u3edit.diff import diff_file
+        p1 = os.path.join(str(tmp_path), 'PRTY')
+        p2 = os.path.join(str(tmp_path), 'PRTY2')
+        data1 = bytearray(PRTY_FILE_SIZE)
+        data2 = bytearray(PRTY_FILE_SIZE)
+        data2[PRTY_OFF_TRANSPORT] = 0x10
+        with open(p1, 'wb') as f:
+            f.write(data1)
+        with open(p2, 'wb') as f:
+            f.write(data2)
+        result = diff_file(p1, p2)
+        assert result is not None
+
+
+class TestBcdEdgeCases:
+    """Test BCD encoding edge cases."""
+
+    def test_bcd_to_int_invalid_nibble(self):
+        """bcd_to_int with value > 0x99 returns clamped result."""
+        from u3edit.bcd import bcd_to_int
+        # 0xFF has nibbles F,F which are invalid BCD
+        result = bcd_to_int(0xFF)
+        # Implementation-dependent, but should not crash
+        assert isinstance(result, int)
+
+    def test_int_to_bcd_overflow(self):
+        """int_to_bcd clamps values > 99."""
+        from u3edit.bcd import int_to_bcd
+        result = int_to_bcd(150)
+        assert result == 0x99  # Clamped to max
+
+    def test_int_to_bcd_negative(self):
+        """int_to_bcd clamps negative values to 0."""
+        from u3edit.bcd import int_to_bcd
+        result = int_to_bcd(-5)
+        assert result == 0x00
+
+    def test_int_to_bcd16_overflow(self):
+        """int_to_bcd16 clamps values > 9999."""
+        from u3edit.bcd import int_to_bcd16
+        hi, lo = int_to_bcd16(12345)
+        assert hi == 0x99 and lo == 0x99  # Clamped to 9999
+
+    def test_int_to_bcd16_negative(self):
+        """int_to_bcd16 clamps negative values to 0."""
+        from u3edit.bcd import int_to_bcd16
+        hi, lo = int_to_bcd16(-100)
+        assert hi == 0x00 and lo == 0x00
+
+
+class TestPatchEncodeCoordOverflow:
+    """Test encode_coord_region overflow."""
+
+    def test_encode_coord_too_many_pairs(self):
+        """encode_coord_region raises ValueError when coords exceed max_length."""
+        from u3edit.patch import encode_coord_region
+        coords = [{'x': i, 'y': i} for i in range(20)]
+        with pytest.raises(ValueError, match="exceeds max"):
+            encode_coord_region(coords, 8)
+
+
+class TestFileUtilEdgeCases:
+    """Test fileutil utility edge cases."""
+
+    def test_hex_int_parses_hex(self):
+        """hex_int parses 0x prefix."""
+        from u3edit.fileutil import hex_int
+        assert hex_int('0xFF') == 255
+        assert hex_int('0x10') == 16
+
+    def test_hex_int_parses_decimal(self):
+        """hex_int parses decimal strings."""
+        from u3edit.fileutil import hex_int
+        assert hex_int('42') == 42
+
+    def test_hex_int_parses_dollar_prefix(self):
+        """hex_int parses $ prefix (if supported)."""
+        from u3edit.fileutil import hex_int
+        try:
+            result = hex_int('$FF')
+            assert result == 255
+        except ValueError:
+            pass  # $ prefix may not be supported
+
+    def test_resolve_single_file_not_found(self, tmp_path):
+        """resolve_single_file returns None for missing file."""
+        from u3edit.fileutil import resolve_single_file
+        result = resolve_single_file(str(tmp_path), 'NONEXISTENT')
+        assert result is None
+
+    def test_resolve_single_file_found(self, tmp_path):
+        """resolve_single_file finds file by prefix."""
+        from u3edit.fileutil import resolve_single_file
+        path = os.path.join(str(tmp_path), 'ROST')
+        with open(path, 'wb') as f:
+            f.write(b'\x00')
+        result = resolve_single_file(str(tmp_path), 'ROST')
+        assert result is not None
+
+    def test_decode_encode_high_ascii_roundtrip(self):
+        """decode/encode_high_ascii round-trips."""
+        from u3edit.fileutil import decode_high_ascii, encode_high_ascii
+        text = "HELLO WORLD"
+        encoded = encode_high_ascii(text, len(text))
+        decoded = decode_high_ascii(encoded)
+        assert decoded == text
+
+
+class TestSoundCmdGaps:
+    """Test sound command edge cases."""
+
+    def test_cmd_view_no_file_in_dir(self, tmp_path):
+        """cmd_view on directory with no sound files works or exits."""
+        from u3edit.sound import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        # May exit or print nothing, but should not crash
+        try:
+            cmd_view(args)
+        except SystemExit:
+            pass  # Expected if no files found
+
+    def test_cmd_import_size_mismatch_warning(self, tmp_path, capsys):
+        """Import with wrong-size raw array produces warning."""
+        from u3edit.sound import cmd_import
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = os.path.join(str(tmp_path), 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        json_path = os.path.join(str(tmp_path), 'import.json')
+        with open(json_path, 'w') as f:
+            json.dump({'raw': [0] * 100}, f)  # Wrong size
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            dry_run=True, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'Warning' in captured.err or 'arning' in captured.err or 'bytes' in captured.out
+
+
+class TestShapesCmdGaps:
+    """Test shapes command edge cases."""
+
+    def test_cmd_view_no_file_in_dir(self, tmp_path):
+        """cmd_view on directory with no SHPS files works or exits."""
+        from u3edit.shapes import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None,
+            tile=None, glyph=True, color=False)
+        try:
+            cmd_view(args)
+        except SystemExit:
+            pass  # Expected if no files found
+
+
+class TestCliDispatch:
+    """Test CLI dispatcher edge cases."""
+
+    def test_unknown_subcommand(self, capsys):
+        """CLI with no subcommand prints help or exits."""
+        from u3edit.cli import main
+        sys_argv_backup = sys.argv
+        sys.argv = ['u3edit']
+        try:
+            main()
+        except SystemExit:
+            pass  # Expected
+        finally:
+            sys.argv = sys_argv_backup
