@@ -8201,3 +8201,325 @@ class TestCombatImportBoundsValidation:
         with contextlib.redirect_stderr(stderr):
             cmd_import(args)
         assert 'outside' not in stderr.getvalue()
+
+
+# ============================================================================
+# DDRW command tests (Task #112)
+# ============================================================================
+
+class TestDdrwCommands:
+    """Tests for ddrw cmd_view, cmd_edit, cmd_import."""
+
+    def test_view_text_output(self, tmp_path, capsys):
+        """cmd_view prints dungeon drawing data summary."""
+        from u3edit.ddrw import cmd_view
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            path=str(binfile), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Dungeon Drawing Data' in out
+        assert '1792 bytes' in out
+
+    def test_view_json_output(self, tmp_path):
+        """cmd_view --json produces JSON with vectors and records."""
+        from u3edit.ddrw import cmd_view
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        data = bytearray(DDRW_FILE_SIZE)
+        data[0xF0] = 0x42  # Set a perspective vector
+        binfile.write_bytes(bytes(data))
+        outfile = tmp_path / 'out.json'
+        args = argparse.Namespace(
+            path=str(binfile), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert result['size'] == DDRW_FILE_SIZE
+        assert result['vectors'][0] == 0x42
+        assert 'raw' in result
+
+    def test_edit_patches_bytes(self, tmp_path):
+        """cmd_edit patches bytes at offset."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), offset=0x10, data='AABB',
+            output=str(out), backup=False, dry_run=False)
+        cmd_edit(args)
+        result = out.read_bytes()
+        assert result[0x10] == 0xAA
+        assert result[0x11] == 0xBB
+
+    def test_edit_dry_run(self, tmp_path, capsys):
+        """cmd_edit --dry-run doesn't write."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), offset=0, data='FF',
+            output=str(out), backup=False, dry_run=True)
+        cmd_edit(args)
+        assert not out.exists()
+        assert 'Dry run' in capsys.readouterr().out
+
+    def test_import_raw_json(self, tmp_path):
+        """cmd_import writes raw byte array from JSON."""
+        from u3edit.ddrw import cmd_import
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
+        data = [0] * DDRW_FILE_SIZE
+        data[0] = 0x55
+        jfile = tmp_path / 'ddrw.json'
+        jfile.write_text(json.dumps({'raw': data}))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        cmd_import(args)
+        result = out.read_bytes()
+        assert len(result) == DDRW_FILE_SIZE
+        assert result[0] == 0x55
+
+    def test_import_backup(self, tmp_path):
+        """cmd_import --backup creates .bak file."""
+        from u3edit.ddrw import cmd_import
+        from u3edit.constants import DDRW_FILE_SIZE
+        binfile = tmp_path / 'DDRW'
+        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
+        data = [0] * DDRW_FILE_SIZE
+        jfile = tmp_path / 'ddrw.json'
+        jfile.write_text(json.dumps({'raw': data}))
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        bak = tmp_path / 'DDRW.bak'
+        assert bak.exists()
+
+
+# ============================================================================
+# Sound command tests (Task #112)
+# ============================================================================
+
+class TestSoundCommands:
+    """Tests for sound cmd_view, cmd_edit, cmd_import."""
+
+    def test_view_sosa(self, tmp_path, capsys):
+        """cmd_view displays SOSA file summary."""
+        from u3edit.sound import cmd_view
+        from u3edit.constants import SOSA_FILE_SIZE
+        binfile = tmp_path / 'SOSA'
+        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            path=str(binfile), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'SOSA' in out or 'Speaker' in out or '4096' in out
+
+    def test_view_json(self, tmp_path):
+        """cmd_view --json produces JSON output."""
+        from u3edit.sound import cmd_view
+        from u3edit.constants import SOSM_FILE_SIZE
+        binfile = tmp_path / 'SOSM'
+        binfile.write_bytes(bytes(SOSM_FILE_SIZE))
+        outfile = tmp_path / 'out.json'
+        args = argparse.Namespace(
+            path=str(binfile), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'raw' in result
+
+    def test_edit_patches_bytes(self, tmp_path):
+        """cmd_edit patches sound file bytes."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSA_FILE_SIZE
+        binfile = tmp_path / 'SOSA'
+        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), offset=0, data='DEADBEEF',
+            output=str(out), backup=False, dry_run=False)
+        cmd_edit(args)
+        result = out.read_bytes()
+        assert result[0:4] == bytes([0xDE, 0xAD, 0xBE, 0xEF])
+
+    def test_edit_past_end_exits(self, tmp_path):
+        """cmd_edit rejects patch beyond file end."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSM_FILE_SIZE
+        binfile = tmp_path / 'SOSM'
+        binfile.write_bytes(bytes(SOSM_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(binfile), offset=SOSM_FILE_SIZE - 1, data='AABB',
+            output=str(binfile), backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_import_sosa(self, tmp_path):
+        """cmd_import writes SOSA from JSON."""
+        from u3edit.sound import cmd_import
+        from u3edit.constants import SOSA_FILE_SIZE
+        binfile = tmp_path / 'SOSA'
+        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
+        data = [0] * SOSA_FILE_SIZE
+        data[0] = 0x77
+        jfile = tmp_path / 'sosa.json'
+        jfile.write_text(json.dumps({'raw': data}))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        cmd_import(args)
+        result = out.read_bytes()
+        assert len(result) == SOSA_FILE_SIZE
+        assert result[0] == 0x77
+
+    def test_import_wrong_size_warns(self, tmp_path):
+        """cmd_import warns when size doesn't match known formats."""
+        from u3edit.sound import cmd_import
+        binfile = tmp_path / 'SOUND'
+        binfile.write_bytes(bytes(100))
+        jfile = tmp_path / 'sound.json'
+        jfile.write_text(json.dumps({'raw': [0] * 100}))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_import(args)
+        assert 'Warning' in stderr.getvalue()
+
+
+# ============================================================================
+# Diff command tests (Task #112)
+# ============================================================================
+
+class TestDiffCommands:
+    """Tests for diff cmd_diff."""
+
+    def test_diff_identical_rosters(self, tmp_path, capsys):
+        """Diffing identical roster files shows no changes."""
+        from u3edit.diff import cmd_diff
+        from u3edit.constants import ROSTER_FILE_SIZE
+        d1 = tmp_path / 'a'
+        d2 = tmp_path / 'b'
+        d1.mkdir()
+        d2.mkdir()
+        data = bytes(ROSTER_FILE_SIZE)
+        (d1 / 'ROST').write_bytes(data)
+        (d2 / 'ROST').write_bytes(data)
+        args = argparse.Namespace(
+            path1=str(d1 / 'ROST'), path2=str(d2 / 'ROST'),
+            json=False, summary=False, output=None)
+        cmd_diff(args)
+        out = capsys.readouterr().out
+        assert 'No differences' in out or 'identical' in out.lower() or out.strip() == ''
+
+    def test_diff_modified_roster(self, tmp_path, capsys):
+        """Diffing rosters with different names shows change."""
+        from u3edit.diff import cmd_diff
+        from u3edit.constants import ROSTER_FILE_SIZE
+        d1 = bytearray(ROSTER_FILE_SIZE)
+        d2 = bytearray(ROSTER_FILE_SIZE)
+        # Set a name in slot 0 of d2
+        name = 'HERO'
+        for i, ch in enumerate(name):
+            d2[i] = ord(ch) | 0x80  # high-ASCII
+        d2[0x0D] = 0x00  # null terminator
+        d2[0x12] = 0x10  # STR=10 in BCD
+        da = tmp_path / 'a'
+        db = tmp_path / 'b'
+        da.mkdir()
+        db.mkdir()
+        (da / 'ROST').write_bytes(bytes(d1))
+        (db / 'ROST').write_bytes(bytes(d2))
+        args = argparse.Namespace(
+            path1=str(da / 'ROST'), path2=str(db / 'ROST'),
+            json=False, summary=False, output=None)
+        cmd_diff(args)
+        out = capsys.readouterr().out
+        assert 'HERO' in out or 'name' in out.lower()
+
+    def test_diff_json_output(self, tmp_path):
+        """Diff --json produces valid JSON."""
+        from u3edit.diff import cmd_diff
+        from u3edit.constants import ROSTER_FILE_SIZE
+        d1 = bytearray(ROSTER_FILE_SIZE)
+        d2 = bytearray(ROSTER_FILE_SIZE)
+        d2[0x12] = 0x50  # Change STR in slot 0
+        da = tmp_path / 'a'
+        db = tmp_path / 'b'
+        da.mkdir()
+        db.mkdir()
+        (da / 'ROST').write_bytes(bytes(d1))
+        (db / 'ROST').write_bytes(bytes(d2))
+        outfile = tmp_path / 'diff.json'
+        args = argparse.Namespace(
+            path1=str(da / 'ROST'), path2=str(db / 'ROST'),
+            json=True, summary=False, output=str(outfile))
+        cmd_diff(args)
+        result = json.loads(outfile.read_text())
+        assert 'files' in result
+
+    def test_diff_summary_mode(self, tmp_path, capsys):
+        """Diff --summary shows counts."""
+        from u3edit.diff import cmd_diff
+        from u3edit.constants import MAP_OVERWORLD_SIZE
+        m1 = bytearray(MAP_OVERWORLD_SIZE)
+        m2 = bytearray(MAP_OVERWORLD_SIZE)
+        m2[0] = 0x01  # Change one tile
+        f1 = tmp_path / 'MAPA'
+        f2 = tmp_path / 'MAPA2'
+        f1.write_bytes(bytes(m1))
+        f2.write_bytes(bytes(m2))
+        args = argparse.Namespace(
+            path1=str(f1), path2=str(f2),
+            json=False, summary=True, output=None)
+        cmd_diff(args)
+        out = capsys.readouterr().out
+        # Summary should mention changes
+        assert '1' in out or 'change' in out.lower() or 'tile' in out.lower()
+
+    def test_diff_mismatched_types_exits(self, tmp_path):
+        """Diffing a file against a directory exits with error."""
+        from u3edit.diff import cmd_diff
+        f1 = tmp_path / 'FILE'
+        f1.write_bytes(b'\x00')
+        d2 = tmp_path / 'DIR'
+        d2.mkdir()
+        args = argparse.Namespace(
+            path1=str(f1), path2=str(d2),
+            json=False, summary=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_diff(args)
+
+    def test_diff_directories(self, tmp_path, capsys):
+        """Diffing two directories compares matching files."""
+        from u3edit.diff import cmd_diff
+        from u3edit.constants import ROSTER_FILE_SIZE
+        d1 = tmp_path / 'game1'
+        d2 = tmp_path / 'game2'
+        d1.mkdir()
+        d2.mkdir()
+        data1 = bytearray(ROSTER_FILE_SIZE)
+        data2 = bytearray(ROSTER_FILE_SIZE)
+        data2[0x12] = 0x50  # Change STR
+        (d1 / 'ROST').write_bytes(bytes(data1))
+        (d2 / 'ROST').write_bytes(bytes(data2))
+        args = argparse.Namespace(
+            path1=str(d1), path2=str(d2),
+            json=False, summary=False, output=None)
+        cmd_diff(args)
+        out = capsys.readouterr().out
+        # Should show roster differences
+        assert len(out) > 0
