@@ -18,7 +18,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from .constants import TILES, SHPS_FILE_SIZE
+from .constants import TILES, SHPS_FILE_SIZE, JSR_46BA
 from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
@@ -53,7 +53,7 @@ SHP_SHOP_TYPES = {
 }
 
 # JSR $46BA inline string pattern (Apple II)
-_JSR_46BA = bytes([0x20, 0xBA, 0x46])
+_JSR_46BA = JSR_46BA
 
 # Apple II NTSC artifact colors for HGR rendering
 HGR_COLORS = {

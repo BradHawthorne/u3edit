@@ -597,3 +597,7 @@ DDRW_FILE_SIZE = 1792
 ULT3_FILE_SIZE = 17408
 EXOD_FILE_SIZE = 26208
 SUBS_FILE_SIZE = 3584
+
+# JSR $46BA inline string printer pattern (Apple II)
+# Used by shapes.py (SHP overlays) and patch.py (engine strings)
+JSR_46BA = bytes([0x20, 0xBA, 0x46])

@@ -14,6 +14,7 @@ import json
 import os
 import sys
 
+from .constants import JSR_46BA
 from .fileutil import backup_file, hex_int
 from .json_export import export_json
 
@@ -479,8 +480,7 @@ def cmd_import(args) -> None:
 # Inline string catalog
 # ============================================================================
 
-# JSR $46BA = $20 $BA $46
-_JSR_46BA = bytes([0x20, 0xBA, 0x46])
+_JSR_46BA = JSR_46BA
 
 
 def _extract_inline_strings(data: bytes, org: int = 0):
