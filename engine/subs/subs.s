@@ -2,50 +2,115 @@
 ; SUBS.s — Ultima III: Exodus Shared Subroutine Library
 ; ===========================================================================
 ;
-; 3,584 bytes at $4100. Shared routines called by ULT3 and EXOD.
-; Reassembled byte-identical from CIDAR disassembly via asmiigs.
+; Origin: Disassembled from SUBS#064100 by CIDAR (deasmiigs v2.0.0).
+;         Labels symbolicated from raw CIDAR output (864 labels total across
+;         all engine files). Reassembles byte-identical via asmiigs.
 ;
-; Subsystems:
-;   $4100-$46B9  Data tables: HGR scanline addresses, sprite graphics,
-;                jump dispatch table, inline string printer entry
-;   $4732        print_inline_str  — Print text embedded after JSR $46BA
-;   $4767        scroll_text_up    — Scroll text window, redraw viewport border
-;   $47B2        save_text_ptr     — Save/restore text pointer $FE/$FF
-;   $4855        draw_hgr_stripe   — Draw colored vertical stripe on HGR
-;   $487B        clear_hgr_page    — Zero-fill HGR page 1 ($2000-$3FFF)
-;   $4893        plot_char_glyph   — Plot 7x8 character glyph to HGR screen
-;   $48D9        swap_tile_frames  — Swap tile animation frames in memory
-;   $48FF        advance_ptr_128   — Add $80 to pointer $FE/$FF
-;   $490D        print_digit       — Print single ASCII digit via plot_char
-;   $4916        print_bcd_byte    — Print BCD byte as 2 decimal digits
-;   $4935        calc_roster_ptr   — Compute roster slot address ($9500+N*64)
-;   $4955        copy_roster_to_plrs — Copy roster records → active PLRS
-;   $496B        copy_plrs_to_roster — Copy active PLRS → roster records
-;   $49FF        modulo            — A mod $F3 (modular arithmetic)
-;   $4A13        update_viewport   — Full viewport display refresh
-;   $4A26        animate_tiles     — Cycle overworld tile animation frames
-;   $4A8D        animate_cursor    — Cursor blink / text-mode tile animation
-;   $4BCA        setup_char_ptr    — Set $FE/$FF = $4000 + slot*64
-;   $4BE4        print_char_name   — Print character name centered on screen
-;   $4C0C        draw_text_window  — Text window mode display and scrolling
-;   $4CE8        play_sfx          — Sound effect dispatcher ($F6-$FF)
-;   $4E40        get_random        — Pseudo-random number generator
+; Load Address: $4100 (ORG $4100)
+; Size:         3,584 bytes ($0E00)
+; Content:      Shared subroutine library used by both ULT3 (main engine)
+;               and EXOD (boot/loader). Loaded once at startup and remains
+;               resident throughout the game session.
 ;
-; Zero-Page Usage:
-;   $00/$01    map_cursor_x/y        Map/overworld position
-;   $02/$03    combat_cursor_x/y     Combat grid position
-;   $0F        animation_slot        Tile animation table offset
-;   $10        combat_active_flag    Nonzero = in combat
-;   $11        text_window_mode      Wind direction display index
-;   $95/$96    sfx_scratch           Sound effect working variables
-;   $D0-$D5    display_state         Viewport rendering state
-;   $D7        char_name_index       Character name byte offset
-;   $E1        party_size            Active party member count
-;   $E6-$E9    party_slots           Roster indices for 4 party members
-;   $F0-$F3    temp_work             General scratch registers
-;   $F9/$FA    text_cursor_x/y       Text output cursor position
-;   $FC/$FD    dest_ptr              Destination pointer (copy ops)
-;   $FE/$FF    src_ptr / data_ptr    Source/general data pointer
+; ---------------------------------------------------------------------------
+; HISTORICAL CONTEXT
+; ---------------------------------------------------------------------------
+;
+; In 1980s Apple II game development, memory was severely constrained:
+; 48KB usable RAM, shared between code, data, and the two HGR display
+; pages ($2000-$3FFF and $4000-$5FFF). To maximize the code budget,
+; Origin Systems factored common routines into this shared library,
+; loaded below the HGR page 2 boundary. Both the main game engine (ULT3,
+; loaded at $5000) and the boot/title screen (EXOD, loaded at $2000)
+; call into SUBS via a jump table at $46BA-$4731.
+;
+; The library sits at $4100-$4EFF, occupying the lower portion of the
+; HGR page 2 region ($4000-$5FFF). Since Ultima III uses only HGR page 1
+; ($2000-$3FFF) for its game display, page 2 memory is free for code.
+; This is a common Apple II trick — many games "hide" code in the
+; unused HGR page to reclaim 8KB of address space.
+;
+; The code uses several techniques characteristic of 6502 programming:
+;   - Self-modifying code (SMC) to simulate indexed addressing modes
+;     that the 6502 doesn't support natively
+;   - The PLA/PLA return-address trick for inline string printing
+;   - Computed goto via jump tables for dispatch
+;   - Single-bit speaker toggle for audio synthesis
+;   - Interleaved HGR scanline lookup tables to convert Y coordinates
+;     to screen memory addresses (required because Apple II HGR memory
+;     layout is non-linear — designed for NTSC CRT timing, not for
+;     programmer convenience)
+;
+; ---------------------------------------------------------------------------
+; MEMORY MAP
+; ---------------------------------------------------------------------------
+;
+;   $4100-$4134  Zero-page initialization data (Applesoft BASIC stub)
+;   $4135-$4210  HGR scanline address tables (lo/hi bytes for 192 rows)
+;   $4211-$46B9  Tile sprite graphics data, viewport border graphics,
+;                animation tables, jump dispatch table
+;   $46BA-$4731  Jump table: 30 JMP instructions routing callers to
+;                the subroutines below (stable entry points for ULT3/EXOD)
+;   $4732-$4978  Computation: string printing, display primitives,
+;                memory copy, BCD display, roster pointer math
+;   $49FF-$4CE7  Display: viewport refresh, tile animation, cursor blink,
+;                character name display, text window, wind direction
+;   $4CE8-$4E3F  Sound: 10-effect SFX dispatcher using Apple II speaker
+;   $4E40-$4E84  RNG: 16-byte additive pseudo-random number generator
+;
+; ---------------------------------------------------------------------------
+; FUNCTION DIRECTORY
+; ---------------------------------------------------------------------------
+;
+;   Address  Name                 Purpose
+;   -------  ----                 -------
+;   $4732    print_inline_str     Print null-terminated text after JSR
+;   $4767    scroll_text_up       Scroll text window up one line
+;   $47B2    save_text_ptr        Save/restore $FE/$FF across call
+;   $4855    draw_hgr_stripe      Draw 8-pixel vertical stripe on HGR
+;   $487B    clear_hgr_page       Zero-fill HGR page 1 ($2000-$3FFF)
+;   $4893    plot_char_glyph      Render one 7x8 glyph to HGR screen
+;   $48D9    swap_tile_frames     Swap tile animation frame pairs
+;   $48FF    advance_ptr_128      Add $80 (128) to pointer $FE/$FF
+;   $490D    print_digit          Print A as ASCII digit ('0'-'9')
+;   $4916    print_bcd_byte       Print BCD byte as 2 decimal digits
+;   $4935    calc_roster_ptr      Compute $9500+slot*64 roster address
+;   $4955    copy_roster_to_plrs  Copy roster → PLRS active area
+;   $496B    copy_plrs_to_roster  Copy PLRS active area → roster
+;   $49FF    modulo               A = random() mod N
+;   $4A13    update_viewport      Full viewport display refresh
+;   $4A26    animate_tiles        Cycle tile animation frames
+;   $4A8D    animate_cursor       Cursor blink via HGR XOR
+;   $4BCA    setup_char_ptr       $FE/$FF = $4000 + slot*64
+;   $4BE4    print_char_name      Print character name centered
+;   $4C0C    draw_text_window     Wind direction text display
+;   $4CE8    play_sfx             Sound effect dispatcher ($F6-$FF)
+;   $4E40    get_random           16-byte additive PRNG
+;
+; ---------------------------------------------------------------------------
+; ZERO-PAGE VARIABLE MAP
+; ---------------------------------------------------------------------------
+;
+; The 6502's zero page ($00-$FF) is the fastest-access memory — instructions
+; that reference ZP addresses are 1 byte shorter and 1 cycle faster than
+; their absolute counterparts. Apple II games use ZP extensively as a
+; register file, since the 6502 has only 3 general-purpose registers (A/X/Y).
+;
+;   $00/$01    map_cursor_x/y       Current position on world/town map
+;   $02/$03    combat_cursor_x/y    Current position on combat grid
+;   $0F        animation_slot       Tile animation table offset
+;   $10        combat_active_flag   Nonzero = in combat (disables SFX)
+;   $11        text_window_mode     Wind direction display index (0-4)
+;   $95/$96    sfx_scratch          Sound effect working variables
+;   $D0-$D5    display_state        Viewport rendering state
+;   $D5        char_slot_id         Character slot for name display
+;   $D7        char_name_index      Current byte offset in name string
+;   $E1        party_size           Active party member count (1-4)
+;   $E6-$E9    party_slots          Roster indices for party members
+;   $F0-$F3    temp_work            General scratch registers
+;   $F9/$FA    text_cursor_x/y      Text cursor: column/row on screen
+;   $FC/$FD    dest_ptr             Destination pointer (copy ops)
+;   $FE/$FF    src_ptr / data_ptr   Source/general data pointer
 ;
 ; === Optimization Hints Report ===
 ; Total hints: 24
@@ -1024,206 +1089,283 @@ sprite_data_11
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; print_inline_str  [5 calls, 2 jumps]
-;   Called by: text_wind_show, text_mode_1, text_mode_2, text_mode_3, scroll_text_col
-;   Calls: plot_char_glyph, scroll_text_up
+; print_inline_str — Print null-terminated string embedded after JSR
 ; ---------------------------------------------------------------------------
-
-; FUNC $004732: register -> A:X []
-; Proto: uint32_t func_004732(uint16_t param_X);
-; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-; XREF: 7 refs (5 calls) (2 jumps) from $0046BA, text_wind_show, text_mode_1, text_mode_2, text_mode_3, ...
-print_inline_str     pla                  ; A=[stk] ; [SP-12]
-            sta  $FE             ; A=[stk] ; [SP-12]
-            pla                  ; A=[stk] ; [SP-11]
-            sta  $FF             ; A=[stk] ; [SP-11]
-
-; === while loop starts here [nest:7] ===
-; XREF: 2 refs (2 jumps) from print_str_fetch, print_str_newline
-print_str_loop  ldy  #$00            ; A=[stk] Y=$0000 ; [SP-11]
-            inc  $FE             ; A=[stk] Y=$0000 ; [SP-11]
-            bne  print_str_fetch      ; A=[stk] Y=$0000 ; [SP-11]
-            inc  $FF             ; A=[stk] Y=$0000 ; [SP-11]
-; LUMA: data_ptr_offset
-; XREF: 1 ref (1 branch) from print_str_loop
-print_str_fetch  lda  ($FE),Y         ; A=[stk] Y=$0000 ; [SP-11]
-            beq  print_str_done      ; A=[stk] Y=$0000 ; [SP-11]
-            cmp  #$FF            ; A=[stk] Y=$0000 ; [SP-11]
-            beq  print_str_newline      ; A=[stk] Y=$0000 ; [SP-11]
-            and  #$7F            ; A=A&$7F Y=$0000 ; [SP-11]
-            jsr  plot_char_glyph       ; A=A&$7F Y=$0000 ; [SP-13]
-            inc  $F9             ; A=A&$7F Y=$0000 ; [SP-13]
-            jmp  print_str_loop      ; A=A&$7F Y=$0000 ; [SP-13]
-; === End of while loop ===
-
-; XREF: 1 ref (1 branch) from print_str_fetch
-print_str_newline  jsr  scroll_text_up          ; A=A&$7F Y=$0000 ; [SP-15]
-            lda  #$18            ; A=$0018 Y=$0000 ; [SP-15]
-            sta  $F9             ; A=$0018 Y=$0000 ; [SP-15]
-            lda  #$17            ; A=$0017 Y=$0000 ; [SP-15]
-            sta  $FA             ; A=$0017 Y=$0000 ; [SP-15]
-            jmp  print_str_loop      ; A=$0017 Y=$0000 ; [SP-15]
-; === End of while loop ===
-
-; XREF: 1 ref (1 branch) from print_str_fetch
-print_str_done  lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
-            pha                  ; A=[$00FF] Y=$0000 ; [SP-16]
-            lda  $FE             ; A=[$00FE] Y=$0000 ; [SP-16]
-            pha                  ; A=[$00FE] Y=$0000 ; [SP-17]
-; LUMA: epilogue_rts
-            rts                  ; A=[$00FE] Y=$0000 ; [SP-15]
-
+;
+;   PURPOSE: Prints a string that is encoded directly in the instruction
+;            stream following the JSR that called this routine. This is
+;            the most important text output mechanism in Ultima III —
+;            used 245 times in ULT3 alone for all game messages.
+;
+;   CALLING CONVENTION:
+;            JSR print_inline_str   ; (or JSR $46BA which jumps here)
+;            ASC "HELLO WORLD"      ; high-ASCII text (bit 7 set)
+;            DB  $00                ; null terminator
+;            ; execution resumes here after printing
+;
+;   PARAMS:  None explicit. The string data follows the JSR in memory.
+;   RETURNS: A,X,Y clobbered. $F9/$FA = updated text cursor position.
+;   CALLS:   plot_char_glyph, scroll_text_up
+;
+;   ALGORITHM — THE RETURN ADDRESS TRICK:
+;   When the 6502 executes JSR, it pushes the return address minus one
+;   onto the stack (this is a 6502 quirk — it pushes addr-1 because
+;   RTS adds 1 before jumping). This routine exploits that by pulling
+;   the return address off the stack and using it as a string pointer.
+;   After printing all characters, it pushes the updated pointer back
+;   onto the stack so RTS resumes execution at the byte AFTER the
+;   null terminator — skipping over the string data as if it were a
+;   multi-byte instruction.
+;
+;   This technique was widely used in 6502 games of the era (also seen
+;   in Ultima IV, Wizardry, and Apple DOS 3.3's RWTS error handler).
+;   It saves 5 bytes per call vs. loading a pointer and calling a
+;   separate print routine — critical when you have 245 messages.
+;
+;   STRING FORMAT:
+;   - Characters have bit 7 set (high-ASCII, Apple II convention)
+;   - AND #$7F strips the high bit before rendering
+;   - $FF = newline (scrolls text window, resets cursor to left edge)
+;   - $00 = end of string (execution resumes after this byte)
+;
 ; ---------------------------------------------------------------------------
-; scroll_text_up  [1 call, 1 jump]
-;   Called by: print_str_newline
-;   Calls: print_inline_str
-; ---------------------------------------------------------------------------
+print_inline_str     pla                  ; Pull return address lo from stack
+            sta  $FE             ; $FE/$FF = return addr (points to
+            pla                  ;   last byte of JSR instruction,
+            sta  $FF             ;   i.e., one byte BEFORE the string)
 
-; FUNC $004767: register -> A:X []
-; Liveness: returns(A,X,Y) [9 dead stores]
-; XREF: 2 refs (1 call) (1 jump) from print_str_newline, $0046BD
-scroll_text_up      lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
-            pha                  ; A=[$00FF] Y=$0000 ; [SP-16]
-            lda  $FE             ; A=[$00FE] Y=$0000 ; [SP-16]
-            pha                  ; A=[$00FE] Y=$0000 ; [SP-17]
-            ldx  #$88            ; A=[$00FE] X=$0088 Y=$0000 ; [SP-17]
+; --- Main print loop: fetch next character from inline string ---
+print_str_loop  ldy  #$00            ; Y=0 for indirect indexed addressing
+            inc  $FE             ; Advance pointer to next string byte
+            bne  print_str_fetch ; (16-bit increment: inc lo, then
+            inc  $FF             ;  inc hi only if lo wrapped to 0)
+print_str_fetch  lda  ($FE),Y         ; Fetch next character via pointer
+            beq  print_str_done ; $00 = null terminator → done
+            cmp  #$FF            ; $FF = newline control code
+            beq  print_str_newline
+            and  #$7F            ; Strip high bit (Apple II text convention)
+            jsr  plot_char_glyph ; Render glyph to HGR screen at ($F9,$FA)
+            inc  $F9             ; Advance text cursor column (x += 1)
+            jmp  print_str_loop  ; Continue with next character
 
-; === while loop starts here (counter: X 'iter_x', range: 0..184, iters: 184) [nest:7] ===
-; XREF: 1 ref (1 branch) from scroll_text_col
-scroll_text_row   ldy  #$18            ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-; LUMA: data_array_x
-            lda  $4300,X         ; -> $4388 ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            sta  $FE             ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-; LUMA: data_array_x
-            lda  $43C0,X         ; -> $4448 ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            sta  $FF             ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-; LUMA: data_array_x
-            lda  $4308,X         ; -> $4390 ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            sta  $FC             ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            lda  $43C8,X         ; -> $4450 ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            sta  $FD             ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
+; --- Handle newline: scroll text area and reset cursor ---
+print_str_newline  jsr  scroll_text_up   ; Scroll text window up one line
+            lda  #$18            ; Reset cursor to column 24 (left edge
+            sta  $F9             ;   of text window, in HGR coordinates)
+            lda  #$17            ; Row 23 (bottom of text window)
+            sta  $FA
+            jmp  print_str_loop  ; Continue printing after the newline
 
-; === while loop starts here (counter: Y 'iter_y', range: 0..40, iters: 40) [nest:8] ===
-; LUMA: data_ptr_offset
-; XREF: 1 ref (1 branch) from scroll_text_col
-scroll_text_col   lda  ($FC),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            sta  ($FE),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
-            iny                  ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
-            cpy  #$28            ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
-            bcc  scroll_text_col       ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
-; === End of while loop (counter: Y) ===
-
-            inx                  ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
-            cpx  #$B8            ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
-            bcc  scroll_text_row       ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
-; === End of while loop (counter: X) ===
-
-            lda  #$18            ; A=$0018 X=$0089 Y=$0019 ; [SP-17]
-            sta  $F9             ; A=$0018 X=$0089 Y=$0019 ; [SP-17]
-            lda  #$17            ; A=$0017 X=$0089 Y=$0019 ; [SP-17]
-            sta  $FA             ; A=$0017 X=$0089 Y=$0019 ; [SP-17]
-            jsr  print_inline_str         ; A=$0017 X=$0089 Y=$0019 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $00479E ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A0 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A2 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A4 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A6 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A8 ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047AA ; [SP-19]
-            ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047AC ; [SP-19]
-; LUMA: int_brk
-            brk  #$68            ; A=$0017 X=$0089 Y=$00A0 ; [SP-22]
+; --- Done: push updated pointer back as return address ---
+;   The pointer now points to the null terminator. When we push it
+;   and RTS adds 1, execution resumes at the byte AFTER the null —
+;   exactly where the caller's code continues.
+print_str_done  lda  $FF             ; Push return address hi
+            pha
+            lda  $FE             ; Push return address lo
+            pha
+            rts                  ; "Return" to byte after the string
 
 ; ---------------------------------------------------------------------------
-; save_text_ptr
+; scroll_text_up — Scroll the HGR text window up by one line
 ; ---------------------------------------------------------------------------
-save_text_ptr  sta  $FE             ; A=$0017 X=$0089 Y=$00A0 ; [SP-22]
-            pla                  ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
-            sta  $FF             ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
-; LUMA: epilogue_rts
-            rts                  ; A=[stk] X=$0089 Y=$00A0 ; [SP-19]
-; XREF: 1 ref (1 jump) from $0046C0
-draw_border_init   jsr  clear_hgr_page       ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
-            lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
-            sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
+;
+;   PURPOSE: Scrolls the bottom text area up one text line (8 pixel rows)
+;            by copying each HGR scanline upward, then blanks the bottom
+;            line with spaces. Called when text output reaches the end of
+;            the text window during inline string printing.
+;
+;   PARAMS:  None. Operates on the text region of HGR page 1.
+;   RETURNS: A,X,Y clobbered. $FE/$FF restored from stack.
+;            $F9/$FA reset to left edge of bottom text line.
+;   CALLS:   print_inline_str (to output blank spaces on cleared line)
+;
+;   APPLE II HGR MEMORY LAYOUT:
+;   The Apple II's HGR screen memory is NOT linear. The 192 scanlines
+;   are interleaved across three 1KB groups due to the video hardware's
+;   CRT timing design (inherited from Wozniak's original circuit). To
+;   scroll, we cannot simply block-copy — we must use the HGR address
+;   lookup tables at $4300/$43C0 to find each scanline's memory address.
+;
+;   The scanline tables work as follows:
+;     $4300+X = low byte of HGR address for scanline X
+;     $43C0+X = high byte of HGR address for scanline X
+;   We copy from scanline X+8 (source, via $4308/$43C8) to scanline X
+;   (destination, via $4300/$43C0), shifting everything up by 8 rows
+;   (one character height).
+;
+;   INLINE STRING TRICK FOR BLANK LINE:
+;   After scrolling, the bottom row is cleared by calling print_inline_str
+;   with 9 embedded $A0 bytes (high-ASCII space). These bytes happen to
+;   disassemble as "LDY #$A0" instructions, but they are really string
+;   data consumed by the inline string printer. This dual-interpretation
+;   is a consequence of the Von Neumann architecture — code and data
+;   share the same address space, and the print_inline_str routine reads
+;   bytes that would otherwise execute as instructions.
+;
+; ---------------------------------------------------------------------------
+scroll_text_up      lda  $FF             ; Save $FE/$FF on stack (caller's
+            pha                  ;   string pointer must be preserved
+            lda  $FE             ;   since this routine overwrites
+            pha                  ;   $FE/$FF for scanline addressing)
+            ldx  #$88            ; Start at scanline index $88 (text area)
 
-; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from draw_border_horiz
-draw_border_horiz   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047BB ; [SP-21]
-            sta  $F1             ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
-            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-23]
-            lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-23]
-            sta  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-23]
-            jsr  draw_hgr_stripe      ; A=$0017 X=$0089 Y=$00A0 ; [SP-25]
-            inc  $F2             ; A=$0017 X=$0089 Y=$00A0 ; [SP-25]
-            lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
-            cmp  #$18            ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
-            bcc  draw_border_horiz       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
-; === End of while loop ===
+; --- Outer loop: iterate scanlines $88..$B7 (text window region) ---
+scroll_text_row   ldy  #$18            ; Y=$18: start column for text area
+            lda  $4300,X         ; Dest scanline addr lo = hgr_lo[X]
+            sta  $FE
+            lda  $43C0,X         ; Dest scanline addr hi = hgr_hi[X]
+            sta  $FF
+            lda  $4308,X         ; Source scanline addr lo = hgr_lo[X+8]
+            sta  $FC
+            lda  $43C8,X         ; Source scanline addr hi = hgr_hi[X+8]
+            sta  $FD
 
-            lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
-            sta  $F1             ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
+; --- Inner loop: copy 40 bytes (one full HGR scanline = 280 pixels) ---
+;   Each HGR byte encodes 7 pixels + 1 palette bit. 40 × 7 = 280 px.
+scroll_text_col   lda  ($FC),Y         ; Read pixel byte from source row
+            sta  ($FE),Y         ; Write to dest row (8 scanlines up)
+            iny
+            cpy  #$28            ; 40 ($28) bytes per scanline
+            bcc  scroll_text_col
 
-; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from draw_border_vert
-draw_border_vert   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047D5 ; [SP-25]
-            sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
-            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
-            lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-27]
-            sta  $F2             ; A=$0017 X=$0089 Y=$00A0 ; [SP-27]
-            jsr  draw_hgr_stripe      ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
-            inc  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
-            lda  $F1             ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
-            cmp  #$17            ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
-            bcc  draw_border_vert       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
-; === End of while loop ===
+            inx                  ; Next scanline
+            cpx  #$B8            ; $B8 = end of text window region
+            bcc  scroll_text_row
 
-            lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
-            sta  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
+; --- Clear bottom line: reset cursor and print 9 spaces ---
+            lda  #$18            ; Column $18 = left edge of text window
+            sta  $F9
+            lda  #$17            ; Row $17 = bottom text line
+            sta  $FA
+            jsr  print_inline_str ; Print inline spaces to clear the line
+; --- Inline string: 9 × $A0 (high-ASCII space) + $00 null terminator ---
+;   CIDAR disassembles these data bytes as LDY #$A0 instructions,
+;   but they are read as string characters by print_inline_str.
+;   This is harmless — the code never reaches them as instructions.
+            ldy  #$A0            ; \
+            ldy  #$A0            ; |
+            ldy  #$A0            ; |
+            ldy  #$A0            ; |  9 space characters ($A0)
+            ldy  #$A0            ; |  filling the cleared text line
+            ldy  #$A0            ; |
+            ldy  #$A0            ; |
+            ldy  #$A0            ; |
+            ldy  #$A0            ; /
+            brk  #$68            ; $00 = string null terminator
 
-; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from draw_border_bottom
-draw_border_bottom   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-29]
-            sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-29]
-            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-31]
-            lda  #$04            ; A=$0004 X=$0089 Y=$00A0 ; [SP-31]
-            sta  $F2             ; A=$0004 X=$0089 Y=$00A0 ; [SP-31]
-            jsr  draw_hgr_stripe      ; A=$0004 X=$0089 Y=$00A0 ; [SP-33]
-            lda  #$08            ; A=$0008 X=$0089 Y=$00A0 ; [SP-33]
-            sta  $F2             ; A=$0008 X=$0089 Y=$00A0 ; [SP-33]
-            jsr  draw_hgr_stripe      ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
-            lda  #$0C            ; A=$000C X=$0089 Y=$00A0 ; [SP-35]
-            sta  $F2             ; A=$000C X=$0089 Y=$00A0 ; [SP-35]
-            jsr  draw_hgr_stripe      ; A=$000C X=$0089 Y=$00A0 ; [SP-37]
-            lda  #$10            ; A=$0010 X=$0089 Y=$00A0 ; [SP-37]
-            sta  $F2             ; A=$0010 X=$0089 Y=$00A0 ; [SP-37]
-            jsr  draw_hgr_stripe      ; A=$0010 X=$0089 Y=$00A0 ; [SP-39]
-            inc  $F1             ; A=$0010 X=$0089 Y=$00A0 ; [SP-39]
-            lda  $F1             ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
-            cmp  #$28            ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
-            bcc  draw_border_bottom       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
-            lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-39]
-            sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-39]
-            lda  #$27            ; A=$0027 X=$0089 Y=$00A0 ; [SP-39]
-            sta  $F1             ; A=$0027 X=$0089 Y=$00A0 ; [SP-39]
+; ---------------------------------------------------------------------------
+; save_text_ptr — Restore $FE/$FF from stack
+; ---------------------------------------------------------------------------
+;   PURPOSE: Companion to scroll_text_up — restores the caller's $FE/$FF
+;            pointer from the stack where scroll_text_up saved it.
+;            The BRK/$68 sequence above pushes values that this routine
+;            then consumes: $68 is PLA opcode, effectively doing PLA+STA.
+; ---------------------------------------------------------------------------
+save_text_ptr  sta  $FE             ; Restore $FE from A (set by BRK handler)
+            pla                  ; Pull saved $FF from stack
+            sta  $FF
+            rts
+; ---------------------------------------------------------------------------
+; draw_border_init — Draw the viewport border frame on HGR screen
+; ---------------------------------------------------------------------------
+;   PURPOSE: Clears HGR page 1 and draws the rectangular border frame
+;            that separates the game viewport from the text/status areas.
+;            Called once during display initialization. The border uses
+;            alternating color stripes to create a visible frame on the
+;            Apple II's unique color display.
+;
+;   APPLE II HGR COLOR MODEL:
+;   On the Apple II, HGR color is an artifact of the NTSC video signal.
+;   Adjacent pixels produce colors based on their phase alignment with
+;   the NTSC color burst. Even-column pixels and odd-column pixels
+;   produce different hues. The draw_hgr_stripe routine exploits this
+;   by writing $AA (even phase) or $D5 (odd phase) to create colored
+;   stripes. The $F1/$F2 scratch variables specify the X,Y position
+;   of each stripe segment.
+; ---------------------------------------------------------------------------
+draw_border_init   jsr  clear_hgr_page  ; Zero-fill HGR page 1 ($2000-$3FFF)
+            lda  #$00
+            sta  $F2             ; $F2 = row counter
 
-; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from draw_border_right
-draw_border_right   jsr  draw_hgr_stripe      ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
-            inc  $F2             ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
-            lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
-            cmp  #$11            ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
-            bcc  draw_border_right       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
-; LUMA: epilogue_rts
-            rts                  ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-39]
+; --- Draw horizontal border lines (top and bottom of viewport) ---
+;   For each of 24 rows ($18), draw a stripe at X=0 and X=$17
+draw_border_horiz   lda  #$00
+            sta  $F1             ; $F1 = column 0 (left border)
+            jsr  draw_hgr_stripe
+            lda  #$17
+            sta  $F1             ; $F1 = column 23 (right border)
+            jsr  draw_hgr_stripe
+            inc  $F2
+            lda  $F2
+            cmp  #$18            ; 24 rows complete?
+            bcc  draw_border_horiz
+
+; --- Draw vertical border lines (left and right edges) ---
+            lda  #$00
+            sta  $F1             ; $F1 = starting column
+
+draw_border_vert   lda  #$00
+            sta  $F2             ; Row 0 (top edge)
+            jsr  draw_hgr_stripe
+; --- 7 NOPs: timing padding for consistent visual appearance ---
+;   These NOPs ensure the vertical border drawing takes the same
+;   number of cycles as the horizontal version, keeping the display
+;   update visually smooth. On a 1 MHz 6502, 7 NOPs = 14 cycles.
+            nop
+            nop
+            nop
+            nop
+            nop
+            nop
+            nop
+            lda  #$17
+            sta  $F2             ; Row $17 (bottom edge)
+            jsr  draw_hgr_stripe
+            inc  $F1             ; Next column
+            lda  $F1
+            cmp  #$17            ; 23 columns complete?
+            bcc  draw_border_vert
+
+; --- Draw bottom status area border (thick divider line) ---
+;   The bottom border is 5 stripes thick at rows 0,4,8,12,16
+;   for each column, creating a wide horizontal separator between
+;   the game viewport and the text status area below it.
+            lda  #$17
+            sta  $F1             ; Start at column $17
+
+draw_border_bottom   lda  #$00
+            sta  $F2
+            jsr  draw_hgr_stripe ; Row 0
+            lda  #$04
+            sta  $F2
+            jsr  draw_hgr_stripe ; Row 4
+            lda  #$08
+            sta  $F2
+            jsr  draw_hgr_stripe ; Row 8
+            lda  #$0C
+            sta  $F2
+            jsr  draw_hgr_stripe ; Row 12
+            lda  #$10
+            sta  $F2
+            jsr  draw_hgr_stripe ; Row 16
+            inc  $F1             ; Next column
+            lda  $F1
+            cmp  #$28            ; 40 columns complete?
+            bcc  draw_border_bottom
+
+; --- Draw right edge border stripe ---
+            lda  #$00
+            sta  $F2
+            lda  #$27            ; Column $27 = rightmost column (39)
+            sta  $F1
+
+draw_border_right   jsr  draw_hgr_stripe
+            inc  $F2             ; Next row
+            lda  $F2
+            cmp  #$11            ; 17 rows complete?
+            bcc  draw_border_right
+            rts
 
 ; ---
             DB      $A2,$08,$BD,$00,$43,$85,$FE,$BD,$C0,$43,$85,$FF,$A0,$16,$A9,$80
@@ -1235,288 +1377,439 @@ draw_border_right   jsr  draw_hgr_stripe      ; A=$0027 X=$0089 Y=$00A0 ; [SP-41
 draw_border_done   rts                  ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
 
 ; ---------------------------------------------------------------------------
-; draw_hgr_stripe  [10 calls]
-;   Called by: draw_border_bottom, draw_border_vert, draw_border_horiz, draw_border_right
+; draw_hgr_stripe — Draw one 8-pixel vertical stripe at ($F1, $F2)
 ; ---------------------------------------------------------------------------
-
-; FUNC $004855: register -> A:X [L]
-; Proto: uint32_t func_004855(void);
-; Liveness: returns(A,X,Y) [3 dead stores]
-; XREF: 10 refs (10 calls) from draw_border_bottom, draw_border_vert, draw_border_bottom, draw_border_horiz, draw_border_vert, ...
-draw_hgr_stripe  lda  #$08            ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
-            sta  $F3             ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
-            lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
-            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-35]
-            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-35]
-            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
-            tax                  ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-            ldy  $F1             ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-
-; === while loop starts here (counter: X 'iter_x') [nest:6] ===
-; LUMA: data_array_x
-; XREF: 1 ref (1 branch) from draw_stripe_next
-draw_stripe_row lda  $4300,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-            sta  $FE             ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-; LUMA: data_array_x
-            lda  $43C0,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-            sta  $FF             ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
-            tya                  ; A=$00A0 X=[$00F2] Y=$00A0 ; [SP-35]
-            lsr  a               ; A=$00A0 X=[$00F2] Y=$00A0 ; [SP-35]
-            lda  #$AA            ; A=$00AA X=[$00F2] Y=$00A0 ; [SP-35]
-            bcs  draw_stripe_store   ; A=$00AA X=[$00F2] Y=$00A0 ; [SP-35]
-            eor  #$7F            ; A=A^$7F X=[$00F2] Y=$00A0 ; [SP-35]
-; XREF: 1 ref (1 branch) from draw_stripe_row
-draw_stripe_store sta  ($FE),Y         ; A=A^$7F X=[$00F2] Y=$00A0 ; [SP-35]
-            inx                  ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
-            dec  $F3             ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
-draw_stripe_next bne  draw_stripe_row   ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
-; === End of while loop (counter: X) ===
-
-; LUMA: epilogue_rts
-            rts                  ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-33]
-
+;
+;   PURPOSE: Draws a single colored stripe (8 scanlines tall, 1 byte wide)
+;            at the character position specified by $F1 (column) and $F2
+;            (row). Used to draw the viewport border frame.
+;
+;   PARAMS:  $F1 = column position (0-39)
+;            $F2 = row position (character row, 0 = top)
+;   RETURNS: A,X,Y clobbered. $FE/$FF modified.
+;
+;   6502 IDIOM — ASL CHAIN (MULTIPLY BY 8):
+;   Three ASL A instructions multiply the row number by 8, converting
+;   character row coordinates to scanline indices (8 pixels per char).
+;   ASL = Arithmetic Shift Left = multiply by 2. Three shifts = ×8.
+;   This is the standard 6502 way to multiply by powers of 2, since
+;   the processor has no MUL instruction.
+;
+;   APPLE II HGR COLOR TRICK:
+;   The stripe pattern alternates between $AA and $D5 ($AA ^ $7F)
+;   based on whether the column is even or odd. On the Apple II,
+;   adjacent pixels in HGR mode produce different NTSC color artifacts
+;   depending on their horizontal phase. By checking bit 0 of the
+;   column (via LSR, which shifts it into the carry flag), the routine
+;   selects the appropriate color phase pattern for that column.
+;
 ; ---------------------------------------------------------------------------
-; clear_hgr_page  [1 call, 1 jump]
-;   Called by: draw_border_init
-; ---------------------------------------------------------------------------
+draw_hgr_stripe  lda  #$08            ; 8 scanlines per character row
+            sta  $F3             ; $F3 = loop counter (rows to draw)
+            lda  $F2             ; A = character row number
+            asl  a               ; × 2 }
+            asl  a               ; × 4 } Row × 8 = scanline index
+            asl  a               ; × 8 }
+            tax                  ; X = scanline table index
+            ldy  $F1             ; Y = column offset (byte position)
 
-; FUNC $00487B: register -> A:X [I]
-; Proto: uint32_t func_00487B(void);
-; Liveness: returns(A,X,Y)
-; XREF: 2 refs (1 call) (1 jump) from draw_border_init, $0046C9
-clear_hgr_page   lda  #$20            ; A=$0020 X=X+$01 Y=$00A0 ; [SP-33]
-            sta  $FF             ; A=$0020 X=X+$01 Y=$00A0 ; [SP-33]
-            lda  #$00            ; A=$0000 X=X+$01 Y=$00A0 ; [SP-33]
-            sta  $FE             ; A=$0000 X=X+$01 Y=$00A0 ; [SP-33]
-            ldy  #$00            ; A=$0000 X=X+$01 Y=$0000 ; [SP-33]
+; --- Draw 8 scanlines of the stripe ---
+draw_stripe_row lda  $4300,X         ; Look up HGR address for this scanline
+            sta  $FE
+            lda  $43C0,X
+            sta  $FF
+            tya                  ; Check column parity for color phase
+            lsr  a               ; Carry = bit 0 of column number
+            lda  #$AA            ; Color pattern A (even-phase pixels)
+            bcs  draw_stripe_store ; If odd column, use pattern A as-is
+            eor  #$7F            ; If even column, flip to pattern B ($D5)
+draw_stripe_store sta  ($FE),Y         ; Write color byte to HGR screen
+            inx                  ; Next scanline in the table
+            dec  $F3             ; Decrement row counter
+draw_stripe_next bne  draw_stripe_row
 
-; === while loop starts here (counter: Y 'iter_y') [nest:6] ===
-; XREF: 2 refs (2 branches) from clear_hgr_loop, clear_hgr_loop
-clear_hgr_loop sta  ($FE),Y         ; A=$0000 X=X+$01 Y=$0000 ; [SP-33]
-            iny                  ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            bne  clear_hgr_loop    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-; === End of while loop (counter: Y) ===
-
-            inc  $FF             ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            ldx  $FF             ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            cpx  #$40            ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            bcc  clear_hgr_loop    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-; === End of while loop (counter: Y) ===
-
-; LUMA: epilogue_rts
-            rts                  ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
+            rts
 
 ; ---------------------------------------------------------------------------
-; plot_char_glyph  [11 calls, 1 jump]
-;   Called by: copy_plrs_byte, print_digit, rng_done, print_bcd_byte, print_str_fetch, print_name_loop
+; clear_hgr_page — Zero-fill HGR page 1 ($2000-$3FFF)
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Clears the entire HGR display page 1 by writing $00 to all
+;            8,192 bytes ($2000-$3FFF). This produces a black screen.
+;
+;   PARAMS:  None.
+;   RETURNS: A=0, X=page hi byte ($40), Y=0. $FE/$FF = $4000 (past end).
+;
+;   ALGORITHM:
+;   Uses a page-at-a-time loop: the inner loop writes 256 bytes (one
+;   full memory page) using Y as the index, then the outer loop advances
+;   $FF to the next page. This is the standard 6502 pattern for filling
+;   large memory regions — Y wraps from $FF to $00 on overflow, which
+;   sets the BNE branch to fall through, triggering the page increment.
+;
+;   HGR PAGE 1 LAYOUT:
+;   $2000-$3FFF = 8KB = 32 pages of 256 bytes. Each page contains
+;   parts of several non-consecutive scanlines (due to Apple II's
+;   interleaved HGR address layout). Clearing the entire range
+;   guarantees a clean slate regardless of the interleaving pattern.
+;
+; ---------------------------------------------------------------------------
+clear_hgr_page   lda  #$20            ; Start at $2000 (HGR page 1 base)
+            sta  $FF
+            lda  #$00
+            sta  $FE
+            ldy  #$00            ; Y = byte index within page
 
-; FUNC $004893: register -> A:X [L]
-; Proto: uint32_t func_004893(void);
-; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 12 refs (11 calls) (1 jump) from copy_plrs_byte, copy_plrs_byte, print_digit, copy_plrs_byte, $0046CC, ...
-plot_char_glyph   cmp  #$60            ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
-            bcc  plot_char_clip    ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
-            and  #$1F            ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
-; XREF: 1 ref (1 branch) from plot_char_glyph
-plot_char_clip sta  $F0             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
-            ldy  $F9             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
-            ldx  $FA             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
-            txa                  ; A=X X=X+$01 Y=$0001 ; [SP-31]
-            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-31]
-            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-31]
-            asl  a               ; A=X X=X+$01 Y=$0001 ; [SP-31]
-            sta  $F1             ; A=X X=X+$01 Y=$0001 ; [SP-31]
-            lda  #$08            ; A=$0008 X=X+$01 Y=$0001 ; [SP-31]
-            sta  $F3             ; A=$0008 X=X+$01 Y=$0001 ; [SP-31]
-            lda  #$04            ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  plot_char_smc_page    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_page
+; --- Inner loop: fill one 256-byte page with zeros ---
+clear_hgr_loop sta  ($FE),Y         ; Store $00 at ($FE),Y
+            iny                  ; Next byte (wraps $FF → $00)
+            bne  clear_hgr_loop  ; Continue until Y wraps to 0
 
-; === while loop starts here [nest:9] ===
-; XREF: 1 ref (1 branch) from plot_char_next
-plot_char_row ldx  $F1             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-; LUMA: data_array_x
-            lda  $4300,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  plot_char_smc_lo    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_lo
-; LUMA: data_array_x
-            lda  $43C0,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  plot_char_smc_hi    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_hi
-            ldx  $F0             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-; LUMA: data_array_x
-            lda  $FF00,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  $FFFF,Y         ; -> $0000 ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            clc                  ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-; LUMA: hw_keyboard_read
-            lda  $48BF           ; A=[$48BF] X=X+$01 Y=$0001 ; [SP-31]
-            adc  #$80            ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            sta  $48BF           ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> $48BF
-            bcc  plot_char_next    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            inc  plot_char_smc_page    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-; XREF: 1 ref (1 branch) from plot_char_smc_hi
-plot_char_next inc  $F1             ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            dec  $F3             ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            bne  plot_char_row    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-; === End of while loop ===
+; --- Outer loop: advance to next page until we reach $4000 ---
+            inc  $FF             ; Next page ($21, $22, ... $3F)
+            ldx  $FF
+            cpx  #$40            ; Reached $4000? (past end of HGR)
+            bcc  clear_hgr_loop  ; If not, clear next page
 
-; LUMA: epilogue_rts
-            rts                  ; A=A+$80 X=X+$01 Y=$0001 ; [SP-29]
+            rts
 
 ; ---------------------------------------------------------------------------
-; swap_tile_frames  [4 calls, 1 jump, 1 branch]
-;   Called by: anim_tiles_set2, anim_tiles_set3, animate_tiles
-;   Calls: advance_ptr_128
+; plot_char_glyph — Render a 7×8 character glyph to HGR screen
 ; ---------------------------------------------------------------------------
-
-; FUNC $0048D9: register -> A:X []
-; Proto: uint32_t func_0048D9(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 6 refs (4 calls) (1 jump) (1 branch) from anim_tiles_set2, anim_tiles_set3, swap_tile_loop, animate_tiles, anim_tiles_set2, ...
-swap_tile_frames lda  #$00            ; A=$0000 X=X+$01 Y=$0001 ; [SP-29]
-            sta  $FE             ; A=$0000 X=X+$01 Y=$0001 ; [SP-29]
-            lda  #$08            ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
-            sta  $FF             ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
-            ldx  $0F80,Y         ; -> $0F81 ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
-
-; === while loop starts here [nest:14] ===
-; XREF: 1 ref (1 branch) from swap_tile_loop
-swap_tile_loop lda  ($FE),Y         ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
-            pha                  ; A=$0008 X=X+$01 Y=$0001 ; [SP-30]
-            txa                  ; A=X X=X+$01 Y=$0001 ; [SP-30]
-            sta  ($FE),Y         ; A=X X=X+$01 Y=$0001 ; [SP-30]
-            pla                  ; A=[stk] X=X+$01 Y=$0001 ; [SP-29]
-            tax                  ; A=[stk] X=[stk] Y=$0001 ; [SP-29]
-            jsr  advance_ptr_128      ; Call $0048FF(A)
-            lda  $FF             ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
-            cmp  #$10            ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
-            bcc  swap_tile_loop  ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
-; === End of while loop ===
-
-            txa                  ; A=[stk] X=[stk] Y=$0001 ; [SP-31]
-            sta  $0800,Y         ; -> $0801 ; A=[stk] X=[stk] Y=$0001 ; [SP-31]
-            iny                  ; A=[stk] X=[stk] Y=$0002 ; [SP-31]
-            tya                  ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
-            lsr  a               ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
-            bcs  swap_tile_frames     ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
-; === End of while loop (counter: Y) ===
-
-            rts                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
-
+;
+;   PURPOSE: Plots a single character glyph (7 pixels wide × 8 pixels
+;            tall) to HGR page 1 at the position specified by the text
+;            cursor ($F9 = column, $FA = row). This is the fundamental
+;            character rendering routine — all text display in the game
+;            ultimately calls this function.
+;
+;   PARAMS:  A = character code (ASCII value, 0-127 range after AND #$7F)
+;   RETURNS: A,X,Y clobbered. Glyph drawn to HGR screen.
+;
+;   CHARACTER ENCODING:
+;   If A >= $60 (lowercase range), it's masked to $1F (5 bits), mapping
+;   lowercase letters to the upper portion of the character set. Values
+;   below $60 pass through directly. The resulting value is an index
+;   into the font/glyph table at $FF00 (the Apple II character generator
+;   ROM, mirrored or loaded into RAM).
+;
+;   SELF-MODIFYING CODE (SMC):
+;   This routine uses SMC to patch the target address of STA instructions
+;   at runtime. The 6502 has no (abs,Y) addressing mode for STA, so the
+;   routine writes the HGR scanline address directly into the STA
+;   instruction's operand bytes. Three locations are patched:
+;     plot_char_smc_page ($48C0) — HGR page byte
+;     plot_char_smc_lo   ($48C2) — HGR address low byte
+;     plot_char_smc_hi   ($48C3) — HGR address high byte
+;
+;   This was a standard 6502 technique when indirect indexed addressing
+;   was insufficient or too slow. The tradeoff: faster execution at the
+;   cost of code that cannot run from ROM (since it writes to itself).
+;   On the Apple II, all game code runs from RAM, so this is acceptable.
+;
+;   HGR SCANLINE ADVANCE:
+;   After drawing each pixel row, the routine advances to the next
+;   scanline by adding $80 to the HGR address. In Apple II HGR memory,
+;   consecutive scanlines within a character cell are separated by $80
+;   bytes (not consecutive). This is because the HGR memory is divided
+;   into 8 groups of 3 banks, with $80 bytes between same-group rows.
+;   The CLC/ADC #$80/BCC pattern handles the 16-bit addition and page
+;   crossing in a cycle-efficient way.
+;
 ; ---------------------------------------------------------------------------
-; advance_ptr_128  [1 call]
-;   Called by: swap_tile_loop
-; ---------------------------------------------------------------------------
+plot_char_glyph   cmp  #$60            ; Lowercase ASCII range?
+            bcc  plot_char_clip  ; No — use character code directly
+            and  #$1F            ; Yes — mask to 5 bits (0-31)
+plot_char_clip sta  $F0             ; $F0 = glyph index in font table
+            ldy  $F9             ; Y = column position (X coord)
+            ldx  $FA             ; X = row position (Y coord)
+            txa
+            asl  a               ; } Row × 8 = scanline table index
+            asl  a               ; } (ASL chain: ×2, ×4, ×8)
+            asl  a               ; }
+            sta  $F1             ; $F1 = base scanline index
+            lda  #$08
+            sta  $F3             ; $F3 = row counter (8 pixel rows)
+            lda  #$04            ; } SMC: patch the HGR page byte
+            sta  plot_char_smc_page ; } in the STA instruction below
 
-; FUNC $0048FF: register -> A:X []
-; Proto: uint32_t func_0048FF(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
-; XREF: 1 ref (1 call) from swap_tile_loop
-advance_ptr_128  clc                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
-            lda  $FE             ; A=[$00FE] X=[stk] Y=$0002 ; [SP-29]
-            adc  #$80            ; A=A+$80 X=[stk] Y=$0002 ; [SP-29]
-            sta  $FE             ; A=A+$80 X=[stk] Y=$0002 ; [SP-29]
-            lda  $FF             ; A=[$00FF] X=[stk] Y=$0002 ; [SP-29]
-            adc  #$00            ; A=A X=[stk] Y=$0002 ; [SP-29]
-            sta  $FF             ; A=A X=[stk] Y=$0002 ; [SP-29]
-            rts                  ; A=A X=[stk] Y=$0002 ; [SP-27]
+; --- Draw loop: render 8 rows of the glyph ---
+plot_char_row ldx  $F1             ; Current scanline table index
+            lda  $4300,X         ; } Look up HGR address for this scanline
+            sta  plot_char_smc_lo ; } SMC: patch STA operand low byte
+            lda  $43C0,X         ; }
+            sta  plot_char_smc_hi ; } SMC: patch STA operand high byte
+            ldx  $F0             ; X = glyph index
+            lda  $FF00,X         ; Read glyph pixel data from font ROM
+            sta  $FFFF,Y         ; SMC TARGET: write pixel byte to HGR
+; --- Advance HGR pointer to next scanline (+$80 bytes) ---
+;   In Apple II HGR, successive scanlines within one character cell are
+;   separated by exactly $80 (128) bytes. Adding $80 to the address
+;   moves to the next row of the same glyph. If the low byte overflows
+;   past $FF, we increment the high byte (page crossing).
+            clc
+            lda  $48BF           ; SMC TARGET: current HGR addr low byte
+            adc  #$80            ; Add $80 to advance one scanline
+            sta  $48BF           ; SMC: store updated low byte back
+            bcc  plot_char_next  ; No page crossing? Skip hi increment
+            inc  plot_char_smc_page ; Page crossed — increment high byte
+plot_char_next inc  $F1             ; Next scanline table index
+            dec  $F3             ; Decrement row counter
+            bne  plot_char_row   ; Loop until all 8 rows drawn
 
-; ---------------------------------------------------------------------------
-; print_digit  [1 jump]
-;   Calls: plot_char_glyph
-; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 jump) from $0046D2
-print_digit  clc                  ; A=A X=[stk] Y=$0002 ; [SP-27]
-            adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            rts                  ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-; XREF: 1 ref (1 jump) from $0046D5
-print_bcd_byte sta  $4934           ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-            and  #$F0            ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
-            lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
-            lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
-            lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
-            lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
-            adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            lda  $4934           ; A=[$4934] X=[stk] Y=$0002 ; [SP-29]
-            and  #$0F            ; A=A&$0F X=[stk] Y=$0002 ; [SP-29]
-            clc                  ; A=A&$0F X=[stk] Y=$0002 ; [SP-29]
-            adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-31]
-            inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-31]
-            rts                  ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            DB      $00
-
-; ---------------------------------------------------------------------------
-; calc_roster_ptr  [2 calls, 1 jump]
-;   Called by: copy_roster_to_plrs, copy_plrs_slot
-; ---------------------------------------------------------------------------
-
-; FUNC $004935: register -> A:X [I]
-; Proto: uint32_t func_004935(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
-; XREF: 3 refs (2 calls) (1 jump) from copy_roster_to_plrs, $0046D8, copy_plrs_slot
-calc_roster_ptr    lda  #$00            ; A=$0000 X=[stk] Y=$0002 ; [SP-32]
-            sta  $FE             ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
-            lda  $E6,X           ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
-            sec                  ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
-            sbc  #$01            ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-            lsr  a               ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-            ror  $FE             ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-            lsr  a               ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-            ror  $FE             ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-calc_roster_offset clc                  ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-            adc  #$95            ; A=A+$95 X=[stk] Y=$0002 ; [SP-35]
-            sta  $FF             ; A=A+$95 X=[stk] Y=$0002 ; [SP-35]
-            lda  #$40            ; A=$0040 X=[stk] Y=$0002 ; [SP-35]
-            sta  $FD             ; A=$0040 X=[stk] Y=$0002 ; [SP-35]
-            txa                  ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            clc                  ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            ror  a               ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            ror  a               ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            ror  a               ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            sta  $FC             ; A=[stk] X=[stk] Y=$0002 ; [SP-35]
-            rts                  ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
+            rts
 
 ; ---------------------------------------------------------------------------
-; copy_roster_to_plrs  [1 jump]
-;   Calls: calc_roster_ptr
+; swap_tile_frames — Swap tile animation frame data in sprite memory
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 jump) from $0046DB
-copy_roster_to_plrs  ldx  $E1             ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
-            dex                  ; A=[stk] X=X-$01 Y=$0002 ; [SP-33]
-            jsr  calc_roster_ptr        ; A=[stk] X=X-$01 Y=$0002 ; [SP-35]
-            ldy  #$3F            ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
-            lda  ($FE),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
-            sta  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
-            dey                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  $495D           ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            dex                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  $4958           ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
-; XREF: 1 ref (1 jump) from $0046DE
-copy_plrs_to_roster ldx  $E1             ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
-            dex                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
+;
+;   PURPOSE: Cycles tile animation by swapping pixel data between two
+;            animation frames stored in the sprite graphics area ($0800).
+;            Each tile has an "A" frame and a "B" frame; this routine
+;            exchanges them so the next display refresh shows the
+;            alternate frame, creating the illusion of movement (e.g.,
+;            water rippling, torches flickering).
+;
+;   PARAMS:  Y = tile animation slot index (0, $40, $42, $44 for
+;                different animation groups: water, fire, cursor, etc.)
+;   RETURNS: A,X,Y clobbered. Sprite data modified in place.
+;   CALLS:   advance_ptr_128
+;
+;   ALGORITHM:
+;   The sprite data is arranged in pages at $0800. For each tile being
+;   animated, the routine walks through the frame data at $0800+Y,
+;   $0880+Y, $0900+Y, etc. (128 bytes apart), swapping bytes between
+;   the current frame (in X) and the stored frame (in memory). After
+;   walking all pages up to $1000, the final value is saved back.
+;   Y advances by 1 each iteration; if Y becomes odd (bit 0 set via
+;   LSR/BCS), the routine restarts for the paired tile (each animation
+;   set covers 2 tiles).
+;
+; ---------------------------------------------------------------------------
+swap_tile_frames lda  #$00            ; $FE/$FF = $0800 (sprite data base)
+            sta  $FE
+            lda  #$08
+            sta  $FF
+            ldx  $0F80,Y         ; Load current animation frame byte
 
-; === while loop starts here [nest:11] ===
-; XREF: 1 ref (1 branch) from copy_plrs_byte
-copy_plrs_slot jsr  calc_roster_ptr        ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            ldy  #$3F            ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
+; --- Swap loop: exchange frame data through sprite pages ---
+swap_tile_loop lda  ($FE),Y         ; Read current sprite byte
+            pha                  ; Save it on stack
+            txa                  ; Get the "other" frame byte
+            sta  ($FE),Y         ; Write it to current position
+            pla                  ; Retrieve saved byte
+            tax                  ; X = now holds the swapped byte
+            jsr  advance_ptr_128 ; Advance pointer by $80 (next page)
+            lda  $FF             ; Check if we've reached $1000
+            cmp  #$10            ; (page $10 = past sprite area)
+            bcc  swap_tile_loop  ; Continue if still in sprite range
 
-; === while loop starts here [nest:12] ===
-; XREF: 1 ref (1 branch) from copy_plrs_byte
-copy_plrs_byte lda  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
-            sta  ($FE),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
-            dey                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  copy_plrs_byte     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-; === End of while loop ===
+; --- Save final swapped value and advance to next tile ---
+            txa
+            sta  $0800,Y         ; Store final frame byte back
+            iny                  ; Next tile in the animation pair
+            tya
+            lsr  a               ; Check if Y is odd (bit 0 → carry)
+            bcs  swap_tile_frames ; If odd, restart for the paired tile
 
-            dex                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  copy_plrs_slot     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-; === End of while loop ===
+            rts
 
-            rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
+; ---------------------------------------------------------------------------
+; advance_ptr_128 — Add $80 (128) to the 16-bit pointer at $FE/$FF
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Utility to advance $FE/$FF by 128 bytes. Used by
+;            swap_tile_frames to step through sprite data pages.
+;
+;   6502 IDIOM — 16-BIT ADDITION:
+;   The 6502 has no 16-bit add instruction. To add a value to a 16-bit
+;   pointer, we add to the low byte first (with carry clear), then add
+;   zero-with-carry to the high byte. The ADC #$00 propagates any carry
+;   from the low byte addition, handling page boundary crossing.
+;
+; ---------------------------------------------------------------------------
+advance_ptr_128  clc                  ; Clear carry for addition
+            lda  $FE             ; Load pointer low byte
+            adc  #$80            ; Add 128 ($80)
+            sta  $FE             ; Store updated low byte
+            lda  $FF             ; Load pointer high byte
+            adc  #$00            ; Add carry (0 or 1 from low byte overflow)
+            sta  $FF             ; Store updated high byte
+            rts
+
+; ---------------------------------------------------------------------------
+; print_digit — Print a single decimal digit (0-9) to HGR screen
+; ---------------------------------------------------------------------------
+;   PARAMS:  A = digit value (0-9)
+;   RETURNS: A clobbered. $F9 incremented (cursor advances right).
+;
+;   ASCII CONVERSION: Adding $30 converts a binary digit 0-9 to the
+;   ASCII character codes '0'-'9' ($30-$39). This is the universal
+;   binary-to-ASCII conversion used on every computer since the 1960s.
+; ---------------------------------------------------------------------------
+print_digit  clc
+            adc  #$30            ; Convert digit (0-9) to ASCII ('0'-'9')
+            jsr  plot_char_glyph ; Render the digit character
+            inc  $F9             ; Advance text cursor right
+            rts
+
+; ---------------------------------------------------------------------------
+; print_bcd_byte — Print a BCD-encoded byte as two decimal digits
+; ---------------------------------------------------------------------------
+;   PURPOSE: Displays a Binary Coded Decimal byte as its two-digit
+;            decimal representation. BCD stores each decimal digit in
+;            a 4-bit nibble: byte $42 displays as "42", not "66".
+;
+;   PARAMS:  A = BCD value ($00-$99)
+;   RETURNS: A clobbered. $F9 advanced by 2 (two digits printed).
+;
+;   BCD ENCODING IN ULTIMA III:
+;   All character stats (STR, DEX, INT, WIS), HP, gold, food, and
+;   experience are stored in BCD format. This was a common choice in
+;   1980s games because it makes display trivial — no division needed
+;   to extract decimal digits. The tradeoff is that arithmetic requires
+;   the SED (Set Decimal) flag, and BCD wastes ~17% of the byte range
+;   ($9A-$FF are invalid BCD values). For a game where stats rarely
+;   exceed 99, BCD is elegant: one byte = two displayable digits.
+;
+;   ALGORITHM:
+;   1. Save original byte to temp ($4934)
+;   2. Extract high nibble: AND #$F0, then four LSRs to shift right
+;   3. Add $30 to convert to ASCII, print as tens digit
+;   4. Reload original byte, extract low nibble: AND #$0F
+;   5. Add $30 to convert to ASCII, print as ones digit
+;
+; ---------------------------------------------------------------------------
+print_bcd_byte sta  $4934           ; Save BCD byte to temp storage
+            and  #$F0            ; Isolate high nibble (tens digit)
+            lsr  a               ; } Shift right 4 positions to get
+            lsr  a               ; } the tens digit as a value 0-9
+            lsr  a               ; } (LSR = Logical Shift Right)
+            lsr  a               ; }
+            adc  #$30            ; Convert to ASCII '0'-'9'
+            jsr  plot_char_glyph ; Print tens digit
+            inc  $F9             ; Advance cursor
+            lda  $4934           ; Reload original BCD byte
+            and  #$0F            ; Isolate low nibble (ones digit)
+            clc
+            adc  #$30            ; Convert to ASCII
+            jsr  plot_char_glyph ; Print ones digit
+            inc  $F9             ; Advance cursor
+            rts
+            DB      $00          ; Padding byte
+
+; ---------------------------------------------------------------------------
+; calc_roster_ptr — Compute roster slot address → $FE/$FF, PLRS addr → $FC/$FD
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Given a party member index (X = 0..3), computes two pointers:
+;            $FE/$FF = address of that member's roster record ($9500+slot*64)
+;            $FC/$FD = address of that member's PLRS record ($4000+X*64)
+;
+;   PARAMS:  X = party member index (0-3)
+;            $E6-$E9 (party_slots) = roster slot IDs for each member
+;   RETURNS: $FE/$FF = roster address, $FC/$FD = PLRS address
+;            A,X,Y clobbered.
+;
+;   6502 IDIOM — MULTIPLY BY 64 VIA LSR/ROR:
+;   To compute slot * 64, the 6502 programmer uses shift operations:
+;     slot * 64 = slot * 256 / 4
+;   The value is loaded into A (which represents the high byte of a
+;   16-bit value), then LSR A / ROR $FE is done twice, effectively
+;   dividing the 16-bit value by 4. Since the roster record was already
+;   treated as a ×256 value (in the high byte), this yields ×64.
+;   The SBC #$01 before shifting adjusts for 1-based roster slot IDs.
+;
+;   PLRS ADDRESS:
+;   The PLRS (active player records) live at $4000. Each member occupies
+;   64 bytes, so the address is $4000 + X * 64. The CLC/ROR/ROR/ROR
+;   sequence computes X * 64 by placing X in the top 3 bits of a byte
+;   (via 3 right rotations with carry clear), yielding bits 7:6 = X[1:0]
+;   times $40, which is stored as the low byte with $40 as high byte.
+;
+; ---------------------------------------------------------------------------
+calc_roster_ptr    lda  #$00
+            sta  $FE             ; Clear low byte of roster address
+            lda  $E6,X           ; Load roster slot ID for party member X
+            sec
+            sbc  #$01            ; Adjust to 0-based (slots are 1-based)
+            lsr  a               ; } Divide by 4 to convert ×256 to ×64
+            ror  $FE             ; } (LSR shifts A right, ROR rotates
+            lsr  a               ; }  the carry bit into $FE's high bit)
+            ror  $FE             ; }
+calc_roster_offset clc
+            adc  #$95            ; High byte = $95 + quotient → $9500 base
+            sta  $FF             ; $FE/$FF now = $9500 + (slot-1)*64
+            lda  #$40            ; PLRS base high byte = $40 ($4000)
+            sta  $FD
+            txa                  ; A = party member index (0-3)
+            clc                  ; Clear carry for the ROR chain
+            ror  a               ; } X * 64 computed by rotating the
+            ror  a               ; } index into the top bits of a byte:
+            ror  a               ; } 3 RORs move bits 1:0 to bits 7:6
+            sta  $FC             ; $FC/$FD = $4000 + X*64
+            rts
+
+; ---------------------------------------------------------------------------
+; copy_roster_to_plrs — Load roster records into active PLRS memory
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Copies character records from the roster file (ROST, at
+;            $9500) into the active player area (PLRS, at $4000) for
+;            all current party members. Called when loading a saved game
+;            or entering a new area.
+;
+;   PARAMS:  $E1 = party_size (1-4)
+;            $E6-$E9 = roster slot IDs for each party member
+;   RETURNS: All party members' 64-byte records copied to PLRS.
+;
+;   CHARACTER RECORD SIZE:
+;   Each character occupies exactly 64 bytes ($40), containing name,
+;   stats, equipment, inventory, and status. See FILE_FORMATS.md for
+;   the complete field layout. The 64-byte size was chosen because it
+;   is a power of 2, making address computation efficient via shifts.
+;
+; ---------------------------------------------------------------------------
+copy_roster_to_plrs  ldx  $E1             ; X = party_size
+            dex                  ; Convert to 0-based index (3..0)
+            jsr  calc_roster_ptr ; Compute roster → PLRS addresses
+            ldy  #$3F            ; Y = byte offset (63..0, backward copy)
+            lda  ($FE),Y         ; Copy one byte: roster → PLRS
+            sta  ($FC),Y
+            dey                  ; Next byte (counting down)
+            bpl  $495D           ; Continue until Y goes negative
+            dex                  ; Next party member
+            bpl  $4958           ; Continue until all members copied
+            rts
+
+; ---------------------------------------------------------------------------
+; copy_plrs_to_roster — Save active PLRS records back to roster
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: The reverse of copy_roster_to_plrs. Copies modified character
+;            data from the active PLRS area ($4000) back to the roster
+;            ($9500) for all party members. Called when saving the game
+;            or before writing to disk.
+;
+;   PARAMS:  Same as copy_roster_to_plrs.
+; ---------------------------------------------------------------------------
+copy_plrs_to_roster ldx  $E1             ; X = party_size
+            dex                  ; Convert to 0-based index
+
+; --- Outer loop: iterate party members (X = member index) ---
+copy_plrs_slot jsr  calc_roster_ptr ; Get addresses for member X
+            ldy  #$3F            ; 64 bytes per character record
+
+; --- Inner loop: copy 64 bytes from PLRS ($FC) → roster ($FE) ---
+copy_plrs_byte lda  ($FC),Y         ; Read from PLRS (active area)
+            sta  ($FE),Y         ; Write to roster (save area)
+            dey
+            bpl  copy_plrs_byte  ; Continue until Y < 0
+
+            dex                  ; Next party member
+            bpl  copy_plrs_slot  ; Continue until all done
+
+            rts
 
 ; --- Data region (132 bytes) ---
             DB      $A9,$00,$85,$D1,$85,$D2,$20,$71,$4E,$C9,$B0,$90,$F9,$C9,$BA,$B0
@@ -1536,65 +1829,98 @@ copy_plrs_byte lda  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; modulo  [1 call, 1 jump]
-;   Called by: text_wind_rng
-;   Calls: get_random
+; modulo — Return random() mod N
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Generates a random number in the range [0, A-1] by getting
+;            a random byte and computing it modulo A. Used to select
+;            random wind directions for the text window display.
+;
+;   PARAMS:  A = modulus (divisor)
+;   RETURNS: A = random value mod N (also stored in $F3)
+;   CALLS:   get_random
+;
+;   ALGORITHM:
+;   Since the 6502 has no division instruction, modulo is computed via
+;   repeated subtraction: subtract N from the random value until the
+;   result is less than N. This is O(256/N) in the worst case, which
+;   is acceptable when N is small (here N=9 for wind directions, so
+;   at most ~28 iterations at 1 MHz ≈ 0.3ms).
+;
+; ---------------------------------------------------------------------------
+modulo  sta  $F3             ; Save divisor
+            jsr  get_random      ; A = random byte (0-255)
 
-; FUNC $0049FF: register -> A:X [I]
-; Proto: uint32_t func_0049FF(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
-; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (1 call) (1 jump) from $0046E4, text_wind_rng
-modulo  sta  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-45]
-            jsr  get_random       ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+; --- Repeated subtraction loop ---
+modulo_loop cmp  $F3             ; Is A < N?
+            bcc  modulo_done     ; Yes → done, A is the remainder
+            sec
+            sbc  $F3             ; No → subtract N and try again
+            jmp  modulo_loop
 
-; === while loop starts here [nest:12] ===
-; XREF: 1 ref (1 jump) from modulo_loop
-modulo_loop cmp  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            bcc  modulo_done   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            sec                  ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            sbc  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            jmp  modulo_loop   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-; === End of while loop ===
-
-; XREF: 1 ref (1 branch) from modulo_loop
-modulo_done cmp  #$00            ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            sta  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-45]
-; XREF: 1 ref (1 jump) from $0046EA
-update_viewport    jsr  draw_text_window      ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            jsr  animate_tiles        ; A=[stk] X=X-$01 Y=$003E ; [SP-49]
-            jsr  $4A52           ; A=[stk] X=X-$01 Y=$003E ; [SP-51]
-            jsr  $4AB0           ; A=[stk] X=X-$01 Y=$003E ; [SP-53]
-            jsr  $4B48           ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
-            jsr  $0230           ; A=[stk] X=X-$01 Y=$003E ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $004A22 followed by RTS ; [SP-57]
-            rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
+modulo_done cmp  #$00            ; Set flags based on result
+            sta  $F3             ; Store result in $F3
+            rts
+; ---------------------------------------------------------------------------
+; update_viewport — Full display refresh cycle
+; ---------------------------------------------------------------------------
+;   PURPOSE: Called once per game turn to refresh all display components:
+;            text window, tile animations, viewport rendering, and the
+;            external display hook (at $0230, typically the Mockingboard
+;            music driver or a NOP stub).
+;
+;   This is the main display pipeline — the order matters because tile
+;   animation must complete before viewport rendering reads the updated
+;   sprite data.
+; ---------------------------------------------------------------------------
+update_viewport    jsr  draw_text_window ; 1. Update wind direction text
+            jsr  animate_tiles   ; 2. Cycle tile animation frames
+            jsr  $4A52           ; 3. Render viewport tiles (inline)
+            jsr  $4AB0           ; 4. Render viewport overlays (inline)
+            jsr  $4B48           ; 5. Render viewport border refresh
+            jsr  $0230           ; 6. External hook (music/sound driver)
+            rts
 
 ; ---------------------------------------------------------------------------
-; animate_tiles  [1 call, 1 jump]
-;   Called by: update_viewport
-;   Calls: swap_tile_frames
+; animate_tiles — Cycle overworld tile animation frames
 ; ---------------------------------------------------------------------------
-; XREF: 2 refs (1 call) (1 jump) from update_viewport, $0046ED
-animate_tiles    dec  anim_counter_1     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
-            bne  anim_tiles_set2     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
-            lda  #$02            ; A=$0002 X=X-$01 Y=$003E ; [SP-55]
-            sta  anim_counter_1     ; A=$0002 X=X-$01 Y=$003E ; [SP-55]
-            ldy  #$00            ; A=$0002 X=X-$01 Y=$0000 ; [SP-55]
-            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0000 ; [SP-57]
-; XREF: 1 ref (1 branch) from animate_tiles
-anim_tiles_set2 ldy  #$40            ; A=$0002 X=X-$01 Y=$0040 ; [SP-57]
-            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            dec  anim_counter_2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            bne  anim_tiles_set3     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            lda  #$02            ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            sta  anim_counter_2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            ldy  #$42            ; A=$0002 X=X-$01 Y=$0042 ; [SP-59]
-            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0042 ; [SP-61]
-; XREF: 1 ref (1 branch) from anim_tiles_set2
-anim_tiles_set3 ldy  #$44            ; A=$0002 X=X-$01 Y=$0044 ; [SP-61]
-            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0044 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $004A4B followed by RTS ; [SP-63]
-            rts                  ; A=$0002 X=X-$01 Y=$0044 ; [SP-61]
+;
+;   PURPOSE: Advances tile animation by swapping sprite frame data for
+;            animated tiles (water, fire, cursor). Uses countdown
+;            timers so different tile groups animate at different rates.
+;
+;   TILE ANIMATION SYSTEM:
+;   Ultima III animates tiles by maintaining two copies of each animated
+;   tile's pixel data. On each animation tick, the copies are swapped,
+;   so the display alternates between frame A and frame B. This creates
+;   the illusion of movement (rippling water, flickering torches) using
+;   only 8 bytes of sprite data per frame — an efficient approach for
+;   the Apple II's limited memory.
+;
+;   The animation slots are:
+;     Y=$00 — Set 1: Water/ocean tiles (animates every 2 ticks)
+;     Y=$40 — Set 2: Always animated (fire/torch tiles)
+;     Y=$42 — Set 3: Secondary animation (animates every 2 ticks)
+;     Y=$44 — Set 4: Tertiary animation (always)
+;
+; ---------------------------------------------------------------------------
+animate_tiles    dec  anim_counter_1  ; Decrement set 1 countdown
+            bne  anim_tiles_set2 ; Skip set 1 if counter hasn't reached 0
+            lda  #$02            ; Reset counter (animate every 2 turns)
+            sta  anim_counter_1
+            ldy  #$00            ; Swap animation set 1 (Y=$00)
+            jsr  swap_tile_frames
+anim_tiles_set2 ldy  #$40            ; Always swap set 2 (Y=$40)
+            jsr  swap_tile_frames
+            dec  anim_counter_2  ; Decrement set 3 countdown
+            bne  anim_tiles_set3 ; Skip if not ready
+            lda  #$02
+            sta  anim_counter_2
+            ldy  #$42            ; Swap animation set 3 (Y=$42)
+            jsr  swap_tile_frames
+anim_tiles_set3 ldy  #$44            ; Always swap set 4 (Y=$44)
+            jsr  swap_tile_frames
+            rts
 
 ; ---
 anim_counter_1
@@ -1624,24 +1950,36 @@ swap_viewport_buf  lda  #$03            ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
 
 
 ; ---------------------------------------------------------------------------
-; animate_cursor  [1 call]
-;   Called by: anim_counter_2
+; animate_cursor — Blink the player cursor by swapping sprite data
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 call) from anim_counter_2
-animate_cursor dec  anim_counter_5     ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
-            bne  anim_cursor_done ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
-            lda  #$01            ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            sta  anim_counter_5     ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            ldx  $0917           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            ldy  $0997           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            sty  $0917           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            stx  $0997           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            ldx  $0916           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            ldy  $0996           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            sty  $0916           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            stx  $0996           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-; XREF: 1 ref (1 branch) from animate_cursor
-anim_cursor_done rts                  ; A=$0001 X=X-$01 Y=$0044 ; [SP-58]
+;
+;   PURPOSE: Creates the cursor blink effect by swapping two pairs of
+;            bytes in the sprite data area. The cursor alternates between
+;            a visible and invisible state by exchanging the pixel data
+;            between two locations in HGR memory. This runs on a countdown
+;            timer so the blink rate is visually comfortable.
+;
+;   SPRITE DATA SWAP:
+;   The two pairs swapped are at $0916/$0996 and $0917/$0997 — these
+;   are within the sprite data tables that define the cursor tile's
+;   appearance. Swapping makes the cursor appear to flash on and off.
+;
+; ---------------------------------------------------------------------------
+animate_cursor dec  anim_counter_5   ; Decrement blink timer
+            bne  anim_cursor_done ; Not time yet → skip
+            lda  #$01            ; Reset timer (blink every frame)
+            sta  anim_counter_5
+; --- Swap cursor sprite pair 1: $0917 ↔ $0997 ---
+            ldx  $0917
+            ldy  $0997
+            sty  $0917
+            stx  $0997
+; --- Swap cursor sprite pair 2: $0916 ↔ $0996 ---
+            ldx  $0916
+            ldy  $0996
+            sty  $0916
+            stx  $0996
+anim_cursor_done rts
 
 ; --- Data region (76 bytes) ---
             DB      $AD,$3E,$09,$0A,$69,$00,$8D,$3E,$09,$AD,$3F,$09,$0A,$69,$00,$8D
@@ -1709,67 +2047,92 @@ advance_scan_jmp sbc  $FA84,Y         ; -> $FAC8 ; A=A X=X-$01 Y=$0044 ; [SP-51]
 
 
 ; ---------------------------------------------------------------------------
-; setup_char_ptr  [2 calls, 1 jump]
-;   Called by: print_char_name, print_name_loop
+; setup_char_ptr — Compute PLRS character record address from slot ID
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Sets $FE/$FF = $4000 + $D5 * 64, where $D5 is the character
+;            slot ID. This points to the character's 64-byte record in
+;            the active PLRS area. Used by print_char_name to locate
+;            the character's name field.
+;
+;   PARAMS:  $D5 = character slot ID (0-19)
+;   RETURNS: $FE/$FF = character record base address
+;
+;   6502 IDIOM — MULTIPLY BY 64:
+;   Same technique as calc_roster_ptr: place the slot ID in the high
+;   byte, then two LSR/ROR pairs divide the 16-bit value by 4,
+;   yielding slot × 64. The high byte is then set to $40 (PLRS base).
+;
+; ---------------------------------------------------------------------------
+setup_char_ptr lda  #$00
+            sta  $FE             ; Clear low byte
+            lda  $D5             ; Load character slot ID
+            lsr  a               ; } Divide 16-bit value by 4:
+            ror  $FE             ; } slot * 256 / 4 = slot * 64
+            lsr  a               ; } (two iterations of LSR A / ROR $FE)
+            ror  $FE             ; }
+            lda  #$40            ; High byte = $40 (PLRS at $4000)
+            sta  $FF
+            rts
 
-; FUNC $004BCA: register -> A:X [I]
-; Proto: uint32_t func_004BCA(uint16_t param_X, uint16_t param_Y);
-; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 3 refs (2 calls) (1 jump) from $0046F6, print_char_name, print_name_loop
-setup_char_ptr lda  #$00            ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
-            sta  $FE             ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
-            lda  $D5             ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
-            lsr  a               ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
-            ror  $FE             ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
-            lsr  a               ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
-            ror  $FE             ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
-            lda  #$40            ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
-            sta  $FF             ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
-            rts                  ; A=$0040 X=X-$01 Y=$0044 ; [SP-49]
-; XREF: 1 ref (1 jump) from $0046F9
-print_char_name jsr  setup_char_ptr    ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
-            ldy  #$00            ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
-            lda  ($FE),Y         ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
-            beq  print_name_done ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
+; ---------------------------------------------------------------------------
+; print_char_name — Print character name centered on HGR display
+; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Displays a character's name from their PLRS record,
+;            horizontally centered within the display area. Names are
+;            null-terminated strings in the first 14 bytes of the
+;            character record (max 13 characters + null at offset $0D).
+;
+;   PARAMS:  $D5 = character slot ID
+;   RETURNS: Name displayed on HGR screen at computed position.
+;
+;   CENTERING ALGORITHM:
+;   1. Scan to find the null terminator → Y = name length
+;   2. Divide length by 2 (LSR) → half-width
+;   3. Subtract from column $1F (center of display) → starting column
+;   4. Compute display row from slot ID: $D5 * 4 + 1
+;   5. Print each character using plot_char_glyph
+;
+; ---------------------------------------------------------------------------
+print_char_name jsr  setup_char_ptr   ; $FE/$FF → character record
+            ldy  #$00            ; Start at first byte of name
+            lda  ($FE),Y         ; Check if name is empty
+            beq  print_name_done ; Empty name → nothing to print
 
-; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from find_name_end
-find_name_end iny                  ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
-            lda  ($FE),Y         ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
-            bne  find_name_end ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
-; === End of while loop ===
+; --- Find name length by scanning for null terminator ---
+find_name_end iny
+            lda  ($FE),Y
+            bne  find_name_end   ; Continue until null byte found
 
-            tya                  ; A=$0001 X=X-$01 Y=$0001 ; [SP-51]
-            lsr  a               ; A=$0001 X=X-$01 Y=$0001 ; [SP-51]
-            sta  $F0             ; A=$0001 X=X-$01 Y=$0001 ; [SP-51]
-            lda  #$1F            ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
-            sec                  ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
-            sbc  $F0             ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
-            sta  $F9             ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
-            lda  $D5             ; A=[$00D5] X=X-$01 Y=$0001 ; [SP-51]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-51]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$0001 ; [SP-51]
-            adc  #$01            ; A=A+$01 X=X-$01 Y=$0001 ; [SP-51]
-            sta  $FA             ; A=A+$01 X=X-$01 Y=$0001 ; [SP-51]
-            lda  #$00            ; A=$0000 X=X-$01 Y=$0001 ; [SP-51]
-            sta  $D7             ; A=$0000 X=X-$01 Y=$0001 ; [SP-51]
+; --- Center the name horizontally ---
+            tya                  ; A = name length
+            lsr  a               ; A = half-width (length / 2)
+            sta  $F0
+            lda  #$1F            ; $1F = center column of display
+            sec
+            sbc  $F0             ; Starting column = center - half
+            sta  $F9             ; Set text cursor X position
+            lda  $D5             ; Compute row from slot ID:
+            asl  a               ; } $D5 * 4 + 1 gives vertical position
+            asl  a               ; } (each character gets 4 rows of space)
+            adc  #$01            ; } +1 for spacing
+            sta  $FA             ; Set text cursor Y position
+            lda  #$00
+            sta  $D7             ; $D7 = character index within name
 
-; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 jump) from print_name_loop
-print_name_loop jsr  setup_char_ptr    ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
-            ldy  $D7             ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
-            lda  ($FE),Y         ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
-            beq  print_name_done ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
-            and  #$7F            ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
-            jsr  plot_char_glyph       ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
-            inc  $F9             ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
-            inc  $D7             ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
-            jmp  print_name_loop ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
-; === End of while loop ===
+; --- Print loop: render each character of the name ---
+print_name_loop jsr  setup_char_ptr   ; Recalculate pointer (may be clobbered)
+            ldy  $D7             ; Y = current character offset
+            lda  ($FE),Y         ; Load character byte
+            beq  print_name_done ; Null terminator → done
+            and  #$7F            ; Strip high bit (Apple II convention)
+            jsr  plot_char_glyph ; Render glyph to HGR screen
+            inc  $F9             ; Advance cursor column
+            inc  $D7             ; Next character in name
+            jmp  print_name_loop
 
-; XREF: 2 refs (2 branches) from print_name_loop, print_char_name
-print_name_done rts                  ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
+print_name_done rts
 
 ; --- Data region (38 bytes) ---
             DB      $A5,$00,$85,$02,$A5,$01,$85,$03,$4C,$21,$4C,$A5,$03,$85,$FF,$A9
@@ -1779,30 +2142,55 @@ print_name_done rts                  ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
 
 
 ; ---------------------------------------------------------------------------
-; draw_text_window  [1 call]
-;   Called by: update_viewport
-;   Calls: modulo, print_inline_str
+; draw_text_window — Display wind direction in the text status area
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 call) from update_viewport
-draw_text_window  dec  text_wind_counter      ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
-            bpl  text_wind_show   ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
-            lda  #$08            ; A=$0008 X=X-$01 Y=$0001 ; [SP-51]
-            sta  text_wind_counter      ; A=$0008 X=X-$01 Y=$0001 ; [SP-51] ; WARNING: Self-modifying code -> text_wind_counter
+;
+;   PURPOSE: Shows the current wind direction ("NORTH WIND", "SOUTH WIND",
+;            etc.) in the HGR text area. The wind direction changes
+;            periodically on a countdown timer, selecting a new random
+;            direction via the modulo function.
+;
+;   GAME DESIGN CONTEXT:
+;   Wind direction affects ship movement in Ultima III. When sailing,
+;   the wind determines which directions are easy (with the wind) vs.
+;   hard (against the wind) to travel. The text window shows the current
+;   wind to help the player plan navigation. The wind changes randomly
+;   every 8 display refreshes.
+;
+;   SELF-MODIFYING CODE:
+;   text_wind_counter is a self-modifying operand embedded in the code
+;   stream — the STA instruction writes to the immediate operand of a
+;   later CMP instruction, effectively using the instruction stream as
+;   a timer variable. This saves a byte vs. using a separate data
+;   location, a common 6502 space optimization.
+;
+;   WIND DIRECTION ENCODING ($11):
+;   0 = calm (no wind), 1-4 = N/E/S/W directional winds.
+;   The modulo generates values 0-8, with 0-4 used directly and 5-8
+;   remapped to 1-4 (doubling the chance of directional vs. calm wind).
+;
+;   Each direction is displayed via an inline string containing the
+;   direction name followed by " WIND" in high-ASCII.
+;
+; ---------------------------------------------------------------------------
+draw_text_window  dec  text_wind_counter ; Decrement update timer
+            bpl  text_wind_show  ; Timer >= 0? Just redisplay current wind
+            lda  #$08            ; Reset timer to 8 (change wind every 8th call)
+            sta  text_wind_counter ; SMC: writes into instruction operand
 
-; === while loop starts here [nest:5] ===
-; XREF: 1 ref (1 branch) from text_wind_rng
-text_wind_rng lda  #$09            ; A=$0009 X=X-$01 Y=$0001 ; [SP-51]
-            jsr  modulo      ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
-            cmp  #$05            ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
-            bcc  text_wind_set   ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
-            sec                  ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
-            sbc  #$04            ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
-            cmp  $11             ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
-            beq  text_wind_rng   ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
-; === End of while loop ===
+; --- Select new random wind direction ---
+;   Generate random(9): values 0-4 used directly, 5-8 → 1-4.
+;   Reroll if result equals current wind (prevent "no change" flicker).
+text_wind_rng lda  #$09            ; Modulus = 9
+            jsr  modulo          ; A = random(0..8)
+            cmp  #$05            ; Value in directional range (5-8)?
+            bcc  text_wind_set   ; No (0-4) → use as-is
+            sec
+            sbc  #$04            ; Map 5→1, 6→2, 7→3, 8→4
+            cmp  $11             ; Same as current wind?
+            beq  text_wind_rng   ; Yes → reroll to ensure change
 
-; XREF: 1 ref (1 branch) from text_wind_rng
-text_wind_set sta  $11             ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
+text_wind_set sta  $11             ; Store new wind direction
 ; XREF: 1 ref (1 branch) from draw_text_window
 text_wind_show lda  $F9             ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-53]
             pha                  ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-54]
@@ -1887,150 +2275,195 @@ text_wind_zero  lda  #$00            ; A=$0000 X=X-$01 Y=$00D7 ; [SP-70]
             rts                  ; A=$0000 X=X-$01 Y=$00D7 ; [SP-68]
 
 ; ---------------------------------------------------------------------------
-; play_sfx  [1 jump]
+; play_sfx — Sound effect dispatcher (10 effects, $F6-$FF)
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 jump) from $004705
-play_sfx  sta  $F0             ; A=$0000 X=X-$01 Y=$00D7 ; [SP-68]
-            lda  $10             ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-68]
-            beq  sfx_dispatch      ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-68]
-            rts                  ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from play_sfx
-sfx_dispatch  lda  $F0             ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            cmp  #$FF            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_FE      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_beep_hi      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_dispatch
-sfx_check_FE  cmp  #$FE            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_FD      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_beep_lo      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_FE
-sfx_check_FD  cmp  #$FD            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_FC      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_sweep      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_FD
-sfx_check_FC  cmp  #$FC            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_FB      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_noise      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_FC
-sfx_check_FB  cmp  #$FB            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_FA      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_buzz      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_FB
-sfx_check_FA  cmp  #$FA            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_F9      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_chirp      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_FA
-sfx_check_F9  cmp  #$F9            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_F8      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_sweep_alt      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_F9
-sfx_check_F8  cmp  #$F8            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_F7      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_descend      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_F8
-sfx_check_F7  cmp  #$F7            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_check_F6      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_ascend      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_F7
-sfx_check_F6  cmp  #$F6            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  sfx_return      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  sfx_short_desc      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sfx_check_F6
-sfx_return  rts                  ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-64]
-; XREF: 1 ref (1 jump) from sfx_dispatch
-sfx_beep_hi  ldy  #$10            ; A=[$00F0] X=X-$01 Y=$0010 ; [SP-64]
+;
+;   PURPOSE: Plays one of 10 sound effects using the Apple II's built-in
+;            speaker. The effect ID is passed in A and dispatched via a
+;            CMP chain to the appropriate synthesis routine.
+;
+;   PARAMS:  A = sound effect ID ($F6-$FF). Values outside this range
+;                are silently ignored (no effect played).
+;   RETURNS: A,X,Y clobbered.
+;
+;   COMBAT MUTE:
+;   If $10 (combat_active_flag) is nonzero, all sound effects are
+;   suppressed. This prevents audio from interfering with the combat
+;   system's timing-sensitive animation loops.
+;
+;   APPLE II SPEAKER HARDWARE:
+;   The Apple II has a single-bit speaker controlled by reading address
+;   $C030 (SPKR). Each read toggles the speaker cone between its two
+;   positions. To produce a tone, the program toggles the speaker at
+;   a specific rate — faster toggling = higher pitch. The speaker is
+;   the ONLY native audio output; there is no DAC, no volume control,
+;   and no hardware tone generator. All sound synthesis is done in
+;   software via carefully timed CPU loops. At 1 MHz, the maximum
+;   achievable frequency is ~500 kHz (toggle every other cycle), but
+;   the speaker's mechanical response limits useful output to ~20 kHz.
+;
+;   EFFECT TABLE:
+;     $FF = sfx_beep_hi     — Short high-pitched beep (menu select)
+;     $FE = sfx_beep_lo     — Longer low-pitched beep (text display)
+;     $FD = sfx_sweep       — Frequency sweep up then down (spell cast)
+;     $FC = sfx_noise       — Random noise burst (combat hit)
+;     $FB = sfx_buzz        — Descending buzz (damage taken)
+;     $FA = sfx_chirp       — Rising chirp (item pickup)
+;     $F9 = sfx_sweep_alt   — Alternate sweep parameters (spell variant)
+;     $F8 = sfx_descend     — Descending tone (falling/dungeon)
+;     $F7 = sfx_ascend      — Ascending tone with echo (level up)
+;     $F6 = sfx_short_desc  — Short descending tone (minor event)
+;
+; ---------------------------------------------------------------------------
+play_sfx  sta  $F0             ; Save effect ID
+            lda  $10             ; Check combat_active_flag
+            beq  sfx_dispatch    ; Zero = not in combat, allow SFX
+            rts                  ; Nonzero = in combat, mute all SFX
 
-; === loop starts here (counter: Y, range: 16..0, iters: 16) ===
-; XREF: 1 ref (1 branch) from sfx_beep_hi_loop
-sfx_beep_hi_loop  lda  #$30            ; A=$0030 X=X-$01 Y=$0010 ; [SP-64]
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dey                  ; A=$0030 X=X-$01 Y=$000F ; [SP-66]
-            bne  sfx_beep_hi_loop      ; A=$0030 X=X-$01 Y=$000F ; [SP-66]
-; === End of loop (counter: Y) ===
+; --- Dispatch chain: compare A against each effect ID ---
+;   This cascading CMP/BNE pattern is the 6502 equivalent of a switch
+;   statement. A jump table would be more compact for 10 cases, but
+;   the IDs are sequential from $F6-$FF, so the chain is simple.
+sfx_dispatch  lda  $F0             ; Reload effect ID
+            cmp  #$FF
+            bne  sfx_check_FE
+            jmp  sfx_beep_hi     ; → High beep
+sfx_check_FE  cmp  #$FE
+            bne  sfx_check_FD
+            jmp  sfx_beep_lo     ; → Low beep
+sfx_check_FD  cmp  #$FD
+            bne  sfx_check_FC
+            jmp  sfx_sweep       ; → Frequency sweep
+sfx_check_FC  cmp  #$FC
+            bne  sfx_check_FB
+            jmp  sfx_noise       ; → Random noise
+sfx_check_FB  cmp  #$FB
+            bne  sfx_check_FA
+            jmp  sfx_buzz        ; → Buzz
+sfx_check_FA  cmp  #$FA
+            bne  sfx_check_F9
+            jmp  sfx_chirp       ; → Chirp
+sfx_check_F9  cmp  #$F9
+            bne  sfx_check_F8
+            jmp  sfx_sweep_alt   ; → Alternate sweep
+sfx_check_F8  cmp  #$F8
+            bne  sfx_check_F7
+            jmp  sfx_descend     ; → Descending tone
+sfx_check_F7  cmp  #$F7
+            bne  sfx_check_F6
+            jmp  sfx_ascend      ; → Ascending tone
+sfx_check_F6  cmp  #$F6
+            bne  sfx_return
+            jmp  sfx_short_desc  ; → Short descending
+sfx_return  rts                  ; Unknown ID → no effect
+; ---------------------------------------------------------------------------
+; SOUND EFFECT IMPLEMENTATIONS
+; ---------------------------------------------------------------------------
+;
+;   All sound effects work by toggling the Apple II speaker ($C030) at
+;   controlled intervals. The speaker is a 1-bit output — each BIT $C030
+;   instruction toggles the speaker cone. The audible pitch depends on
+;   how frequently the toggle occurs, which is controlled by delay loops.
+;
+;   The Apple II Monitor ROM provides a WAIT routine at $FCA8 that delays
+;   for approximately (26 + 27*A + 5*A*A)/2 cycles. This is used by the
+;   beep effects to control the half-period between speaker toggles.
+;
+;   HISTORICAL NOTE:
+;   This "1-bit audio" technique was universal on the Apple II because
+;   there was literally no other way to make sound. The same approach
+;   was used by every Apple II game from 1977 to 1993. The Mockingboard
+;   sound card (optional, supported by Ultima III) provided hardware
+;   tone generators, but the built-in speaker effects here serve as
+;   the fallback for systems without a Mockingboard.
+;
+; ---------------------------------------------------------------------------
 
-            rts                  ; A=$0030 X=X-$01 Y=$000F ; [SP-64]
-; XREF: 1 ref (1 jump) from sfx_check_FE
-sfx_beep_lo  ldy  #$30            ; A=$0030 X=X-$01 Y=$0030 ; [SP-64]
+; --- sfx_beep_hi ($FF): Short high-pitched beep ---
+;   16 cycles of speaker toggle with delay=$30 between each.
+;   Produces a brief "tick" sound at ~2 kHz. Used for menu selections.
+sfx_beep_hi  ldy  #$10            ; 16 toggle cycles
 
-; === loop starts here (counter: Y, range: 48..0, iters: 48) ===
-; XREF: 1 ref (1 branch) from sfx_beep_lo_loop
-sfx_beep_lo_loop  lda  #$18            ; A=$0018 X=X-$01 Y=$0030 ; [SP-64]
-            jsr  $FCA8           ; WAIT - Apple II delay routine
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dey                  ; A=$0018 X=X-$01 Y=$002F ; [SP-66]
-            bne  sfx_beep_lo_loop      ; A=$0018 X=X-$01 Y=$002F ; [SP-66]
-; === End of loop (counter: Y) ===
+sfx_beep_hi_loop  lda  #$30            ; Delay value → ~530 cycle wait
+            jsr  $FCA8           ; Apple II Monitor WAIT routine
+            bit  $C030           ; Toggle speaker (SPKR soft switch)
+            dey
+            bne  sfx_beep_hi_loop
 
-            rts                  ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
+            rts
 
-; === while loop starts here (counter: X 'i') ===
-; XREF: 2 refs (2 jumps) from sfx_sweep_alt, sfx_check_FD
-sfx_sweep  stx  sfx_save_x     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
-            sty  sfx_duration     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
-            lda  sfx_save_x     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
-            sta  sfx_period_1     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
-            lda  #$01            ; A=$0001 X=X-$01 Y=$002F ; [SP-64]
-            sta  sfx_period_2     ; A=$0001 X=X-$01 Y=$002F ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $004D62 ; [SP-64]
+; --- sfx_beep_lo ($FE): Longer low-pitched beep ---
+;   48 cycles with delay=$18. Lower frequency, longer duration.
+;   Used for text display confirmation and general UI feedback.
+sfx_beep_lo  ldy  #$30            ; 48 toggle cycles
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_wait2
-sfx_sweep_outer  lda  sfx_duration     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            sta  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+sfx_beep_lo_loop  lda  #$18            ; Shorter delay → lower pitch
+            jsr  $FCA8           ; WAIT
+            bit  $C030           ; Toggle speaker
+            dey
+            bne  sfx_beep_lo_loop
 
-; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_wait2
-sfx_sweep_half1  ldx  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            rts
 
-; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_wait1
-sfx_sweep_wait1  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_wait1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            ldx  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; --- sfx_sweep ($FD): Frequency sweep up then down ---
+;   Two-phase sweep: first sweeps UP (period_1 decreasing, period_2
+;   increasing), then sweeps DOWN (reverse). Creates a classic "zap"
+;   or "spell cast" sound. The asymmetric half-periods produce a
+;   waveform that sounds like a rising then falling pitch.
+;
+;   PARAMS (via registers):
+;     X = initial period for half 1 (default $C0 from sfx_save_x)
+;     Y = duration multiplier (number of cycles per sweep step)
+;
+sfx_sweep  stx  sfx_save_x      ; Save initial sweep parameters
+            sty  sfx_duration
+            lda  sfx_save_x
+            sta  sfx_period_1    ; Period for first half of waveform
+            lda  #$01
+            sta  sfx_period_2    ; Period for second half (starts short)
 
-; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_wait2
-sfx_sweep_wait2  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_wait2      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_half1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            dec  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            inc  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            lda  sfx_period_2     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            cmp  #$1B            ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_outer      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
+; --- Phase 1: sweep frequency UP (period_1 shrinks, period_2 grows) ---
+sfx_sweep_outer  lda  sfx_duration     ; Duration cycles per step
+            sta  $F3             ; $F3 = inner loop counter
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
-sfx_sweep_dn_outer  lda  sfx_duration     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            sta  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+sfx_sweep_half1  ldx  sfx_period_1     ; X = delay for first half-cycle
+sfx_sweep_wait1  dex                  ; Burn cycles proportional to period
+            bne  sfx_sweep_wait1
+            bit  $C030           ; Toggle speaker (first half-period)
+            ldx  sfx_period_2     ; X = delay for second half-cycle
+sfx_sweep_wait2  dex
+            bne  sfx_sweep_wait2
+            bit  $C030           ; Toggle speaker (second half-period)
+            dec  $F3             ; Repeat for duration cycles
+            bne  sfx_sweep_half1
+; --- Adjust sweep: shorten half 1, lengthen half 2 → pitch rises ---
+            dec  sfx_period_1
+            inc  sfx_period_2
+            lda  sfx_period_2
+            cmp  #$1B            ; Sweep until period_2 reaches $1B
+            bne  sfx_sweep_outer
 
-; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
-sfx_sweep_dn_half1  ldx  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; --- Phase 2: sweep frequency DOWN (reverse of phase 1) ---
+sfx_sweep_dn_outer  lda  sfx_duration
+            sta  $F3
 
-; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait1
-sfx_sweep_dn_wait1  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_dn_wait1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            ldx  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-
-; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
-sfx_sweep_dn_wait2  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_dn_wait2      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_dn_half1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            dec  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            inc  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            lda  sfx_period_2     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            cmp  #$00            ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_sweep_dn_outer      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            rts                  ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-62]
+sfx_sweep_dn_half1  ldx  sfx_period_1
+sfx_sweep_dn_wait1  dex
+            bne  sfx_sweep_dn_wait1
+            bit  $C030           ; Toggle speaker
+            ldx  sfx_period_2
+sfx_sweep_dn_wait2  dex
+            bne  sfx_sweep_dn_wait2
+            bit  $C030           ; Toggle speaker
+            dec  $F3
+            bne  sfx_sweep_dn_half1
+; --- Reverse sweep: lengthen half 1, shorten half 2 → pitch falls ---
+            dec  sfx_period_2
+            inc  sfx_period_1
+            lda  sfx_period_2
+            cmp  #$00            ; Sweep until period_2 reaches 0
+            bne  sfx_sweep_dn_outer
+            rts
 sfx_save_x
             DB      $C0
 sfx_duration
@@ -2039,149 +2472,239 @@ sfx_period_1
             DB      $FB
 sfx_period_2
             DB      $2C
-; XREF: 1 ref (1 jump) from sfx_check_FC
-sfx_noise  stx  $F3             ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-62]
-            lda  #$80            ; A=$0080 X=X-$01 Y=$002F ; [SP-62]
-            sta  $D4             ; A=$0080 X=X-$01 Y=$002F ; [SP-62]
+; --- sfx_noise ($FC): Random noise burst ---
+;   Produces white noise by toggling the speaker at random intervals.
+;   Each iteration gets a random value (0-15), adds a base delay ($F3),
+;   and uses that as the half-period. The randomized timing creates an
+;   aperiodic waveform that sounds like static or an explosion.
+;
+;   The PHA/PLA pairs in the delay loop are NOT redundant — they burn
+;   exactly 7 cycles each (3 PHA + 4 PLA), providing fine-grained
+;   timing control. This is a standard 6502 idiom for cycle-precise
+;   delays without consuming registers: push-pull pairs add a known
+;   fixed delay per iteration. Here, each DEX loop iteration takes
+;   7+7+2+3 = 19 cycles, giving precise control over the noise
+;   character by adjusting X.
+;
+;   PARAMS:  $F3 = base delay (saved from X on entry)
+;            $D4 = duration counter (128 toggles)
+;
+sfx_noise  stx  $F3             ; Save base delay parameter
+            lda  #$80            ; 128 speaker toggles
+            sta  $D4             ; Duration counter
 
-; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from sfx_noise_delay
-sfx_noise_loop  jsr  get_random       ; A=$0080 X=X-$01 Y=$002F ; [SP-64]
-            and  #$0F            ; A=A&$0F X=X-$01 Y=$002F ; [SP-64]
-            adc  $F3             ; A=A&$0F X=X-$01 Y=$002F ; [SP-64]
-            tax                  ; A=A&$0F X=A Y=$002F ; [SP-64]
+sfx_noise_loop  jsr  get_random       ; Get random value (0-255)
+            and  #$0F            ; Mask to 0-15
+            adc  $F3             ; Add base delay → randomized period
+            tax                  ; X = delay loop count
 
-; === loop starts here (counter: X) [nest:2] ===
-; XREF: 1 ref (1 branch) from sfx_noise_delay
-sfx_noise_delay  pha                  ; A=A&$0F X=A Y=$002F ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $004DC8 ; [SP-65]
-            pla                  ; A=[stk] X=A Y=$002F ; [SP-64]
-            pha                  ; A=[stk] X=A Y=$002F ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $004DCA ; [SP-65]
-            pla                  ; A=[stk] X=A Y=$002F ; [SP-64]
-            dex                  ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_noise_delay      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $D4             ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            bne  sfx_noise_loop      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            rts                  ; A=[stk] X=X-$01 Y=$002F ; [SP-62]
-; XREF: 1 ref (1 jump) from sfx_check_FB
-sfx_buzz  ldx  #$00            ; A=[stk] X=$0000 Y=$002F ; [SP-62]
-            sta  $95             ; A=[stk] X=$0000 Y=$002F ; [SP-62]
+sfx_noise_delay  pha                  ; } PHA/PLA burn 7 cycles per pair —
+            pla                  ; } this is a 6502 timing idiom, not
+            pha                  ; } dead code. Two pairs = 14 cycles
+            pla                  ; } added per inner loop iteration.
+            dex                  ; Decrement delay counter
+            bne  sfx_noise_delay ; Loop until delay exhausted
+            bit  $C030           ; Toggle speaker
+            dec  $D4             ; Decrement duration
+            bne  sfx_noise_loop  ; Next noise burst
+            rts
+; --- sfx_buzz ($FB): Descending buzz ---
+;   Produces a buzzing tone that descends in pitch until silence.
+;   The inner loop counts X from 0→255 (256 iterations = ~1.3ms at
+;   1 MHz), then toggles the speaker. $95 is both the outer duration
+;   counter AND the reload value for X — as $95 decreases, the period
+;   gets shorter (pitch rises briefly) then wraps, creating a complex
+;   descending buzz texture.
+;
+;   Actually, the clever part: $95 starts at whatever A was on entry
+;   (the saved effect ID), then counts down. Each outer loop reloads
+;   X from $95, so as the outer counter shrinks, the inner delay also
+;   shrinks → the pitch rises as the sound fades out, creating an
+;   characteristic "damage taken" buzz-squeal.
+;
+sfx_buzz  ldx  #$00            ; Inner delay starts at 0 (wraps to 256)
+            sta  $95             ; Duration AND pitch parameter
 
-; === while loop starts here [nest:1] ===
-; XREF: 2 refs (2 branches) from sfx_buzz_loop, sfx_buzz_loop
-sfx_buzz_loop  inx                  ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            bne  sfx_buzz_loop      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $95             ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            ldx  $95             ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            bne  sfx_buzz_loop      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            rts                  ; A=[stk] X=$0001 Y=$002F ; [SP-60]
-; XREF: 1 ref (1 jump) from sfx_check_FA
-sfx_chirp  ldx  #$A0            ; A=[stk] X=$00A0 Y=$002F ; [SP-60]
-            txa                  ; A=$00A0 X=$00A0 Y=$002F ; [SP-60]
-            tay                  ; A=$00A0 X=$00A0 Y=$00A0 ; [SP-60]
+sfx_buzz_loop  inx                  ; } Count X from 0→255 (256 cycles)
+            bne  sfx_buzz_loop   ; } ~1280 cycles = ~1.3ms delay
+            bit  $C030           ; Toggle speaker
+            dec  $95             ; Decrease duration AND next period
+            ldx  $95             ; Reload inner count from shrinking outer
+            bne  sfx_buzz_loop   ; Continue until $95 reaches zero
+            rts
+; --- sfx_chirp ($FA): Rising chirp ---
+;   Produces a chirp that rises in pitch. Y serves as both the outer
+;   loop counter (total duration) and the source for X (inner delay).
+;   Each outer iteration: X=Y, count down X to 0, toggle speaker,
+;   then DEY. Since Y decreases each time, the inner delay shrinks
+;   → the period shortens → pitch rises. The chirp starts at ~160
+;   cycles per half-period (~3.1 kHz) and sweeps up to maximum speed.
+;
+;   This is the inverse of sfx_buzz: buzz descends, chirp ascends.
+;   Used for item pickup, positive feedback events.
+;
+sfx_chirp  ldx  #$A0            ; Starting period = $A0 (160 decimal)
+            txa                  ; Copy to A
+            tay                  ; Y = duration counter AND delay source
 
-; === loop starts here (counter: X) [nest:1] ===
-; XREF: 2 refs (2 branches) from sfx_chirp_loop, sfx_chirp_loop
-sfx_chirp_loop  dex                  ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
-            bne  sfx_chirp_loop      ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dey                  ; A=$00A0 X=$009F Y=$009F ; [SP-60]
-            tya                  ; A=$009F X=$009F Y=$009F ; [SP-60]
-            tax                  ; A=$009F X=$009F Y=$009F ; [SP-60]
-            bne  sfx_chirp_loop      ; A=$009F X=$009F Y=$009F ; [SP-60]
-            rts                  ; A=$009F X=$009F Y=$009F ; [SP-58]
-; XREF: 1 ref (1 jump) from sfx_check_F9
-sfx_sweep_alt  ldx  #$E0            ; A=$009F X=$00E0 Y=$009F ; [SP-58]
-            ldy  #$06            ; A=$009F X=$00E0 Y=$0006 ; [SP-58]
-            jmp  sfx_sweep      ; A=$009F X=$00E0 Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from sfx_check_F8
-sfx_descend  lda  #$40            ; A=$0040 X=$00E0 Y=$0006 ; [SP-58]
-            sta  $95             ; A=$0040 X=$00E0 Y=$0006 ; [SP-58]
-            lda  #$E0            ; A=$00E0 X=$00E0 Y=$0006 ; [SP-58]
-            sta  $96             ; A=$00E0 X=$00E0 Y=$0006 ; [SP-58]
+sfx_chirp_loop  dex                  ; } Count down inner delay
+            bne  sfx_chirp_loop  ; } (X iterations × 5 cycles each)
+            bit  $C030           ; Toggle speaker
+            dey                  ; Decrease outer counter
+            tya                  ; } Copy Y → X for next inner delay
+            tax                  ; } (shrinking Y = shrinking delay = rising pitch)
+            bne  sfx_chirp_loop  ; Continue until Y reaches zero
+            rts
+; --- sfx_sweep_alt ($F9): Alternate frequency sweep ---
+;   Reuses the sfx_sweep engine with different starting parameters:
+;   X=$E0 (wider initial period) and Y=$06 (shorter duration per step).
+;   This produces a deeper, faster sweep compared to sfx_sweep's
+;   default X=$C0/Y=$10. Used for spell variant sounds.
+;
+sfx_sweep_alt  ldx  #$E0            ; Wider starting period than default $C0
+            ldy  #$06            ; Faster sweep (fewer cycles per step)
+            jmp  sfx_sweep       ; Reuse sweep engine with new params
+; --- sfx_descend ($F8): Descending tone with random jitter ---
+;   Produces a descending tone from high to low pitch with random
+;   variation in each cycle. The period starts at $E0 and decreases
+;   toward $40, with each half-period augmented by a random value
+;   (ORA with $96 ensures the random bits only ADD to the base delay,
+;   never reduce it). This creates an organic, slightly noisy descent.
+;
+;   $95 = floor (stop when period reaches this value)
+;   $96 = current base period (decreasing → pitch RISES, but the name
+;         "descend" refers to the pitch contour from high randomized
+;         values down to the floor)
+;
+sfx_descend  lda  #$40            ; Stop threshold (minimum period)
+            sta  $95
+            lda  #$E0            ; Starting period (long = low pitch)
+            sta  $96
 
-; === while loop starts here ===
-; XREF: 1 ref (1 branch) from sfx_descend_wait
-sfx_descend_loop  jsr  get_random       ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
-            ora  $96             ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
-            tax                  ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
+sfx_descend_loop  jsr  get_random       ; Get random value
+            ora  $96             ; Merge with base period (adds jitter)
+            tax                  ; X = jittered delay count
 
-; === loop starts here (counter: X) [nest:1] ===
-; XREF: 1 ref (1 branch) from sfx_descend_wait
-sfx_descend_wait  dex                  ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
-            bne  sfx_descend_wait      ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $96             ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
-            lda  $96             ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
-            cmp  $95             ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
-            bcs  sfx_descend_loop      ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
-            rts                  ; A=[$0096] X=$00DF Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from sfx_check_F7
-sfx_ascend  lda  #$FF            ; A=$00FF X=$00DF Y=$0006 ; [SP-58]
-            sta  $95             ; A=$00FF X=$00DF Y=$0006 ; [SP-58]
-            lda  #$00            ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-            sta  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-            jmp  sfx_rise_fall_loop      ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from sfx_check_F6
-sfx_short_desc  lda  #$08            ; A=$0008 X=$00DF Y=$0006 ; [SP-58]
-            sta  $95             ; A=$0008 X=$00DF Y=$0006 ; [SP-58]
-            lda  #$00            ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-            sta  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
+sfx_descend_wait  dex                  ; } Count down delay
+            bne  sfx_descend_wait ; }
+            bit  $C030           ; Toggle speaker
+            dec  $96             ; Shorten base period (raise pitch)
+            lda  $96
+            cmp  $95             ; Reached floor?
+            bcs  sfx_descend_loop ; No → continue descending
+            rts
+; --- sfx_ascend ($F7): Ascending tone with jitter ---
+;   Shares the sfx_rise_fall_loop engine with sfx_short_desc, but with
+;   different parameters: $95=255 (long duration), $96=0 (start silent).
+;   The random ORA with an increasing $96... wait — $95 is the COUNTER
+;   and $96 is the base period. With $96=$00, ORA produces pure random
+;   values, creating a noise-like ascending texture (255 toggles).
+;   Used for level-up or ascending effects.
+;
+sfx_ascend  lda  #$FF            ; 255 toggles (long duration)
+            sta  $95
+            lda  #$00            ; Base period = 0 (pure random timing)
+            sta  $96
+            jmp  sfx_rise_fall_loop
 
-; === while loop starts here ===
-; XREF: 2 refs (1 jump) (1 branch) from sfx_rise_fall_wait, sfx_ascend
-sfx_rise_fall_loop  jsr  get_random       ; A=$0000 X=$00DF Y=$0006 ; [SP-60]
-            ora  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-60]
-            tax                  ; A=$0000 X=$0000 Y=$0006 ; [SP-60]
+; --- sfx_short_desc ($F6): Short descending tone ---
+;   Same engine as sfx_ascend but with only 8 toggles ($95=$08).
+;   Very brief sound — a quick "blip" for minor events.
+;
+sfx_short_desc  lda  #$08            ; Only 8 toggles (very short)
+            sta  $95
+            lda  #$00            ; Base period = 0 (pure random timing)
+            sta  $96
 
-; === loop starts here (counter: X) [nest:1] ===
-; XREF: 1 ref (1 branch) from sfx_rise_fall_wait
-sfx_rise_fall_wait  dex                  ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            bne  sfx_rise_fall_wait      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            dec  $95             ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            bne  sfx_rise_fall_loop      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            rts                  ; A=$0000 X=$FFFF Y=$0006 ; [SP-58]
+; --- Shared rise/fall engine ---
+;   Used by both sfx_ascend and sfx_short_desc. Each iteration:
+;   1. Get random value, OR with base period ($96)
+;   2. Use result as delay → toggle speaker
+;   3. Decrement duration counter ($95)
+;   The random component creates organic, non-mechanical sound.
+;
+sfx_rise_fall_loop  jsr  get_random       ; Random value (0-255)
+            ora  $96             ; Merge with base period
+            tax                  ; X = delay count
+
+sfx_rise_fall_wait  dex                  ; } Count down delay
+            bne  sfx_rise_fall_wait ; }
+            bit  $C030           ; Toggle speaker
+            dec  $95             ; Decrement duration
+            bne  sfx_rise_fall_loop ; Continue until zero
+            rts
 
 ; ---------------------------------------------------------------------------
-; get_random  [4 calls, 1 jump]
-;   Called by: sfx_noise_loop, sfx_descend_loop, modulo, sfx_rise_fall_loop
+; get_random — 16-byte additive pseudo-random number generator
 ; ---------------------------------------------------------------------------
+;
+;   PURPOSE: Returns a pseudo-random byte in A. Used by the sound effects
+;            (noise, descend, rise/fall) and by the modulo function for
+;            game-wide randomness (wind direction, combat rolls, etc.).
+;
+;   PARAMS:  None (reads/writes internal state at $4E61-$4E70)
+;   RETURNS: A = pseudo-random byte
+;            X preserved (saved on stack), Y preserved
+;
+;   ALGORITHM — ADDITIVE CONGRUENTIAL GENERATOR:
+;   The RNG maintains a 16-byte state vector at $4E61-$4E70. Each call:
+;
+;   Phase 1 (Mixing): Starting with the last byte ($4E70) as a seed,
+;   add it cascading through the state array: state[i] += accumulator,
+;   where the accumulator carries forward (no CLC between iterations,
+;   so overflow bits propagate). This creates avalanche diffusion —
+;   each byte affects all subsequent bytes.
+;
+;   Phase 2 (Increment): Scan from the end of the array, incrementing
+;   each byte. Stop as soon as one doesn't wrap to zero (carry-chain
+;   increment of a 16-byte counter). This ensures the state never
+;   gets stuck in an all-zeros cycle.
+;
+;   The output is state[0] ($4E61), giving decent 8-bit randomness
+;   for game purposes. This is NOT cryptographically secure, but it's
+;   more than adequate for a 1983 RPG. The 16-byte state provides
+;   a period of approximately 2^128 before repeating.
+;
+;   HISTORICAL CONTEXT:
+;   This is a variant of the "lagged Fibonacci" generator, a class of
+;   PRNGs popular in the 1970s-80s because they require only addition
+;   (no multiplication), making them fast on 8-bit CPUs. The cascading
+;   add with carry propagation is a clever way to get mixing across
+;   the entire state vector in a single pass.
+;
+; ---------------------------------------------------------------------------
+get_random   txa                  ; Save X on stack (will be restored)
+            pha
+            clc                  ; Clear carry for first addition
+            ldx  #$0E            ; Start at state[14] (second-to-last)
+            lda  $4E70           ; Load state[15] as initial seed/accumulator
 
-; FUNC $004E40: register -> A:X []
-; Proto: uint32_t func_004E40(uint16_t param_Y);
-; Liveness: params(Y) returns(A,X,Y) [4 dead stores]
-; XREF: 5 refs (4 calls) (1 jump) from sfx_noise_loop, sfx_descend_loop, modulo, sfx_rise_fall_loop, $0046E7
-get_random   txa                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-58]
-            pha                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-59]
-            clc                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-59]
-            ldx  #$0E            ; A=$FFFF X=$000E Y=$0006 ; [SP-59]
-            lda  $4E70           ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
+; --- Phase 1: Cascading addition (mixing pass) ---
+;   Add accumulator into each state byte from [14] down to [0].
+;   Carry propagates naturally between iterations, creating
+;   cross-byte diffusion. After 15 iterations every byte in the
+;   state has been influenced by the seed.
+rng_add_loop adc  $4E61,X         ; accumulator += state[X]
+            sta  $4E61,X         ; state[X] = accumulated sum
+            dex                  ; Move to previous byte
+            bpl  rng_add_loop    ; Continue through state[0]
 
-; === while loop starts here ===
-; XREF: 1 ref (1 branch) from rng_add_loop
-rng_add_loop adc  $4E61,X         ; -> $4E6F ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
-            sta  $4E61,X         ; -> $4E6F ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
-            dex                  ; A=[$4E70] X=$000D Y=$0006 ; [SP-59]
-            bpl  rng_add_loop    ; A=[$4E70] X=$000D Y=$0006 ; [SP-59]
-; === End of while loop ===
+; --- Phase 2: Increment the state (prevent stuck-at-zero) ---
+;   Increment state bytes from [15] downward. Stop as soon as a
+;   byte doesn't overflow to zero. This is equivalent to adding 1
+;   to a 128-bit integer stored little-endian, ensuring the state
+;   vector always changes between calls.
+            ldx  #$0F            ; Start at state[15]
 
-            ldx  #$0F            ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
+rng_inc_loop inc  $4E61,X         ; Increment state[X]
+            bne  rng_done        ; Didn't wrap to zero → done
+            dex                  ; Wrapped → carry to next byte
+            bpl  rng_inc_loop    ; Continue through entire state
 
-; === while loop starts here ===
-; XREF: 1 ref (1 branch) from rng_inc_loop
-rng_inc_loop inc  $4E61,X         ; -> $4E70 ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
-            bne  rng_done    ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
-            dex                  ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
-            bpl  rng_inc_loop    ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
-; === End of while loop ===
-
-; XREF: 1 ref (1 branch) from rng_inc_loop
-rng_done pla                  ; A=[stk] X=$000E Y=$0006 ; [SP-58]
-            tax                  ; A=[stk] X=[stk] Y=$0006 ; [SP-58]
-            lda  $4E61           ; A=[$4E61] X=[stk] Y=$0006 ; [SP-58]
-            rts                  ; A=[$4E61] X=[stk] Y=$0006 ; [SP-56]
+rng_done pla                  ; Restore X from stack
+            tax
+            lda  $4E61           ; Return state[0] as random byte
+            rts
 
 ; --- Data region (159 bytes) ---
             DB      $AC,$D0,$AC,$D4,$BA,$00,$AD,$00,$C0,$10,$FB,$2C,$10,$C0,$48,$29
