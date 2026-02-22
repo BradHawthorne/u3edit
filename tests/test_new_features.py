@@ -10825,3 +10825,379 @@ class TestShapesOverlayBoundsFix:
         strings = extract_overlay_strings(data)
         # Empty string should not be added (chars check filters it)
         assert len(strings) == 0
+
+
+# =============================================================================
+# FileUtil coverage
+# =============================================================================
+
+class TestResolveSingleFile:
+    """Tests for resolve_single_file with ProDOS suffixes."""
+
+    def test_find_plain_file(self, tmp_path):
+        """Finds a plain file by name."""
+        from u3edit.fileutil import resolve_single_file
+        (tmp_path / 'PRTY').write_bytes(b'\x00' * 16)
+        result = resolve_single_file(str(tmp_path), 'PRTY')
+        assert result is not None
+        assert 'PRTY' in result
+
+    def test_find_prodos_hashed_file(self, tmp_path):
+        """Finds a file with ProDOS #hash suffix."""
+        from u3edit.fileutil import resolve_single_file
+        (tmp_path / 'PRTY#069500').write_bytes(b'\x00' * 16)
+        result = resolve_single_file(str(tmp_path), 'PRTY')
+        assert result is not None
+        assert 'PRTY#069500' in result
+
+    def test_not_found_returns_none(self, tmp_path):
+        """Returns None when file doesn't exist."""
+        from u3edit.fileutil import resolve_single_file
+        result = resolve_single_file(str(tmp_path), 'NOSUCHFILE')
+        assert result is None
+
+    def test_prefers_hashed_over_plain(self, tmp_path):
+        """When both plain and hashed exist, hashed is returned first."""
+        from u3edit.fileutil import resolve_single_file
+        (tmp_path / 'ROST#069500').write_bytes(b'\x00' * 64)
+        (tmp_path / 'ROST').write_bytes(b'\x00' * 64)
+        result = resolve_single_file(str(tmp_path), 'ROST')
+        assert result is not None
+        assert '#' in result
+
+
+class TestResolveGameFile:
+    """Tests for resolve_game_file with prefix+letter pattern."""
+
+    def test_find_with_hash(self, tmp_path):
+        """Finds MAPA#061000 style files."""
+        from u3edit.fileutil import resolve_game_file
+        (tmp_path / 'MAPA#061000').write_bytes(b'\x00' * 100)
+        result = resolve_game_file(str(tmp_path), 'MAP', 'A')
+        assert result is not None
+        assert 'MAPA#061000' in result
+
+    def test_find_plain(self, tmp_path):
+        """Falls back to plain name if no hash file exists."""
+        from u3edit.fileutil import resolve_game_file
+        (tmp_path / 'CONA').write_bytes(b'\x00' * 192)
+        result = resolve_game_file(str(tmp_path), 'CON', 'A')
+        assert result is not None
+        assert 'CONA' in result
+
+    def test_not_found(self, tmp_path):
+        """Returns None if neither hashed nor plain exists."""
+        from u3edit.fileutil import resolve_game_file
+        result = resolve_game_file(str(tmp_path), 'MAP', 'Z')
+        assert result is None
+
+    def test_excludes_dproj(self, tmp_path):
+        """Files ending in .dproj are excluded."""
+        from u3edit.fileutil import resolve_game_file
+        (tmp_path / 'MAPA#061000.dproj').write_bytes(b'\x00')
+        result = resolve_game_file(str(tmp_path), 'MAP', 'A')
+        assert result is None
+
+
+class TestFindGameFiles:
+    """Tests for find_game_files across multiple letters."""
+
+    def test_finds_multiple(self, tmp_path):
+        """Finds all existing files across letter range."""
+        from u3edit.fileutil import find_game_files
+        (tmp_path / 'CONA').write_bytes(b'\x00' * 192)
+        (tmp_path / 'CONC').write_bytes(b'\x00' * 192)
+        result = find_game_files(str(tmp_path), 'CON', 'ABCDE')
+        assert len(result) == 2
+        letters = [r[0] for r in result]
+        assert 'A' in letters
+        assert 'C' in letters
+
+    def test_empty_directory(self, tmp_path):
+        """Returns empty list for empty directory."""
+        from u3edit.fileutil import find_game_files
+        result = find_game_files(str(tmp_path), 'CON', 'ABCDE')
+        assert result == []
+
+
+# =============================================================================
+# Patch inline string operations
+# =============================================================================
+
+class TestPatchInlineString:
+    """Tests for _patch_inline_string and _resolve_string_target."""
+
+    def test_patch_exact_fit(self):
+        """Replacement text exactly fills available space."""
+        from u3edit.patch import _patch_inline_string
+        data = bytearray(20)
+        # Simulate inline string: "ABC" (3 bytes) at offset 5, ending at 8
+        for i, ch in enumerate('ABC'):
+            data[5 + i] = ord(ch.upper()) | 0x80
+        data[8] = 0x00  # null terminator
+
+        info = {'text_offset': 5, 'text_end': 8, 'text': 'ABC', 'index': 0}
+        ok, msg = _patch_inline_string(data, info, 'XYZ')
+        assert ok is True
+        # Verify encoded bytes
+        assert data[5] == ord('X') | 0x80
+        assert data[6] == ord('Y') | 0x80
+        assert data[7] == ord('Z') | 0x80
+
+    def test_patch_shorter_nullfills(self):
+        """Shorter replacement null-fills remaining space."""
+        from u3edit.patch import _patch_inline_string
+        data = bytearray(20)
+        for i, ch in enumerate('ABCDE'):
+            data[5 + i] = ord(ch) | 0x80
+        data[10] = 0x00
+
+        info = {'text_offset': 5, 'text_end': 10, 'text': 'ABCDE', 'index': 0}
+        ok, msg = _patch_inline_string(data, info, 'HI')
+        assert ok is True
+        assert data[5] == ord('H') | 0x80
+        assert data[6] == ord('I') | 0x80
+        # Remaining should be null-filled
+        assert data[7] == 0x00
+        assert data[8] == 0x00
+        assert data[9] == 0x00
+
+    def test_patch_too_long_fails(self):
+        """Text longer than available space returns failure."""
+        from u3edit.patch import _patch_inline_string
+        data = bytearray(20)
+        info = {'text_offset': 5, 'text_end': 7, 'text': 'AB', 'index': 0}
+        ok, msg = _patch_inline_string(data, info, 'TOOLONG')
+        assert ok is False
+        assert 'too long' in msg.lower()
+
+    def test_resolve_by_index(self):
+        """_resolve_string_target finds by index."""
+        from u3edit.patch import _resolve_string_target
+        strings = [
+            {'index': 0, 'text': 'HELLO', 'address': 0x100},
+            {'index': 1, 'text': 'WORLD', 'address': 0x110},
+        ]
+        result = _resolve_string_target(strings, index=1)
+        assert len(result) == 1
+        assert result[0]['text'] == 'WORLD'
+
+    def test_resolve_by_vanilla_text(self):
+        """_resolve_string_target finds by vanilla text (case-insensitive)."""
+        from u3edit.patch import _resolve_string_target
+        strings = [
+            {'index': 0, 'text': 'HELLO', 'address': 0x100},
+            {'index': 1, 'text': 'WORLD', 'address': 0x110},
+        ]
+        result = _resolve_string_target(strings, vanilla='hello')
+        assert len(result) == 1
+        assert result[0]['index'] == 0
+
+    def test_resolve_by_address(self):
+        """_resolve_string_target finds by address."""
+        from u3edit.patch import _resolve_string_target
+        strings = [
+            {'index': 0, 'text': 'HELLO', 'address': 0x100},
+            {'index': 1, 'text': 'WORLD', 'address': 0x110},
+        ]
+        result = _resolve_string_target(strings, address=0x110)
+        assert len(result) == 1
+        assert result[0]['text'] == 'WORLD'
+
+    def test_resolve_no_match(self):
+        """_resolve_string_target returns empty list for no match."""
+        from u3edit.patch import _resolve_string_target
+        strings = [{'index': 0, 'text': 'HELLO', 'address': 0x100}]
+        result = _resolve_string_target(strings, index=99)
+        assert result == []
+
+    def test_resolve_no_criteria(self):
+        """_resolve_string_target returns empty list with no criteria."""
+        from u3edit.patch import _resolve_string_target
+        strings = [{'index': 0, 'text': 'HELLO', 'address': 0x100}]
+        result = _resolve_string_target(strings)
+        assert result == []
+
+
+# =============================================================================
+# Shapes pixel helper tests
+# =============================================================================
+
+class TestShapesPixelHelpers:
+    """Tests for shapes.py pixel scaling and rendering helpers."""
+
+    def test_scale_pixels_noop(self):
+        """Scale factor 1 returns pixels unchanged."""
+        from u3edit.shapes import scale_pixels
+        pixels = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
+        result, w, h = scale_pixels(pixels, 2, 2, 1)
+        assert result == pixels
+        assert w == 2
+        assert h == 2
+
+    def test_scale_pixels_2x(self):
+        """Scale factor 2 doubles each dimension."""
+        from u3edit.shapes import scale_pixels
+        pixels = [(255, 0, 0), (0, 255, 0),
+                  (0, 0, 255), (255, 255, 0)]
+        result, w, h = scale_pixels(pixels, 2, 2, 2)
+        assert w == 4
+        assert h == 4
+        assert len(result) == 16
+        # Top-left 2x2 block should be red
+        assert result[0] == (255, 0, 0)
+        assert result[1] == (255, 0, 0)
+        assert result[4] == (255, 0, 0)
+        assert result[5] == (255, 0, 0)
+
+    def test_render_hgr_sprite_basic(self):
+        """render_hgr_sprite produces correct pixel count."""
+        from u3edit.shapes import render_hgr_sprite
+        # 1 byte wide, 2 rows tall
+        data = bytes([0x00, 0x7F])
+        pixels = render_hgr_sprite(data, width_bytes=1, height=2, offset=0)
+        # Each byte produces 7 pixels (HGR)
+        assert len(pixels) == 14  # 7 * 2
+
+    def test_hgr_ascii_preview_basic(self):
+        """hgr_ascii_preview produces text representation."""
+        from u3edit.shapes import hgr_ascii_preview
+        # Create simple 2x2 pixel data
+        black = (0, 0, 0)
+        white = (255, 255, 255)
+        pixels = [black, white, white, black]
+        result = hgr_ascii_preview(pixels, 2, 2)
+        assert len(result.split('\n')) == 2
+
+
+# =============================================================================
+# DDRW parsing and editing tests
+# =============================================================================
+
+class TestDdrwParsing:
+    """Tests for DDRW structured parsing functions."""
+
+    def test_parse_vectors_full(self):
+        """parse_vectors reads 32 bytes at vector offset."""
+        from u3edit.ddrw import parse_vectors, DDRW_VECTOR_OFFSET
+        data = bytearray(1792)
+        for i in range(32):
+            data[DDRW_VECTOR_OFFSET + i] = i + 1
+        result = parse_vectors(data)
+        assert len(result) == 32
+        assert result[0] == 1
+        assert result[31] == 32
+
+    def test_parse_vectors_truncated(self):
+        """parse_vectors pads with zeros for truncated data."""
+        from u3edit.ddrw import parse_vectors
+        data = bytes(100)  # Too short for vector offset
+        result = parse_vectors(data)
+        assert len(result) == 32
+        assert all(v == 0 for v in result)
+
+    def test_parse_tile_records(self):
+        """parse_tile_records reads 7-byte records at tile offset."""
+        from u3edit.ddrw import (parse_tile_records, DDRW_TILE_OFFSET,
+                                  DDRW_TILE_RECORD_SIZE)
+        data = bytearray(1792)
+        # Write 2 tile records at offset
+        for j in range(7):
+            data[DDRW_TILE_OFFSET + j] = j + 10
+        for j in range(7):
+            data[DDRW_TILE_OFFSET + 7 + j] = j + 20
+        result = parse_tile_records(data)
+        assert len(result) >= 2
+        assert result[0]['col_start'] == 10
+        assert result[1]['col_start'] == 20
+
+    def test_cmd_edit_dry_run(self, tmp_path):
+        """ddrw cmd_edit --dry-run doesn't modify file."""
+        from u3edit.ddrw import cmd_edit
+        ddrw_file = tmp_path / 'DDRW'
+        original = bytes(1792)
+        ddrw_file.write_bytes(original)
+        args = argparse.Namespace(
+            file=str(ddrw_file), offset=0x10, data='AABB',
+            dry_run=True, backup=False, output=None)
+        cmd_edit(args)
+        assert ddrw_file.read_bytes() == original
+
+    def test_cmd_edit_writes_bytes(self, tmp_path):
+        """ddrw cmd_edit patches bytes at offset."""
+        from u3edit.ddrw import cmd_edit
+        ddrw_file = tmp_path / 'DDRW'
+        ddrw_file.write_bytes(bytes(1792))
+        args = argparse.Namespace(
+            file=str(ddrw_file), offset=0x10, data='DEADBEEF',
+            dry_run=False, backup=False, output=None)
+        cmd_edit(args)
+        result = ddrw_file.read_bytes()
+        assert result[0x10:0x14] == bytes([0xDE, 0xAD, 0xBE, 0xEF])
+
+    def test_cmd_edit_past_end_exits(self, tmp_path):
+        """ddrw cmd_edit past end of file exits with error."""
+        from u3edit.ddrw import cmd_edit
+        ddrw_file = tmp_path / 'DDRW'
+        ddrw_file.write_bytes(bytes(10))
+        args = argparse.Namespace(
+            file=str(ddrw_file), offset=8, data='AABBCCDD',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+# =============================================================================
+# SpecialEditor save preserves trailing bytes
+# =============================================================================
+
+class TestSpecialEditorSave:
+    """Tests for SpecialEditor TUI save preserving metadata."""
+
+    def test_save_preserves_trailing_bytes(self):
+        """SpecialEditor._save() preserves trailing 7 bytes."""
+        from u3edit.tui.special_editor import SpecialEditor
+
+        data = bytearray(128)
+        # Fill tiles with grass
+        for i in range(121):
+            data[i] = 0x04
+        # Set trailing bytes
+        for i in range(7):
+            data[121 + i] = 0xF0 + i
+
+        saved_data = None
+        def capture(d):
+            nonlocal saved_data
+            saved_data = d
+
+        editor = SpecialEditor('test', bytes(data), save_callback=capture)
+        # Modify a tile
+        editor.state.data[0] = 0x00  # water
+        editor.state.dirty = True
+        editor._save()
+
+        assert saved_data is not None
+        # Tile changed
+        assert saved_data[0] == 0x00
+        # Trailing bytes preserved
+        for i in range(7):
+            assert saved_data[121 + i] == 0xF0 + i
+
+    def test_save_with_short_data(self):
+        """SpecialEditor pads short data to at least tile grid size."""
+        from u3edit.tui.special_editor import SpecialEditor
+        from u3edit.constants import SPECIAL_MAP_TILES
+
+        data = bytes(100)  # Shorter than 121 tiles
+        saved_data = None
+        def capture(d):
+            nonlocal saved_data
+            saved_data = d
+
+        editor = SpecialEditor('test', data, save_callback=capture)
+        editor.state.dirty = True
+        editor._save()
+        assert saved_data is not None
+        # Padded tile data written over short original
+        assert len(saved_data) >= SPECIAL_MAP_TILES
