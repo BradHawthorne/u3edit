@@ -838,14 +838,14 @@ def cmd_import(args) -> None:
             for wname, wcount in entry['weapons'].items():
                 try:
                     char.set_weapon_count(WEAPONS.index(wname), wcount)
-                except ValueError:
+                except (ValueError, TypeError):
                     print(f"  Warning: Unknown weapon '{wname}' in slot {slot} inventory, skipping",
                           file=sys.stderr)
         if isinstance(entry.get('armors'), dict):
             for aname, acount in entry['armors'].items():
                 try:
                     char.set_armor_count(ARMORS.index(aname), acount)
-                except ValueError:
+                except (ValueError, TypeError):
                     print(f"  Warning: Unknown armor '{aname}' in slot {slot} inventory, skipping",
                           file=sys.stderr)
         count += 1

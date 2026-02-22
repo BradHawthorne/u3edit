@@ -83,7 +83,12 @@ def cmd_view(args) -> None:
     if args.crop:
         parts = args.crop.split(',')
         if len(parts) == 4:
-            crop = tuple(int(x) for x in parts)
+            try:
+                crop = tuple(int(x) for x in parts)
+            except ValueError:
+                print(f"Error: Invalid crop values (expected 4 integers): {args.crop}",
+                      file=sys.stderr)
+                sys.exit(1)
 
     if args.json:
         if is_dungeon:

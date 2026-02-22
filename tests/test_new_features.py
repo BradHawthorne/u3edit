@@ -8821,3 +8821,722 @@ class TestViewOnlyCommands:
         cmd_view(args)
         out = capsys.readouterr().out
         assert len(out) > 0
+
+
+# =============================================================================
+# Patch cmd_edit and cmd_dump tests
+# =============================================================================
+
+class TestPatchCmdEdit:
+    """Tests for patch.cmd_edit — region patching."""
+
+    def _make_ult3(self, tmp_path):
+        """Create a fake ULT3 binary of the right size."""
+        from u3edit.constants import ULT3_FILE_SIZE
+        path = tmp_path / 'ULT3'
+        path.write_bytes(bytes(ULT3_FILE_SIZE))
+        return str(path)
+
+    def test_edit_moongate_x(self, tmp_path, capsys):
+        """Patch moongate-x region and verify bytes written."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        args = argparse.Namespace(
+            file=path, region='moongate-x', data='01 02 03 04 05 06 07 08',
+            dry_run=False, backup=False, output=None)
+        cmd_edit(args)
+        with open(path, 'rb') as f:
+            data = f.read()
+        assert data[0x29A7:0x29A7 + 8] == bytes([1, 2, 3, 4, 5, 6, 7, 8])
+
+    def test_edit_dry_run(self, tmp_path, capsys):
+        """Dry run shows changes but doesn't write."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        args = argparse.Namespace(
+            file=path, region='moongate-x', data='AABBCCDD',
+            dry_run=True, backup=False, output=None)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        with open(path, 'rb') as f:
+            data = f.read()
+        assert data[0x29A7:0x29A7 + 4] == bytes(4)  # unchanged
+
+    def test_edit_unknown_region_exits(self, tmp_path):
+        """Unknown region name causes sys.exit."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        args = argparse.Namespace(
+            file=path, region='nonexistent', data='AA',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_data_too_long_exits(self, tmp_path):
+        """Data exceeding region max_length causes sys.exit."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        # moongate-x max_length is 8, send 9 bytes
+        args = argparse.Namespace(
+            file=path, region='moongate-x', data='01 02 03 04 05 06 07 08 09',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_invalid_hex_exits(self, tmp_path):
+        """Invalid hex data causes sys.exit."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        args = argparse.Namespace(
+            file=path, region='moongate-x', data='ZZZZ',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_unrecognized_binary_exits(self, tmp_path):
+        """Non-engine binary file causes sys.exit."""
+        from u3edit.patch import cmd_edit
+        path = tmp_path / 'JUNK'
+        path.write_bytes(bytes(100))
+        args = argparse.Namespace(
+            file=str(path), region='moongate-x', data='AA',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_with_backup(self, tmp_path):
+        """Backup flag creates .bak before patching."""
+        from u3edit.patch import cmd_edit
+        path = self._make_ult3(tmp_path)
+        args = argparse.Namespace(
+            file=path, region='food-rate', data='02',
+            dry_run=False, backup=True, output=None)
+        cmd_edit(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestPatchCmdDump:
+    """Tests for patch.cmd_dump — hex dump."""
+
+    def test_dump_basic(self, tmp_path, capsys):
+        """Hex dump produces output with hex values."""
+        from u3edit.patch import cmd_dump
+        from u3edit.constants import ULT3_FILE_SIZE
+        path = tmp_path / 'ULT3'
+        data = bytearray(ULT3_FILE_SIZE)
+        data[0] = 0xAB
+        data[1] = 0xCD
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(file=str(path), offset=0, length=16)
+        cmd_dump(args)
+        out = capsys.readouterr().out
+        assert 'AB CD' in out
+
+    def test_dump_offset_past_end_exits(self, tmp_path):
+        """Offset past end of file causes sys.exit."""
+        from u3edit.patch import cmd_dump
+        path = tmp_path / 'SMALL'
+        path.write_bytes(bytes(16))
+        args = argparse.Namespace(file=str(path), offset=100, length=16)
+        with pytest.raises(SystemExit):
+            cmd_dump(args)
+
+    def test_dump_with_load_addr(self, tmp_path, capsys):
+        """Recognized binary shows load addresses."""
+        from u3edit.patch import cmd_dump
+        from u3edit.constants import ULT3_FILE_SIZE
+        path = tmp_path / 'ULT3'
+        path.write_bytes(bytes(ULT3_FILE_SIZE))
+        args = argparse.Namespace(file=str(path), offset=0, length=16)
+        cmd_dump(args)
+        out = capsys.readouterr().out
+        # ULT3 load_addr is 0x5000, so first line should show 5000:
+        assert '5000:' in out
+
+
+# =============================================================================
+# Map cmd_fill / cmd_replace / cmd_find CLI tests
+# =============================================================================
+
+class TestMapCmdFill:
+    """Tests for map.cmd_fill — fill rectangular regions."""
+
+    def test_fill_basic(self, tmp_path, capsys):
+        """Fill a 2x2 region on an overworld map."""
+        from u3edit.map import cmd_fill
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=str(path), x1=0, y1=0, x2=1, y2=1, tile=0x04,
+            level=None, dry_run=False, backup=False, output=None)
+        cmd_fill(args)
+        with open(str(path), 'rb') as f:
+            data = f.read()
+        # Tiles at (0,0), (1,0), (0,1), (1,1) should be 0x04
+        assert data[0] == 0x04
+        assert data[1] == 0x04
+        assert data[64] == 0x04
+        assert data[65] == 0x04
+
+    def test_fill_dry_run(self, tmp_path, capsys):
+        """Dry run doesn't write changes."""
+        from u3edit.map import cmd_fill
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=str(path), x1=0, y1=0, x2=3, y2=3, tile=0xFF,
+            level=None, dry_run=True, backup=False, output=None)
+        cmd_fill(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        with open(str(path), 'rb') as f:
+            data = f.read()
+        assert data[0] == 0x00  # unchanged
+
+    def test_fill_clamps_coords(self, tmp_path, capsys):
+        """Out-of-bounds coordinates are clamped."""
+        from u3edit.map import cmd_fill
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=str(path), x1=0, y1=0, x2=999, y2=999, tile=0x01,
+            level=None, dry_run=True, backup=False, output=None)
+        # Should not crash — coords get clamped
+        cmd_fill(args)
+        out = capsys.readouterr().out
+        assert 'Filled' in out
+
+
+class TestMapCmdReplace:
+    """Tests for map.cmd_replace — tile replacement."""
+
+    def test_replace_basic(self, tmp_path, capsys):
+        """Replace one tile type with another."""
+        from u3edit.map import cmd_replace
+        path = tmp_path / 'SOSA'
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04  # grass
+        data[1] = 0x04  # grass
+        data[2] = 0x01  # water
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            file=str(path), from_tile=0x04, to_tile=0x0C,
+            level=None, dry_run=False, backup=False, output=None)
+        cmd_replace(args)
+        out = capsys.readouterr().out
+        assert 'Replaced 2 tiles' in out
+        with open(str(path), 'rb') as f:
+            result = f.read()
+        assert result[0] == 0x0C
+        assert result[1] == 0x0C
+        assert result[2] == 0x01  # unchanged
+
+    def test_replace_dry_run(self, tmp_path, capsys):
+        """Dry run shows count but doesn't write."""
+        from u3edit.map import cmd_replace
+        path = tmp_path / 'SOSA'
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            file=str(path), from_tile=0x04, to_tile=0x0C,
+            level=None, dry_run=True, backup=False, output=None)
+        cmd_replace(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        with open(str(path), 'rb') as f:
+            result = f.read()
+        assert result[0] == 0x04  # unchanged
+
+
+class TestMapCmdFind:
+    """Tests for map.cmd_find — tile search."""
+
+    def test_find_basic(self, tmp_path, capsys):
+        """Find tiles at known positions."""
+        from u3edit.map import cmd_find
+        path = tmp_path / 'SOSA'
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04  # (0,0)
+        data[65] = 0x04  # (1,1)
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            file=str(path), tile=0x04,
+            level=None, json=False, output=None)
+        cmd_find(args)
+        out = capsys.readouterr().out
+        assert '2 found' in out
+        assert '(0, 0)' in out
+        assert '(1, 1)' in out
+
+    def test_find_json(self, tmp_path):
+        """Find with --json produces valid JSON."""
+        from u3edit.map import cmd_find
+        path = tmp_path / 'SOSA'
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04
+        path.write_bytes(bytes(data))
+        outfile = tmp_path / 'found.json'
+        args = argparse.Namespace(
+            file=str(path), tile=0x04,
+            level=None, json=True, output=str(outfile))
+        cmd_find(args)
+        result = json.loads(outfile.read_text())
+        assert result['count'] == 1
+        assert result['locations'][0] == {'x': 0, 'y': 0}
+
+    def test_find_no_matches(self, tmp_path, capsys):
+        """Find with no matches shows 0 found."""
+        from u3edit.map import cmd_find
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=str(path), tile=0xFF,
+            level=None, json=False, output=None)
+        cmd_find(args)
+        out = capsys.readouterr().out
+        assert '0 found' in out
+
+
+# =============================================================================
+# TLK cmd_view and cmd_import tests
+# =============================================================================
+
+class TestTlkCmdView:
+    """Tests for tlk.cmd_view — dialog viewing."""
+
+    def _make_tlk(self, path, text='Hello'):
+        """Create a single-record TLK file."""
+        from u3edit.tlk import encode_record
+        data = encode_record([text])
+        path.write_bytes(bytes(data))
+
+    def test_view_single_file(self, tmp_path, capsys):
+        """View a single TLK file."""
+        from u3edit.tlk import cmd_view
+        tlk = tmp_path / 'TLKA'
+        self._make_tlk(tlk, 'Test dialog')
+        args = argparse.Namespace(
+            path=str(tlk), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Test dialog' in out
+
+    def test_view_json(self, tmp_path):
+        """View --json produces valid JSON."""
+        from u3edit.tlk import cmd_view
+        tlk = tmp_path / 'TLKA'
+        self._make_tlk(tlk, 'JSON dialog')
+        outfile = tmp_path / 'tlk.json'
+        args = argparse.Namespace(
+            path=str(tlk), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'records' in result
+
+    def test_view_directory(self, tmp_path, capsys):
+        """View all TLK files in a directory."""
+        from u3edit.tlk import cmd_view
+        tlk = tmp_path / 'TLKA'
+        self._make_tlk(tlk, 'Town dialog')
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'TLKA' in out or 'Town dialog' in out or len(out) > 0
+
+
+class TestTlkCmdImport:
+    """Tests for tlk.cmd_import — dialog import from JSON."""
+
+    def test_import_roundtrip(self, tmp_path, capsys):
+        """Import from JSON writes correct TLK data."""
+        from u3edit.tlk import cmd_import, load_tlk_records
+        tlk_path = tmp_path / 'TLKA'
+        tlk_path.write_bytes(bytes(64))  # placeholder
+        json_path = tmp_path / 'dialog.json'
+        json_path.write_text(json.dumps({
+            'records': [
+                {'lines': ['Hello traveler', 'Welcome!']},
+                {'lines': ['Goodbye']},
+            ]
+        }))
+        args = argparse.Namespace(
+            file=str(tlk_path), json_file=str(json_path),
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        records = load_tlk_records(str(tlk_path))
+        assert len(records) == 2
+        assert 'Hello traveler' in records[0][0]
+
+    def test_import_dry_run(self, tmp_path, capsys):
+        """Dry run doesn't write changes."""
+        from u3edit.tlk import cmd_import
+        tlk_path = tmp_path / 'TLKA'
+        original = bytes(64)
+        tlk_path.write_bytes(original)
+        json_path = tmp_path / 'dialog.json'
+        json_path.write_text(json.dumps({'records': [{'lines': ['Test']}]}))
+        args = argparse.Namespace(
+            file=str(tlk_path), json_file=str(json_path),
+            dry_run=True, backup=False, output=None)
+        cmd_import(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        assert tlk_path.read_bytes() == original  # unchanged
+
+    def test_import_with_backup(self, tmp_path, capsys):
+        """Import with --backup creates .bak file."""
+        from u3edit.tlk import cmd_import
+        tlk_path = tmp_path / 'TLKA'
+        tlk_path.write_bytes(bytes(64))
+        json_path = tmp_path / 'dialog.json'
+        json_path.write_text(json.dumps({'records': [{'lines': ['Backed up']}]}))
+        args = argparse.Namespace(
+            file=str(tlk_path), json_file=str(json_path),
+            dry_run=False, backup=True, output=None)
+        cmd_import(args)
+        assert os.path.exists(str(tlk_path) + '.bak')
+
+
+# =============================================================================
+# Import TypeError bug fix tests
+# =============================================================================
+
+class TestImportTypeErrorHandling:
+    """Tests for TypeError handling in weapon/armor import with bad count types."""
+
+    def test_roster_import_bad_weapon_count_warns(self, tmp_path, capsys):
+        """Non-integer weapon count in JSON warns instead of crashing."""
+        from u3edit.roster import cmd_import
+        rost = tmp_path / 'ROST'
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[0x0D] = 0x00
+        rost.write_bytes(bytes(data))
+        json_path = tmp_path / 'chars.json'
+        json_path.write_text(json.dumps([{
+            'slot': 0, 'name': 'HERO',
+            'weapons': {'Dagger': 'five'}  # bad type
+        }]))
+        args = argparse.Namespace(
+            file=str(rost), json_file=str(json_path),
+            dry_run=True, backup=False, output=None, all=False)
+        cmd_import(args)  # should not crash
+        err = capsys.readouterr().err
+        assert 'Warning' in err
+
+    def test_roster_import_bad_armor_count_warns(self, tmp_path, capsys):
+        """Non-integer armor count in JSON warns instead of crashing."""
+        from u3edit.roster import cmd_import
+        rost = tmp_path / 'ROST'
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[0x0D] = 0x00
+        rost.write_bytes(bytes(data))
+        json_path = tmp_path / 'chars.json'
+        json_path.write_text(json.dumps([{
+            'slot': 0, 'name': 'HERO',
+            'armors': {'Cloth': 'many'}  # bad type
+        }]))
+        args = argparse.Namespace(
+            file=str(rost), json_file=str(json_path),
+            dry_run=True, backup=False, output=None, all=False)
+        cmd_import(args)  # should not crash
+        err = capsys.readouterr().err
+        assert 'Warning' in err
+
+
+# =============================================================================
+# Map --crop error handling test
+# =============================================================================
+
+class TestMapCropError:
+    """Tests for map --crop input validation."""
+
+    def test_crop_invalid_values_exits(self, tmp_path):
+        """Non-integer crop values cause sys.exit."""
+        from u3edit.map import cmd_view
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=str(path), crop='0,0,foo,64',
+            json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+# =============================================================================
+# Save cmd_view and cmd_edit expanded coverage
+# =============================================================================
+
+class TestSaveCmdViewExpanded:
+    """Tests for save cmd_view with --json and --brief flags."""
+
+    def _make_save_dir(self, tmp_path):
+        """Create a directory with PRTY and PLRS files."""
+        prty = tmp_path / 'PRTY'
+        data = bytearray(PRTY_FILE_SIZE)
+        data[5] = 0xFF  # sentinel
+        data[1] = 2     # party_size
+        data[3] = 10    # saved_x
+        data[4] = 20    # saved_y
+        prty.write_bytes(bytes(data))
+        plrs = tmp_path / 'PLRS'
+        plrs_data = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            plrs_data[i] = ord(ch) | 0x80
+        plrs_data[0x0D] = 0x00
+        plrs.write_bytes(bytes(plrs_data))
+        return str(tmp_path)
+
+    def test_view_json(self, tmp_path):
+        """save view --json produces valid JSON with party and active chars."""
+        from u3edit.save import cmd_view
+        game_dir = self._make_save_dir(tmp_path)
+        outfile = tmp_path / 'save.json'
+        args = argparse.Namespace(
+            game_dir=game_dir, json=True, output=str(outfile),
+            validate=False, brief=False)
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'party' in result
+        assert 'active_characters' in result
+
+    def test_view_brief_skips_map(self, tmp_path, capsys):
+        """save view --brief skips the SOSA mini-map."""
+        from u3edit.save import cmd_view
+        game_dir = self._make_save_dir(tmp_path)
+        # Also create a SOSA file (overworld map)
+        from u3edit.constants import SOSA_FILE_SIZE
+        sosa = tmp_path / 'SOSA'
+        sosa.write_bytes(bytes(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            game_dir=game_dir, json=False, output=None,
+            validate=False, brief=True)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        # With --brief, no "Overworld" section should appear
+        assert 'Overworld' not in out
+
+    def test_view_validate_shows_warnings(self, tmp_path, capsys):
+        """save view --validate shows party state warnings."""
+        from u3edit.save import cmd_view
+        game_dir = self._make_save_dir(tmp_path)
+        # Set an invalid slot ID (>19)
+        prty = tmp_path / 'PRTY'
+        data = bytearray(prty.read_bytes())
+        data[1] = 2      # party_size = 2
+        data[6] = 0xFF    # slot 0 = 255 (invalid)
+        prty.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            game_dir=game_dir, json=False, output=None,
+            validate=True, brief=True)
+        cmd_view(args)
+        err = capsys.readouterr().err
+        assert 'WARNING' in err
+
+
+class TestSaveCmdEditExpanded:
+    """Tests for save cmd_edit with --location, --slot-ids, --sentinel."""
+
+    def _make_save_dir(self, tmp_path):
+        """Create PRTY file for editing."""
+        prty = tmp_path / 'PRTY'
+        data = bytearray(PRTY_FILE_SIZE)
+        data[5] = 0xFF  # sentinel
+        prty.write_bytes(bytes(data))
+        return str(tmp_path)
+
+    def test_edit_location(self, tmp_path, capsys):
+        """Edit party location_type."""
+        from u3edit.save import cmd_edit
+        game_dir = self._make_save_dir(tmp_path)
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location='sosaria', plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        cmd_edit(args)
+        prty = tmp_path / 'PRTY'
+        data = prty.read_bytes()
+        # Location is at offset 2 (PRTY_OFF_LOCATION)
+        assert data[2] == PRTY_LOCATION_CODES['sosaria']
+
+    def test_edit_slot_ids(self, tmp_path, capsys):
+        """Edit party slot_ids."""
+        from u3edit.save import cmd_edit
+        game_dir = self._make_save_dir(tmp_path)
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=None, y=None,
+            party_size=None, slot_ids=[0, 1, 2, 3], sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        cmd_edit(args)
+        prty = tmp_path / 'PRTY'
+        data = prty.read_bytes()
+        assert data[6] == 0  # slot 0
+        assert data[7] == 1  # slot 1
+        assert data[8] == 2  # slot 2
+        assert data[9] == 3  # slot 3
+
+    def test_edit_dry_run(self, tmp_path, capsys):
+        """Edit with dry_run shows changes but doesn't write."""
+        from u3edit.save import cmd_edit
+        game_dir = self._make_save_dir(tmp_path)
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=10, y=20,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=True, backup=False, output=None, validate=False)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+
+# =============================================================================
+# Combat cmd_view directory mode
+# =============================================================================
+
+class TestCombatCmdViewDir:
+    """Tests for combat cmd_view in directory scan mode."""
+
+    def test_view_directory(self, tmp_path, capsys):
+        """View all CON files in a directory."""
+        from u3edit.combat import cmd_view
+        con = tmp_path / 'CONA'
+        con.write_bytes(bytes(CON_FILE_SIZE))
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None,
+            validate=False)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'CONA' in out or 'arena' in out.lower()
+
+    def test_view_directory_json(self, tmp_path):
+        """View directory --json produces valid JSON."""
+        from u3edit.combat import cmd_view
+        con = tmp_path / 'CONA'
+        con.write_bytes(bytes(CON_FILE_SIZE))
+        outfile = tmp_path / 'combat.json'
+        args = argparse.Namespace(
+            path=str(tmp_path), json=True, output=str(outfile),
+            validate=False)
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'CONA' in result
+
+    def test_view_empty_dir_exits(self, tmp_path):
+        """Directory with no CON files causes sys.exit."""
+        from u3edit.combat import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None,
+            validate=False)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+# =============================================================================
+# Special cmd_view directory mode
+# =============================================================================
+
+class TestSpecialCmdViewDir:
+    """Tests for special cmd_view in directory scan mode."""
+
+    def test_view_directory(self, tmp_path, capsys):
+        """View all special location files in a directory."""
+        from u3edit.special import cmd_view
+        brnd = tmp_path / 'BRND'
+        brnd.write_bytes(bytes(SPECIAL_FILE_SIZE))
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'BRND' in out or 'Brand' in out
+
+    def test_view_directory_json(self, tmp_path):
+        """View directory --json produces valid JSON."""
+        from u3edit.special import cmd_view
+        brnd = tmp_path / 'BRND'
+        brnd.write_bytes(bytes(SPECIAL_FILE_SIZE))
+        outfile = tmp_path / 'special.json'
+        args = argparse.Namespace(
+            path=str(tmp_path), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'BRND' in result
+
+    def test_view_empty_dir_exits(self, tmp_path):
+        """Directory with no special files causes sys.exit."""
+        from u3edit.special import cmd_view
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+# =============================================================================
+# DDRW cmd_edit out-of-bounds and sound cmd_edit dry-run tests
+# =============================================================================
+
+class TestDdrwCmdEditBounds:
+    """Tests for ddrw cmd_edit boundary checking."""
+
+    def test_edit_past_end_exits(self, tmp_path):
+        """Patch extending past end of file causes sys.exit."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(path), offset=DDRW_FILE_SIZE - 1, data='AABB',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_edit_dry_run(self, tmp_path, capsys):
+        """DDRW edit dry run shows changes without writing."""
+        from u3edit.ddrw import cmd_edit
+        from u3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(path), offset=0, data='AB',
+            dry_run=True, backup=False, output=None)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        assert path.read_bytes()[0] == 0  # unchanged
+
+
+class TestSoundCmdEditExpanded:
+    """Tests for sound cmd_edit with dry-run and backup."""
+
+    def test_edit_dry_run(self, tmp_path, capsys):
+        """Sound edit dry run shows changes without writing."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(path), offset=0, data='FF',
+            dry_run=True, backup=False, output=None)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+        assert path.read_bytes()[0] == 0  # unchanged
+
+    def test_edit_with_backup(self, tmp_path):
+        """Sound edit --backup creates .bak file."""
+        from u3edit.sound import cmd_edit
+        from u3edit.constants import SOSA_FILE_SIZE
+        path = tmp_path / 'SOSA'
+        path.write_bytes(bytes(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(path), offset=0, data='FF',
+            dry_run=False, backup=True, output=None)
+        cmd_edit(args)
+        assert os.path.exists(str(path) + '.bak')
