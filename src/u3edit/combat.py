@@ -380,8 +380,12 @@ def cmd_import(args) -> None:
         raw_mons = [raw_mons[str(i)] for i in sorted(sorted_keys)]
     for i, m in enumerate(raw_mons[:CON_MONSTER_COUNT]):
         nx, ny = m.get('x', 0), m.get('y', 0)
-        nx = max(0, min(255, nx))
-        ny = max(0, min(255, ny))
+        if nx < 0 or nx >= CON_MAP_WIDTH or ny < 0 or ny >= CON_MAP_HEIGHT:
+            print(f"  Warning: monster {i} position ({nx},{ny}) outside "
+                  f"{CON_MAP_WIDTH}x{CON_MAP_HEIGHT} grid, clamping",
+                  file=sys.stderr)
+        nx = max(0, min(CON_MAP_WIDTH - 1, nx))
+        ny = max(0, min(CON_MAP_HEIGHT - 1, ny))
         if data[CON_MONSTER_X_OFFSET + i] != nx or data[CON_MONSTER_Y_OFFSET + i] != ny:
             pos_changes += 1
         data[CON_MONSTER_X_OFFSET + i] = nx
@@ -400,6 +404,12 @@ def cmd_import(args) -> None:
         raw_pcs = [raw_pcs[str(i)] for i in sorted(sorted_keys)]
     for i, p in enumerate(raw_pcs[:CON_PC_COUNT]):
         nx, ny = p.get('x', 0), p.get('y', 0)
+        if nx < 0 or nx >= CON_MAP_WIDTH or ny < 0 or ny >= CON_MAP_HEIGHT:
+            print(f"  Warning: PC {i} position ({nx},{ny}) outside "
+                  f"{CON_MAP_WIDTH}x{CON_MAP_HEIGHT} grid, clamping",
+                  file=sys.stderr)
+        nx = max(0, min(CON_MAP_WIDTH - 1, nx))
+        ny = max(0, min(CON_MAP_HEIGHT - 1, ny))
         if data[CON_PC_X_OFFSET + i] != nx or data[CON_PC_Y_OFFSET + i] != ny:
             pos_changes += 1
         data[CON_PC_X_OFFSET + i] = nx

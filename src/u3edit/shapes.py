@@ -956,6 +956,10 @@ def cmd_compile_tiles(args) -> None:
         print("No tiles found in source file.", file=sys.stderr)
         sys.exit(1)
 
+    if len(tiles) < GLYPHS_PER_FILE:
+        print(f"  Warning: only {len(tiles)} of {GLYPHS_PER_FILE} glyphs "
+              f"defined, remaining will be zero-filled", file=sys.stderr)
+
     fmt = getattr(args, 'format', 'binary')
 
     if fmt == 'json':

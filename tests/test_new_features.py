@@ -7961,3 +7961,243 @@ class TestCliParityCompilers:
         import inspect
         src = inspect.getsource(dispatch)
         assert "'validate-names'" in src
+
+
+# ============================================================================
+# Compile warnings and validation (Task #110)
+# ============================================================================
+
+class TestMapCompileWarnings:
+    """Test map compile dimension warnings."""
+
+    def test_overworld_short_rows_warns(self, tmp_path):
+        """Compiling overworld with <64 rows warns on stderr."""
+        from u3edit.map import cmd_compile
+        # Build a 10-row overworld source
+        src = tmp_path / 'short.map'
+        src.write_text('# Overworld\n' + ('.' * 64 + '\n') * 10)
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), dungeon=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile(args)
+        assert 'only 10 rows' in stderr.getvalue()
+        assert len(out.read_bytes()) == 4096
+
+    def test_dungeon_short_levels_warns(self, tmp_path):
+        """Compiling dungeon with <8 levels warns on stderr."""
+        from u3edit.map import cmd_compile
+        # Build 2-level dungeon source
+        lines = []
+        for lvl in range(2):
+            lines.append(f'# Level {lvl + 1}')
+            for _ in range(16):
+                lines.append('.' * 16)
+            lines.append('# ---')
+        src = tmp_path / 'short.map'
+        src.write_text('\n'.join(lines))
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), dungeon=True)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile(args)
+        assert 'only 2 dungeon levels' in stderr.getvalue()
+        assert len(out.read_bytes()) == 2048
+
+    def test_unknown_char_warns(self, tmp_path):
+        """Compiling map with unknown chars warns and maps to 0x00."""
+        from u3edit.map import cmd_compile
+        # 'Z' is not a valid tile char
+        src = tmp_path / 'bad.map'
+        src.write_text('# Overworld\n' + ('Z' * 64 + '\n') * 64)
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), dungeon=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile(args)
+        assert 'unknown tile chars' in stderr.getvalue()
+        assert 'Z' in stderr.getvalue()
+
+    def test_full_overworld_no_warning(self, tmp_path):
+        """64-row overworld compile produces no warnings."""
+        from u3edit.map import cmd_compile
+        src = tmp_path / 'full.map'
+        src.write_text('# Overworld\n' + ('.' * 64 + '\n') * 64)
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), dungeon=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile(args)
+        assert stderr.getvalue() == ''
+
+
+class TestShapesCompileWarnings:
+    """Test shapes compile partial glyph set warning."""
+
+    def test_partial_tileset_warns(self, tmp_path):
+        """Compiling fewer than 256 glyphs warns on stderr."""
+        from u3edit.shapes import cmd_compile_tiles
+        # Source with only 2 tiles
+        lines = []
+        for idx in range(2):
+            lines.append(f'# Tile 0x{idx:02X}')
+            for _ in range(8):
+                lines.append('#......')
+            lines.append('')
+        src = tmp_path / 'partial.tiles'
+        src.write_text('\n'.join(lines))
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), format='binary')
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile_tiles(args)
+        assert 'only 2 of 256 glyphs' in stderr.getvalue()
+
+    def test_full_tileset_no_warning(self, tmp_path):
+        """Compiling all 256 glyphs produces no warning."""
+        from u3edit.shapes import cmd_compile_tiles, GLYPHS_PER_FILE
+        lines = []
+        for idx in range(GLYPHS_PER_FILE):
+            lines.append(f'# Tile 0x{idx:02X}')
+            for _ in range(8):
+                lines.append('.......')
+            lines.append('')
+        src = tmp_path / 'full.tiles'
+        src.write_text('\n'.join(lines))
+        out = tmp_path / 'out.bin'
+        args = argparse.Namespace(
+            source=str(src), output=str(out), format='binary')
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_compile_tiles(args)
+        assert stderr.getvalue() == ''
+
+
+class TestMapDecompileUnknownTiles:
+    """Test map decompile unknown tile byte warnings."""
+
+    def test_unknown_overworld_tile_warns(self, tmp_path):
+        """Decompiling overworld with unmapped byte warns on stderr."""
+        from u3edit.map import cmd_decompile
+        # Create 4096 bytes: all 0xFF (unlikely to be mapped)
+        binfile = tmp_path / 'MAP'
+        binfile.write_bytes(bytes([0xFF]) * 4096)
+        out = tmp_path / 'out.map'
+        args = argparse.Namespace(file=str(binfile), output=str(out))
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_decompile(args)
+        # Should warn about unmapped 0xFF
+        warn = stderr.getvalue()
+        assert 'unmapped tile byte' in warn
+        assert '0xFF' in warn
+
+    def test_unknown_dungeon_tile_warns(self, tmp_path):
+        """Decompiling dungeon with unmapped byte warns on stderr."""
+        from u3edit.map import cmd_decompile
+        binfile = tmp_path / 'DNG'
+        binfile.write_bytes(bytes([0xFE]) * 2048)
+        out = tmp_path / 'out.map'
+        args = argparse.Namespace(file=str(binfile), output=str(out))
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_decompile(args)
+        warn = stderr.getvalue()
+        assert 'unmapped tile byte' in warn
+        assert '0xFE' in warn
+
+    def test_known_tiles_no_warning(self, tmp_path):
+        """Decompiling all-zero map produces no warning."""
+        from u3edit.map import cmd_decompile
+        binfile = tmp_path / 'MAP'
+        binfile.write_bytes(bytes(4096))
+        out = tmp_path / 'out.map'
+        args = argparse.Namespace(file=str(binfile), output=str(out))
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_decompile(args)
+        assert stderr.getvalue() == ''
+
+
+class TestCombatImportBoundsValidation:
+    """Test combat import position clamping to 11x11 grid."""
+
+    def test_monster_oob_clamped_and_warns(self, tmp_path):
+        """Monster positions >10 are clamped to 10 with a warning."""
+        from u3edit.combat import cmd_import
+        from u3edit.constants import (
+            CON_FILE_SIZE, CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET)
+        binfile = tmp_path / 'CON'
+        binfile.write_bytes(bytes(CON_FILE_SIZE))
+        jdata = {'monsters': [{'x': 50, 'y': 200}]}
+        jfile = tmp_path / 'con.json'
+        jfile.write_text(json.dumps(jdata))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_import(args)
+        assert 'outside' in stderr.getvalue()
+        result = out.read_bytes()
+        assert result[CON_MONSTER_X_OFFSET] == 10
+        assert result[CON_MONSTER_Y_OFFSET] == 10
+
+    def test_pc_oob_clamped_and_warns(self, tmp_path):
+        """PC positions >10 are clamped to 10 with a warning."""
+        from u3edit.combat import cmd_import
+        from u3edit.constants import (
+            CON_FILE_SIZE, CON_PC_X_OFFSET, CON_PC_Y_OFFSET)
+        binfile = tmp_path / 'CON'
+        binfile.write_bytes(bytes(CON_FILE_SIZE))
+        jdata = {'pcs': [{'x': 15, 'y': -1}]}
+        jfile = tmp_path / 'con.json'
+        jfile.write_text(json.dumps(jdata))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_import(args)
+        assert 'outside' in stderr.getvalue()
+        result = out.read_bytes()
+        assert result[CON_PC_X_OFFSET] == 10
+        assert result[CON_PC_Y_OFFSET] == 0
+
+    def test_valid_positions_no_warning(self, tmp_path):
+        """Positions within 0-10 produce no warning."""
+        from u3edit.combat import cmd_import
+        from u3edit.constants import CON_FILE_SIZE
+        binfile = tmp_path / 'CON'
+        binfile.write_bytes(bytes(CON_FILE_SIZE))
+        jdata = {'monsters': [{'x': 5, 'y': 5}],
+                 'pcs': [{'x': 0, 'y': 10}]}
+        jfile = tmp_path / 'con.json'
+        jfile.write_text(json.dumps(jdata))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(binfile), json_file=str(jfile),
+            output=str(out), backup=False, dry_run=False)
+        import io, contextlib
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            cmd_import(args)
+        assert 'outside' not in stderr.getvalue()

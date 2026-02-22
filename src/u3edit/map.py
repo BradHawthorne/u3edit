@@ -437,6 +437,7 @@ def cmd_compile(args) -> None:
     lines = text.split('\n')
     current_level = []
     level_grids = []
+    unknown_chars = set()
 
     for line in lines:
         stripped = line.rstrip()
@@ -449,6 +450,8 @@ def cmd_compile(args) -> None:
 
         row = []
         for ch in stripped:
+            if ch not in char_map:
+                unknown_chars.add(ch)
             row.append(char_map.get(ch, 0))
 
         width = 16 if is_dungeon else 64
@@ -459,12 +462,22 @@ def cmd_compile(args) -> None:
 
         current_level.append(row)
 
+    if unknown_chars:
+        print(f"  Warning: unknown tile chars mapped to 0x00: "
+              f"{sorted(unknown_chars)}", file=sys.stderr)
+
     if is_dungeon:
         if current_level:
             level_grids.append(current_level)
+        if len(level_grids) < 8:
+            print(f"  Warning: only {len(level_grids)} dungeon levels found "
+                  f"(expected 8), padding with empty levels", file=sys.stderr)
         while len(level_grids) < 8:
             level_grids.append([[0] * 16 for _ in range(16)])
-        for level in level_grids:
+        for lvl_idx, level in enumerate(level_grids):
+            if len(level) < 16:
+                print(f"  Warning: level {lvl_idx + 1} has {len(level)} rows "
+                      f"(expected 16), padding", file=sys.stderr)
             while len(level) < 16:
                 level.append([0] * 16)
 
@@ -475,6 +488,9 @@ def cmd_compile(args) -> None:
         expected_size = 2048
     else:
         grid = current_level
+        if len(grid) < 64:
+            print(f"  Warning: only {len(grid)} rows found "
+                  f"(expected 64), padding with empty rows", file=sys.stderr)
         while len(grid) < 64:
             grid.append([0] * 64)
         data = bytearray()
@@ -511,6 +527,7 @@ def cmd_decompile(args) -> None:
         forward = {tid: ch for tid, (ch, _) in DUNGEON_TILES.items()}
         width, height = 16, 16
         levels = len(data) // 256
+        unknown_bytes = set()
         lines = []
         for lvl in range(levels):
             lines.append(f"# Level {lvl + 1}")
@@ -519,21 +536,38 @@ def cmd_decompile(args) -> None:
                 row = ''
                 for x in range(width):
                     b = data[base + y * width + x]
-                    row += forward.get(b, '?')
+                    ch = forward.get(b)
+                    if ch is None:
+                        unknown_bytes.add(b)
+                        ch = '?'
+                    row += ch
                 lines.append(row)
             lines.append('')
+        if unknown_bytes:
+            hexlist = ', '.join(f'0x{b:02X}' for b in sorted(unknown_bytes))
+            print(f"  Warning: {len(unknown_bytes)} unmapped tile byte(s) "
+                  f"shown as '?': {hexlist}", file=sys.stderr)
         result = '\n'.join(lines)
     else:
         forward = {tid: ch for tid, (ch, _) in TILES.items()}
         width = 64
         height = len(data) // width
+        unknown_bytes = set()
         lines = [f"# Overworld ({width}x{height})"]
         for y in range(height):
             row = ''
             for x in range(width):
                 b = data[y * width + x]
-                row += forward.get(b, '?')
+                ch = forward.get(b)
+                if ch is None:
+                    unknown_bytes.add(b)
+                    ch = '?'
+                row += ch
             lines.append(row)
+        if unknown_bytes:
+            hexlist = ', '.join(f'0x{b:02X}' for b in sorted(unknown_bytes))
+            print(f"  Warning: {len(unknown_bytes)} unmapped tile byte(s) "
+                  f"shown as '?': {hexlist}", file=sys.stderr)
         result = '\n'.join(lines)
 
     output = getattr(args, 'output', None)
