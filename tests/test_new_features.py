@@ -2083,6 +2083,111 @@ class TestCliParity:
         assert '--dry-run' in out
         assert '--backup' in out
 
+    def test_disk_main_info_help(self):
+        out = _help_output('disk', 'info')
+        assert '--json' in out
+        assert 'image' in out.lower()
+
+    def test_disk_main_list_help(self):
+        out = _help_output('disk', 'list')
+        assert '--json' in out
+        assert '--path' in out
+
+    def test_disk_main_extract_help(self):
+        out = _help_output('disk', 'extract')
+        assert 'image' in out.lower()
+
+    def test_disk_main_audit_help(self):
+        out = _help_output('disk', 'audit')
+        assert '--json' in out
+        assert '--detail' in out
+
+    def test_diff_main_help(self):
+        """diff module standalone main() has correct args."""
+        result = subprocess.run(
+            [sys.executable, '-m', 'u3edit.diff', '--help'],
+            capture_output=True, text=True, timeout=10)
+        out = result.stdout + result.stderr
+        assert 'path1' in out
+        assert 'path2' in out
+        assert '--json' in out
+        assert '--summary' in out
+
+    def test_map_main_compile_help(self):
+        out = _help_output('map', 'compile')
+        assert '--dungeon' in out
+        assert 'source' in out
+
+    def test_map_main_decompile_help(self):
+        out = _help_output('map', 'decompile')
+        assert '--output' in out
+
+    def test_shapes_main_compile_help(self):
+        out = _help_output('shapes', 'compile')
+        assert '--format' in out
+        assert 'source' in out
+
+    def test_shapes_main_decompile_help(self):
+        out = _help_output('shapes', 'decompile')
+        assert '--output' in out
+
+    def test_patch_main_compile_names_help(self):
+        out = _help_output('patch', 'compile-names')
+        assert 'source' in out
+        assert '--output' in out
+
+    def test_patch_main_decompile_names_help(self):
+        out = _help_output('patch', 'decompile-names')
+        assert '--output' in out
+
+    def test_patch_main_validate_names_help(self):
+        out = _help_output('patch', 'validate-names')
+        assert 'source' in out
+
+    def test_patch_main_strings_edit_help(self):
+        out = _help_output('patch', 'strings-edit')
+        assert '--text' in out
+        assert '--index' in out
+        assert '--vanilla' in out
+        assert '--address' in out
+
+    def test_patch_main_strings_import_help(self):
+        out = _help_output('patch', 'strings-import')
+        assert '--backup' in out
+        assert '--dry-run' in out
+
+
+class TestDiskContextParseHash:
+    """Test DiskContext._parse_hash_suffix."""
+
+    def test_with_hash_suffix(self):
+        from u3edit.disk import DiskContext
+        name, ft, at = DiskContext._parse_hash_suffix('ROST#069500')
+        assert name == 'ROST'
+        assert ft == 0x06
+        assert at == 0x9500
+
+    def test_without_hash(self):
+        from u3edit.disk import DiskContext
+        name, ft, at = DiskContext._parse_hash_suffix('ROST')
+        assert name == 'ROST'
+        assert ft == 0x06
+        assert at == 0x0000
+
+    def test_short_suffix(self):
+        from u3edit.disk import DiskContext
+        name, ft, at = DiskContext._parse_hash_suffix('FOO#AB')
+        assert name == 'FOO'
+        assert ft == 0x06  # fallback
+        assert at == 0x0000
+
+    def test_all_zeros(self):
+        from u3edit.disk import DiskContext
+        name, ft, at = DiskContext._parse_hash_suffix('MAP#000000')
+        assert name == 'MAP'
+        assert ft == 0x00
+        assert at == 0x0000
+
 
 class TestTextImportDryRun:
     """Behavioral test: text import --dry-run should not write."""

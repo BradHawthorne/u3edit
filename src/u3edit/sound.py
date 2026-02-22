@@ -11,15 +11,9 @@ import json
 import os
 import sys
 
-from .constants import SOSA_FILE_SIZE, SOSM_FILE_SIZE
+from .constants import SOSA_FILE_SIZE, SOSM_FILE_SIZE, MBS_FILE_SIZE
 from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
-
-# ============================================================================
-# Constants
-# ============================================================================
-
-MBS_FILE_SIZE = 5456
 
 SOUND_FILES = {
     'SOSA': {'size': SOSA_FILE_SIZE, 'load_addr': 0x1000,

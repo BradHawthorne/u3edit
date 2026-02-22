@@ -18,7 +18,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from .constants import TILES
+from .constants import TILES, SHPS_FILE_SIZE
 from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
@@ -26,7 +26,6 @@ from .json_export import export_json
 # Constants
 # ============================================================================
 
-SHPS_FILE_SIZE = 2048
 GLYPH_SIZE = 8         # 8 bytes per glyph (8 rows x 1 byte)
 GLYPH_WIDTH = 7        # 7 visible pixels per row (bits 0-6)
 GLYPH_HEIGHT = 8
@@ -1045,7 +1044,7 @@ def register_parser(subparsers) -> None:
 
     p_info = sub.add_parser('info', help='Show file metadata')
     p_info.add_argument('file', help='Shape file')
-    p_info.add_argument('--json', action='store_true')
+    p_info.add_argument('--json', action='store_true', help='Output as JSON')
     p_info.add_argument('--output', '-o', help='Output file')
 
     p_estr = sub.add_parser('edit-string',

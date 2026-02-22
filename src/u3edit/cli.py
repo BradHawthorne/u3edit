@@ -12,6 +12,12 @@ Dispatches to all tool modules via a single entry point:
     u3edit text view <file>
     u3edit spell view
     u3edit equip view
+    u3edit shapes view <file>
+    u3edit sound view <file>
+    u3edit patch view <file>
+    u3edit ddrw view <file>
+    u3edit disk info <image>
+    u3edit diff <path1> <path2>
 """
 
 import argparse

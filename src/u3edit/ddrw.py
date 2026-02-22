@@ -9,6 +9,7 @@ import json
 import os
 import sys
 
+from .constants import DDRW_FILE_SIZE
 from .fileutil import resolve_single_file, backup_file, hex_int
 from .json_export import export_json
 
@@ -16,7 +17,6 @@ from .json_export import export_json
 # Constants
 # ============================================================================
 
-DDRW_FILE_SIZE = 1792
 DDRW_LOAD_ADDR = 0x1800
 
 # Structured regions within DDRW (offsets relative to file start)
