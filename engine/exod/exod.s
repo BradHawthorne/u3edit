@@ -1,3 +1,49 @@
+; ===========================================================================
+; EXOD.s — Ultima III: Exodus Boot Loader & Title Sequence
+; ===========================================================================
+;
+; 26,208 bytes at $2000. 87% data (HGR animation frames, tile graphics),
+; 13% code (title screen, intro animation, sound, Mockingboard init).
+; Reassembled byte-identical from CIDAR disassembly via asmiigs.
+;
+; Memory Layout:
+;   $2000-$2003  Entry — JMP to init code at $8220+
+;   $2003-$81FF  Data — HGR animation frames, tile graphics, coordinate
+;                tables, glyph data (~25 KB)
+;   $8220-$86FF  Code — Title sequence, animation engine, HGR ops, audio
+;
+; Code Functions ($8220+):
+;   $823D  intro_print_string     — Print high-ASCII string from $FE/$FF
+;   $825E  intro_sequence         — Main intro sequence orchestrator
+;   $82E6  intro_wipe_title       — Title screen wipe animation
+;   $832A  intro_wipe_serpent     — Serpent wipe with mask transition
+;   $836E  intro_load_castle      — Load castle scene graphic
+;   $8384  intro_text_crawl       — Vertical text scroll animation
+;   $83AD  intro_load_exodus      — Load Exodus graphic
+;   $83BF  intro_load_frame_3     — Load animation frame 3
+;   $83D1  intro_load_frame_4     — Load animation frame 4
+;   $83E3  intro_hgr_blit         — HGR block blit with transparency
+;   $844C  intro_plot_pair        — Plot character pair at position
+;   $8453  intro_plot_pixel       — Plot single HGR pixel
+;   $84A4  intro_memcpy           — Block memory copy (X pages)
+;   $84BF  intro_memswap          — Swap memory blocks (page flip)
+;   $84E6  intro_check_key        — Poll keyboard with timeout
+;   $850C  intro_sound_effect     — Speaker tone generation
+;   $8548  intro_prng_mod         — PRNG with modulo
+;   $856A  intro_reveal_anim      — Progressive column reveal animation
+;   $85B8  intro_draw_column      — Draw single glyph column
+;
+; Known Data Regions:
+;   $35E1  town_coordinate_table    — Town X/Y coordinate pairs (32 bytes)
+;   $35F9  dungeon_coordinate_table — Dungeon X/Y pairs (32 bytes)
+;   $384D  moongate_coordinate_table — Moongate X/Y pairs (16 bytes)
+;
+; Architecture:
+;   - HGR 140x192 with page 1/2 double-buffering ($C054/$C055)
+;   - Data-driven animation via EQU pointer tables
+;   - Self-modifying code for address patching (glyph/source pointers)
+;   - Speaker audio at $C030, keyboard at $C000/$C010
+;
 ; === Optimization Hints Report ===
 ; Total hints: 10
 ; Estimated savings: 54 cycles/bytes
@@ -1129,62 +1175,62 @@
 ; Forward references — labels at mid-instruction addresses
 ; ===========================================================================
 
-; NOTE: loc_002552 enters mid-instruction — alternate decode: ROL $3E01,X / ADC $7000,Y / AND ...
-loc_002552   EQU $2552
+; NOTE: anim_data_2552 enters mid-instruction — alternate decode: ROL $3E01,X / ADC $7000,Y / AND ...
+anim_data_2552   EQU $2552
 
-; NOTE: loc_00256B enters mid-instruction — alternate decode: ADC ($5C,X) / BRK #$5C / BRK #$00
-loc_00256B   EQU $256B
+; NOTE: anim_data_256B enters mid-instruction — alternate decode: ADC ($5C,X) / BRK #$5C / BRK #$00
+anim_data_256B   EQU $256B
 
-; NOTE: irq_0025E5 enters mid-instruction — alternate decode: BRK #$3C / BVS $25F0 / BRK #$40
-irq_0025E5   EQU $25E5
+; NOTE: anim_data_25E5 enters mid-instruction — alternate decode: BRK #$3C / BVS $25F0 / BRK #$40
+anim_data_25E5   EQU $25E5
 
-; NOTE: loc_002B42 enters mid-instruction — alternate decode: BMI $2BA7 / BVC $2B47 / BVC $2B49
-loc_002B42   EQU $2B42
+; NOTE: anim_data_2B42 enters mid-instruction — alternate decode: BMI $2BA7 / BVC $2B47 / BVC $2B49
+anim_data_2B42   EQU $2B42
 
-; NOTE: loc_002C20 enters mid-instruction — alternate decode: JMP $0619
-loc_002C20   EQU $2C20
+; NOTE: anim_data_2C20 enters mid-instruction — alternate decode: JMP $0619
+anim_data_2C20   EQU $2C20
 
-; NOTE: loc_0031EB enters mid-instruction — alternate decode: TSB $0C18 / CLC / ASL $00
-loc_0031EB   EQU $31EB
+; NOTE: anim_data_31EB enters mid-instruction — alternate decode: TSB $0C18 / CLC / ASL $00
+anim_data_31EB   EQU $31EB
 
-; NOTE: loc_0032BD enters mid-instruction — alternate decode: CLC / BMI $32CC / BRK #$40
-loc_0032BD   EQU $32BD
+; NOTE: anim_data_32BD enters mid-instruction — alternate decode: CLC / BMI $32CC / BRK #$40
+anim_data_32BD   EQU $32BD
 
-; NOTE: loc_0032BF enters mid-instruction — alternate decode: TSB $4000 / ADC $61,S / ORA $60,S
-loc_0032BF   EQU $32BF
+; NOTE: anim_data_32BF enters mid-instruction — alternate decode: TSB $4000 / ADC $61,S / ORA $60,S
+anim_data_32BF   EQU $32BF
 
-; NOTE: loc_0035EC enters mid-instruction — alternate decode: BMI $35F1 / CLI / ORA ($50,X)
-loc_0035EC   EQU $35EC
+; NOTE: anim_data_35EC enters mid-instruction — alternate decode: BMI $35F1 / CLI / ORA ($50,X)
+anim_data_35EC   EQU $35EC
 
-; NOTE: loc_00364C enters mid-instruction — alternate decode: ADC ($70,X) / BRK #$00 / BIT $0770,X
-loc_00364C   EQU $364C
+; NOTE: anim_data_364C enters mid-instruction — alternate decode: ADC ($70,X) / BRK #$00 / BIT $0770,X
+anim_data_364C   EQU $364C
 
 ; ... and 8 more mid-instruction entries
 
-data_002529  EQU $2529
-loc_00258B   EQU $258B
-loc_0028E3   EQU $28E3
-loc_002A09   EQU $2A09
-loc_002B47   EQU $2B47
-loc_002B49   EQU $2B49
-sub_002C23   EQU $2C23
-loc_002EAE   EQU $2EAE
-loc_002FAD   EQU $2FAD
-loc_003017   EQU $3017
-sub_003103   EQU $3103
-data_003171  EQU $3171
-shift_bits   EQU $3185
-loc_0035E0   EQU $35E0
-loc_0074ED   EQU $74ED
-data_007DC6  EQU $7DC6
-data_0036D7  EQU $36D7
-loc_0037A9   EQU $37A9
-shift_bits_2_L3 EQU $85F6
-shift_bits_2_L4 EQU $85F7
-shift_bits_2_L5 EQU $85FD
-shift_bits_2_L6 EQU $85FE
-shift_bits_2_L9 EQU $862C
-shift_bits_2_L10 EQU $862D
+anim_data_2529  EQU $2529
+anim_data_258B   EQU $258B
+anim_data_28E3   EQU $28E3
+anim_data_2A09   EQU $2A09
+anim_data_2B47   EQU $2B47
+anim_data_2B49   EQU $2B49
+anim_data_2C23   EQU $2C23
+anim_data_2EAE   EQU $2EAE
+anim_data_2FAD   EQU $2FAD
+anim_data_3017   EQU $3017
+anim_data_3103   EQU $3103
+anim_data_3171  EQU $3171
+anim_data_3185   EQU $3185
+anim_data_35E0   EQU $35E0
+anim_data_74ED   EQU $74ED
+anim_data_7DC6  EQU $7DC6
+anim_data_36D7  EQU $36D7
+anim_data_37A9   EQU $37A9
+intro_draw_src_lo EQU $85F6
+intro_draw_src_hi EQU $85F7
+intro_draw_src2_lo EQU $85FD
+intro_draw_src2_hi EQU $85FE
+intro_draw_glyph_lo EQU $862C
+intro_draw_glyph_hi EQU $862D
 
 ; (34 forward-reference equates, 18 with alternate decode notes)
 
@@ -1194,7 +1240,7 @@ shift_bits_2_L10 EQU $862D
 ; FUNC $002000: register -> A:X [IJ]
 ; Proto: uint32_t func_002000(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [20 dead stores]
-            jmp  loc_008220     
+            jmp  intro_entry     
 
 ; --- Data region (1104 bytes, text data) ---
             DB      $30,$33,$30,$32,$37,$42,$30,$35,$37,$38,$34,$35,$30,$31,$34,$30
@@ -1270,7 +1316,7 @@ shift_bits_2_L10 EQU $862D
             DB      $01,$00,$70,$7C,$73,$30,$38,$34,$38,$18,$60
 ; --- End data region (1104 bytes) ---
 
-loc_002453  ora  !$007E          ; [SP-32]
+anim_data_2453  ora  !$007E          ; [SP-32]
             brk  #$20            ; [SP-35]
 
 ; --- Data region (169 bytes) ---
@@ -1289,33 +1335,33 @@ loc_002453  ora  !$007E          ; [SP-32]
             DB      $3F,$00,$60
 ; --- End data region (169 bytes) ---
 
-loc_002501  adc  ($64,X)         ; [SP-104]
+anim_data_2501  adc  ($64,X)         ; [SP-104]
             ora  ($70,X)         ; [SP-104]
             jmp  ($0070)         ; [SP-104]
             DB      $60
-data_002509
+anim_data_2509
             DB      $1F
 ; LUMA: epilogue_rts
             rts                  ; [SP-102]
             DB      $0F
 ; LUMA: int_brk
             brk  #$60            ; [SP-102]
-loc_00250E  adc  ($64,X)         ; [SP-100]
+anim_data_250E  adc  ($64,X)         ; [SP-100]
             ora  ($70,X)         ; [SP-100]
             sec                  ; [SP-100]
-            bvs  loc_002515      ; [SP-100]
-; XREF: 1 ref (1 branch) from loc_00250E
-loc_002515  brk  #$1E            ; [SP-103]
+            bvs  anim_data_2515      ; [SP-100]
+; XREF: 1 ref (1 branch) from anim_data_250E
+anim_data_2515  brk  #$1E            ; [SP-103]
             DB      $78,$03,$00,$60
-loc_00251B  adc  $6167,Y         ; [SP-101]
-            bvs  loc_002588      ; [SP-101]
-            bvs  loc_002552      ; [SP-101]
+anim_data_251B  adc  $6167,Y         ; [SP-101]
+            bvs  anim_data_2588      ; [SP-101]
+            bvs  anim_data_2552      ; [SP-101]
 ; Interrupt return (RTI)
             rti                  ; [SP-98]
 
 ; ---
             DB      $1B,$7C,$01,$00,$40,$60
-data_002529
+anim_data_2529
             DB      $44
 ; ---
 
@@ -1327,7 +1373,7 @@ data_002529
             DB      $38,$3F,$00,$00,$74,$6B
 ; ---
 
-loc_002543  bvs  data_0025B0     ; [SP-90]
+anim_data_2543  bvs  anim_data_25B0     ; [SP-90]
             rol  $3E03,X         ; [SP-90]
             DB      $37
 ; LUMA: int_brk
@@ -1337,7 +1383,7 @@ loc_002543  bvs  data_0025B0     ; [SP-90]
             DB      $1F,$00,$00,$62,$71,$60
 ; ---
 
-loc_002551  adc  ($3E),Y         ; [SP-95]
+anim_data_2551  adc  ($3E),Y         ; [SP-95]
             ora  ($3E,X)         ; [SP-95]
             adc  $7000,Y         ; [SP-95]
             DB      $3F
@@ -1347,23 +1393,23 @@ loc_002551  adc  ($3E),Y         ; [SP-95]
             DB      $60
 
 ; ---------------------------------------------------------------------------
-; irq_00255D
+; anim_data_255D
 ; ---------------------------------------------------------------------------
 ; Interrupt return (RTI)
-irq_00255D  rti                  ; [SP-90]
+anim_data_255D  rti                  ; [SP-90]
 
 ; ---
             DB      $60,$3E,$01,$3E,$31,$00,$70,$7F,$00,$00,$68,$61,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_002543
-loc_00256B  adc  ($5C,X)         ; [SP-90]
+; XREF: 1 ref (1 branch) from anim_data_2543
+anim_data_256B  adc  ($5C,X)         ; [SP-90]
 ; LUMA: int_brk
             brk  #$5C            ; [SP-93]
 
 ; ---
             DB      $00,$00,$70,$7F,$61,$00,$60,$61,$60,$61,$68,$00,$68,$00,$00,$60
-data_00257F
+anim_data_257F
             DB      $7F
             DB      $43
 ; ---
@@ -1374,8 +1420,8 @@ data_00257F
             DB      $03,$30,$63,$50,$01
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_00251B
-loc_002588  bvc  loc_00258B      ; [SP-98]
+; XREF: 1 ref (1 branch) from anim_data_251B
+anim_data_2588  bvc  anim_data_258B      ; [SP-98]
 ; LUMA: int_brk
             brk  #$30            ; [SP-98]
 ; LUMA: int_enable
@@ -1386,7 +1432,7 @@ loc_002588  bvc  loc_00258B      ; [SP-98]
 ; --- Data region (33 bytes) ---
             DB      $06,$18,$66,$0C,$03,$0C,$03,$00,$30,$30,$7E,$00,$18,$0C,$0C,$66
             DB      $0C,$03,$06,$03,$00,$38,$38,$3C,$00,$1C,$1C,$0E,$6E,$0E,$07,$07
-data_0025B0
+anim_data_25B0
             DB      $07
 ; --- End data region (33 bytes) ---
 
@@ -1400,7 +1446,7 @@ data_0025B0
             DB      $3F,$40,$1F,$00,$40,$43,$49,$03,$60
 ; --- End data region (47 bytes) ---
 
-loc_0025E2  adc  ($60),Y         ; [SP-126]
+anim_data_25E2  adc  ($60),Y         ; [SP-126]
             ora  ($00,X)         ; [SP-126]
 
 ; --- Data region (54 bytes) ---
@@ -1409,7 +1455,7 @@ loc_0025E2  adc  ($60),Y         ; [SP-126]
             DB      $00,$41,$09,$41,$01,$08,$00,$60,$00,$30,$7C,$01,$00,$70,$4F,$71
             DB      $4F,$7D,$06,$7C,$66,$00,$70,$7E,$00,$00,$68,$57,$61,$57,$7D,$06
             DB      $7C,$6E,$00,$60
-data_00261B
+anim_data_261B
             DB      $3F
 ; --- End data region (54 bytes) ---
 
@@ -1419,7 +1465,7 @@ data_00261B
 ; ---
             DB      $44
             DB      $63,$41,$63,$7D,$02,$7C,$72,$01,$60
-data_002628
+anim_data_2628
             DB      $7F
 ; ---
 
@@ -1429,7 +1475,7 @@ data_002628
 
 ; ---
             DB      $41,$01,$41,$7D,$02,$7C,$62,$00,$60
-data_002635
+anim_data_2635
             DB      $7F
 ; ---
 
@@ -1438,7 +1484,7 @@ data_002635
 
 ; ---
             DB      $41,$43,$39,$01,$38,$01,$00,$60
-data_002642
+anim_data_2642
             DB      $7F
             DB      $43
 ; ---
@@ -1449,24 +1495,24 @@ data_002642
             DB      $43,$41,$43,$51,$01,$50,$01,$00,$40,$7F,$07,$03,$60
 ; ---
 
-loc_002653  asl  $60             ; [SP-141]
+anim_data_2653  asl  $60             ; [SP-141]
             lsr  $21             ; [SP-141]
             DB      $03
             jsr  !$0003          ; [SP-141]
             DB      $60
-loc_00265C  bmi  loc_00266D      ; [SP-139]
+anim_data_265C  bmi  anim_data_266D      ; [SP-139]
             DB      $03
-            bmi  loc_00266D      ; [SP-139]
+            bmi  anim_data_266D      ; [SP-139]
 
 ; ---
             DB      $30,$4C,$19,$06,$18,$06,$00,$60
 ; ---
 
 ; LUMA: epilogue_rts
-loc_002669  rts                  ; [SP-135]
+anim_data_2669  rts                  ; [SP-135]
             DB      $7C,$01,$30
-; XREF: 1 ref (1 branch) from loc_00265C
-loc_00266D  clc                  ; [SP-135]
+; XREF: 1 ref (1 branch) from anim_data_265C
+anim_data_266D  clc                  ; [SP-135]
             clc                  ; [SP-135]
             jmp  $0619           ; [SP-135]
 
@@ -1476,7 +1522,7 @@ loc_00266D  clc                  ; [SP-135]
             DS      7
             DB      $06,$00,$00,$34,$00,$7C,$01,$00,$07,$13,$07,$40,$33,$43,$03,$00
             DB      $7F,$00,$3F,$00,$00,$07,$13,$07,$40,$63,$41,$03,$00,$78,$60
-data_0026B8
+anim_data_26B8
             DB      $0F
 ; --- End data region (71 bytes) ---
 
@@ -1491,16 +1537,16 @@ data_0026B8
 
 
 ; ---------------------------------------------------------------------------
-; irq_0026D1
+; anim_data_26D1
 ; ---------------------------------------------------------------------------
 ; LUMA: int_disable
-irq_0026D1  sei                  ; [SP-178]
+anim_data_26D1  sei                  ; [SP-178]
             DB      $03
 ; LUMA: int_brk
             brk  #$60            ; [SP-178]
 
 ; ---
-data_0026D5
+anim_data_26D5
             DB      $1F
             DB      $63
             DB      $1F
@@ -1508,8 +1554,8 @@ data_0026D5
             DB      $0D,$78,$4D,$01,$60
 ; ---
 
-loc_0026DE  adc  !$0001,X        ; [SP-176]
-            bvc  data_002712     ; [SP-176]
+anim_data_26DE  adc  !$0001,X        ; [SP-176]
+            bvc  anim_data_2712     ; [SP-176]
 
 ; --- Data region (50 bytes) ---
             DB      $43
@@ -1517,7 +1563,7 @@ loc_0026DE  adc  !$0001,X        ; [SP-176]
             DB      $7B,$0D,$78,$5D,$01,$40,$7F,$00,$00,$08,$47,$03,$47,$7B,$05,$78
             DB      $65,$03,$40,$7F,$01,$00,$10,$02,$03,$02,$7B,$05,$78,$45,$01,$40
             DB      $7F,$03,$00,$20,$07,$03,$07,$73,$02,$70,$02,$00,$40
-data_002712
+anim_data_2712
             DB      $7F
             DB      $07
             DB      $03
@@ -1531,7 +1577,7 @@ data_002712
             DB      $06,$40,$06,$00,$40,$61,$1E,$06,$60
 ; ---
 
-loc_002730  clc                  ; [SP-173]
+anim_data_2730  clc                  ; [SP-173]
 ; LUMA: epilogue_rts
             rts                  ; [SP-171]
 
@@ -1540,9 +1586,9 @@ loc_002730  clc                  ; [SP-173]
             DB      $18,$0C,$00,$60
 ; ---
 
-loc_002746  adc  ($71,X)         ; [SP-174]
+anim_data_2746  adc  ($71,X)         ; [SP-174]
             ora  ($70,X)         ; [SP-174]
-            bvs  data_002784     ; [SP-174]
+            bvs  anim_data_2784     ; [SP-174]
             sec                  ; [SP-174]
 
 ; --- Data region (56 bytes) ---
@@ -1550,7 +1596,7 @@ loc_002746  adc  ($71,X)         ; [SP-174]
             DB      $00,$00,$30,$00,$00,$00,$00,$00,$00,$00,$00,$00,$0C,$00,$00,$68
             DB      $00,$78,$03,$00,$0E,$26,$0E,$00,$67,$06,$07,$00,$7E,$01,$7E,$00
             DB      $00,$0E,$26,$0E,$00,$47,$03
-data_002784
+anim_data_2784
             DB      $07
 ; --- End data region (56 bytes) ---
 
@@ -1566,7 +1612,7 @@ data_002784
             DB      $00,$40,$0E,$06,$0E,$66,$05,$60
 ; --- End data region (88 bytes) ---
 
-loc_0027DF  ora  $00             ; [SP-233]
+anim_data_27DF  ora  $00             ; [SP-233]
             brk  #$7F            ; [SP-236]
 
 ; --- Data region (35 bytes) ---
@@ -1575,7 +1621,7 @@ loc_0027DF  ora  $00             ; [SP-233]
             DB      $66,$18,$60
 ; --- End data region (35 bytes) ---
 
-loc_002806  clc                  ; [SP-240]
+anim_data_2806  clc                  ; [SP-240]
             brk  #$00            ; [SP-243]
 
 ; --- Data region (115 bytes) ---
@@ -1585,13 +1631,13 @@ loc_002806  clc                  ; [SP-240]
             DB      $30,$00,$00,$60,$00,$00,$00,$00,$00,$00,$00,$00,$00,$18,$00,$00
             DB      $50,$01,$70,$07,$00,$1C,$4C,$1C,$00,$4E,$0D,$0E,$00,$7C,$03,$7C
             DB      $01,$00,$1C,$4C,$1C,$00,$0E,$07,$0E,$00,$60
-data_002857
+anim_data_2857
             DB      $03
             DB      $3F
             DB      $00,$00,$1C,$7F,$1C,$0C,$0E,$0D,$0E,$06,$38,$43,$1F,$00,$00,$08
             DB      $4C,$08,$0C,$40,$00,$00,$06,$00,$63,$0F,$00,$00,$7F,$0C,$7F,$6C
             DB      $37,$60
-data_00287B
+anim_data_287B
             DB      $37
 ; --- End data region (115 bytes) ---
 
@@ -1600,11 +1646,11 @@ data_00287B
 ; --- Data region (37 bytes) ---
             DB      $77,$07,$00,$40,$3E,$0D,$3E,$6D,$37,$60,$77,$06,$00,$7E,$03,$00
             DB      $20,$1C,$0E,$1C,$6E,$17,$60
-data_002895
+anim_data_2895
             DB      $17
             DB      $0F
             DB      $00,$7E,$07,$00,$40,$08,$0C,$08,$6C,$17,$60
-data_0028A2
+anim_data_28A2
             DB      $17
 ; --- End data region (37 bytes) ---
 
@@ -1617,16 +1663,16 @@ data_0028A2
             DB      $40,$31,$00,$00,$06,$66,$0F,$00,$43,$41,$61,$4C,$31,$60
 ; --- End data region (62 bytes) ---
 
-loc_0028E3  bmi  loc_0028E5      ; [SP-338]
-; XREF: 1 ref (1 branch) from loc_0028E3
-loc_0028E5  brk  #$07            ; [SP-341]
+anim_data_28E3  bmi  anim_data_28E5      ; [SP-338]
+; XREF: 1 ref (1 branch) from anim_data_28E3
+anim_data_28E5  brk  #$07            ; [SP-341]
 
 ; --- Data region (41 bytes) ---
             DB      $47,$07,$40,$43,$63,$61,$6D,$71,$70,$70,$00,$00,$05,$05,$00,$80
             DS      5
             DB      $60,$00,$00,$40,$01,$00,$00,$00,$00,$00,$00,$00,$00,$30,$00,$00
             DB      $20,$03,$60
-data_00290F
+anim_data_290F
             DB      $0F
 ; --- End data region (41 bytes) ---
 
@@ -1651,13 +1697,13 @@ data_00290F
             DB      $18,$00,$00,$40,$06,$00,$3F,$00,$60
 ; --- End data region (220 bytes) ---
 
-loc_0029EF  adc  !$0071,X        ; [SP-428]
+anim_data_29EF  adc  !$0071,X        ; [SP-428]
             sec                  ; [SP-428]
             clc                  ; [SP-428]
             sec                  ; [SP-428]
             brk  #$70            ; [SP-431]
             DB      $0F,$60
-data_0029F9
+anim_data_29F9
             DB      $0F
             brk  #$60            ; [SP-431]
             and  ($70),Y         ; [SP-429]
@@ -1666,12 +1712,12 @@ data_0029F9
             DB      $00,$38,$18,$38,$00,$00,$0F,$78,$03,$00,$60
 ; ---
 
-loc_002A09  and  ($70),Y         ; [SP-433]
-            bmi  loc_002A45      ; [SP-433]
+anim_data_2A09  and  ($70),Y         ; [SP-433]
+            bmi  anim_data_2A45      ; [SP-433]
             DB      $3C
             sec                  ; [SP-433]
             brk  #$60            ; [SP-433]
-loc_002A11  ora  $017C           ; [SP-431]
+anim_data_2A11  ora  $017C           ; [SP-431]
             brk  #$40            ; [SP-434]
 
 ; --- Data region (47 bytes) ---
@@ -1680,8 +1726,8 @@ loc_002A11  ora  $017C           ; [SP-431]
             DB      $37,$00,$70,$1F,$00,$00,$62,$31,$71,$38,$5F,$00,$5F,$1C,$00
 ; --- End data region (47 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_002A09
-loc_002A45  bvs  loc_002A86      ; [SP-447]
+; XREF: 1 ref (1 branch) from anim_data_2A09
+anim_data_2A45  bvs  anim_data_2A86      ; [SP-447]
             brk  #$00            ; [SP-447]
 
 ; ---
@@ -1691,7 +1737,7 @@ loc_002A45  bvs  loc_002A86      ; [SP-447]
             DB      $00 ; null terminator
             DB      $5F,$34,$00,$70,$7F,$60,$00,$68,$01,$74,$30,$2E,$00,$2E,$00,$00
             DB      $70
-data_002A60
+anim_data_2A60
             DB      $7F
 ; ---
 
@@ -1700,7 +1746,7 @@ data_002A60
 
 ; ---
             DB      $01,$70,$30,$34,$00,$34,$00,$00,$60
-data_002A6D
+anim_data_2A6D
             DB      $7F
             DB      $43
 ; ---
@@ -1712,7 +1758,7 @@ data_002A6D
             DB      $46,$01,$46,$01,$00
 ; ---
 
-loc_002A86  clc                  ; [SP-465]
+anim_data_2A86  clc                  ; [SP-465]
             clc                  ; [SP-465]
             rol  $0C00,X         ; [SP-465]
             asl  $0C             ; [SP-465]
@@ -1724,7 +1770,7 @@ loc_002A86  clc                  ; [SP-465]
             DB      $14,$14,$00,$00,$00,$60,$00,$00,$00,$30,$00,$00,$00,$06,$00,$00
             DB      $00,$00,$60,$00,$00,$00,$30,$00,$00,$00,$0D,$00,$7E,$00,$40,$7B
             DB      $63,$01,$70,$30,$70,$00,$60
-data_002AC7
+anim_data_2AC7
             DB      $1F
 ; --- End data region (56 bytes) ---
 
@@ -1733,19 +1779,19 @@ data_002AC7
             DB      $1F
             brk  #$40            ; [SP-504]
             DB      $63,$60
-loc_002ACE  ora  ($70,X)         ; [SP-501]
-            bmi  loc_002B42      ; [SP-501]
+anim_data_2ACE  ora  ($70,X)         ; [SP-501]
+            bmi  anim_data_2B42      ; [SP-501]
             brk  #$00            ; [SP-504]
 
 ; --- Data region (54 bytes) ---
             DB      $1E,$70,$07,$00,$40,$63,$60,$61,$70,$78,$70,$00,$40,$1B,$78,$03
             DB      $00,$00,$71,$40,$60,$00,$34,$00,$00,$03,$30,$7C,$01,$00,$70,$6F
             DB      $78,$67,$3E,$03,$3E,$43,$01,$70,$7E,$00,$00,$68
-data_002B00
+anim_data_2B00
             DB      $67
             DB      $74
             DB      $6B,$3E,$03,$3E,$6F,$00,$60
-data_002B09
+anim_data_2B09
             DB      $3F
 ; --- End data region (54 bytes) ---
 
@@ -1754,7 +1800,7 @@ data_002B09
 ; ---
             DB      $44
             DB      $63,$62,$71,$3E,$01,$3E,$39,$00,$60
-data_002B16
+anim_data_2B16
             DB      $7F
 ; ---
 
@@ -1762,17 +1808,17 @@ data_002B16
             php                  ; [SP-510]
 
 ; ---------------------------------------------------------------------------
-; sub_002B1A
+; anim_data_2B1A
 ; ---------------------------------------------------------------------------
-sub_002B1A  adc  ($44,X)         ; [SP-510]
+anim_data_2B1A  adc  ($44,X)         ; [SP-510]
             rts                  ; [SP-508]
-loc_002B1D  rol  $3E01,X         ; [SP-508]
+anim_data_2B1D  rol  $3E01,X         ; [SP-508]
             adc  #$00            ; A=A ; [SP-508]
             rts                  ; A=A ; [SP-506]
 
 ; ---
             DB      $7F,$41,$01,$50,$03,$68,$61,$5C,$00,$5C,$00,$00,$60
-data_002B30
+anim_data_2B30
             DB      $7F
             DB      $03
             DB      $03
@@ -1781,17 +1827,17 @@ data_002B30
 ; Interrupt return (RTI)
             rti                  ; A=A ; [SP-510]
             DB      $03,$60
-loc_002B36  adc  ($68,X)         ; A=A ; [SP-510]
+anim_data_2B36  adc  ($68,X)         ; A=A ; [SP-510]
             brk  #$68            ; A=A ; [SP-513]
 
 ; ---
             DB      $00,$00,$40,$7F,$07,$03,$60
 ; ---
 
-loc_002B41  asl  $30             ; A=A ; [SP-513]
+anim_data_2B41  asl  $30             ; A=A ; [SP-513]
             DB      $63
-            bvc  loc_002B47      ; [SP-513]
-            bvc  loc_002B49      ; [SP-513]
+            bvc  anim_data_2B47      ; [SP-513]
+            bvc  anim_data_2B49      ; [SP-513]
             brk  #$60            ; [SP-513]
 
 ; --- Data region (73 bytes) ---
@@ -1803,25 +1849,25 @@ loc_002B41  asl  $30             ; A=A ; [SP-513]
             DB      $01,$00,$77,$47,$03,$60
 ; --- End data region (73 bytes) ---
 
-loc_002B93  adc  ($60,X)         ; A=A ; [SP-542]
+anim_data_2B93  adc  ($60,X)         ; A=A ; [SP-542]
             ora  ($40,X)         ; A=A ; [SP-542]
             DB      $3F
             brk  #$3F            ; A=A ; [SP-542]
             brk  #$00            ; A=A ; [SP-542]
             DB      $47,$41,$03,$60
-loc_002BA0  adc  ($60,X)         ; A=A ; [SP-543]
+anim_data_2BA0  adc  ($60,X)         ; A=A ; [SP-543]
             ora  ($00,X)         ; A=A ; [SP-543]
             DB      $3C
             rts                  ; A=A ; [SP-543]
             DB      $0F
-loc_002BA7  brk  #$00            ; [SP-546]
+anim_data_2BA7  brk  #$00            ; [SP-546]
 
 ; ---
             DB      $47,$41,$43,$61,$71,$61,$01,$00,$37,$70,$07,$00,$00,$62,$01,$41
             DB      $01,$68,$00,$00,$06,$60
 ; ---
 
-loc_002BBF  sei                  ; A=A ; [SP-552]
+anim_data_2BBF  sei                  ; A=A ; [SP-552]
             DB      $03
             brk  #$60            ; A=A ; [SP-552]
 
@@ -1829,8 +1875,8 @@ loc_002BBF  sei                  ; A=A ; [SP-552]
             DB      $5F,$71,$4F,$7D,$06,$7C,$06,$03,$60
 ; ---
 
-loc_002BCC  adc  !$0001,X        ; A=A ; [SP-548]
-            bvc  loc_002C20      ; A=A ; [SP-548]
+anim_data_2BCC  adc  !$0001,X        ; A=A ; [SP-548]
+            bvc  anim_data_2C20      ; A=A ; [SP-548]
             adc  #$57            ; A=A+$57 ; [SP-548]
             adc  $7C06,X         ; A=A+$57 ; [SP-548]
             lsr  $4001,X         ; A=A+$57 ; [SP-548]
@@ -1845,7 +1891,7 @@ loc_002BCC  adc  !$0001,X        ; A=A ; [SP-548]
             DB      $7F,$0F,$06,$40,$0D,$60
 ; --- End data region (54 bytes) ---
 
-loc_002C13  lsr  $21             ; A=A+$57 ; [SP-546]
+anim_data_2C13  lsr  $21             ; A=A+$57 ; [SP-546]
             DB      $03
             jsr  !$0003          ; A=A+$57 ; [SP-546]
 
@@ -1853,12 +1899,12 @@ loc_002C13  lsr  $21             ; A=A+$57 ; [SP-546]
             DB      $40,$61,$7E,$03,$60
 ; ---
 
-loc_002C1E  clc                  ; A=A+$57 ; [SP-543]
-            bmi  data_002C6D     ; A=A+$57 ; [SP-543]
+anim_data_2C1E  clc                  ; A=A+$57 ; [SP-543]
+            bmi  anim_data_2C6D     ; A=A+$57 ; [SP-543]
             ora  $1806,Y         ; A=A+$57 ; [SP-543]
             asl  $00             ; A=A+$57 ; [SP-543]
             rts                  ; A=A+$57 ; [SP-541]
-loc_002C27  rts                  ; A=A+$57 ; [SP-539]
+anim_data_2C27  rts                  ; A=A+$57 ; [SP-539]
 
 ; --- Data region (92 bytes) ---
             DB      $78,$01,$30,$18,$30,$4C,$19,$06,$18,$06,$00,$70,$70,$00,$00,$38
@@ -1866,12 +1912,12 @@ loc_002C27  rts                  ; A=A+$57 ; [SP-539]
             DB      $00,$40,$01,$00,$00,$18,$00,$00,$00,$00,$00,$03,$00,$00,$40,$01
             DB      $00,$00,$34,$00,$78,$03,$00,$6E,$0F,$07,$40,$43,$41,$03,$00,$7F
             DB      $00,$7E,$00,$00,$0E
-data_002C6D
+anim_data_2C6D
             DB      $03
             DB      $07
             DB      $40,$43,$41,$03,$00,$78,$40,$1F,$00,$00,$0E,$03,$07,$43,$63,$43
             DB      $03,$00,$6E,$60
-data_002C83
+anim_data_2C83
             DB      $0F
 ; --- End data region (92 bytes) ---
 
@@ -1888,7 +1934,7 @@ data_002C83
             DB      $06,$00,$00,$43,$7D,$07,$40,$31,$60
 ; --- End data region (106 bytes) ---
 
-loc_002CF0  clc                  ; A=A+$57 ; [SP-573]
+anim_data_2CF0  clc                  ; A=A+$57 ; [SP-573]
 
 ; ---
             DB      $33
@@ -1896,7 +1942,7 @@ loc_002CF0  clc                  ; A=A+$57 ; [SP-573]
             DB      $30,$0C,$00,$40,$41,$71,$03,$60,$30,$60
 ; ---
 
-loc_002CFD  clc                  ; A=A+$57 ; [SP-576]
+anim_data_2CFD  clc                  ; A=A+$57 ; [SP-576]
 
 ; ---
             DB      $33
@@ -1904,7 +1950,7 @@ loc_002CFD  clc                  ; A=A+$57 ; [SP-576]
             DB      $30,$0C,$00,$60
 ; ---
 
-loc_002D04  adc  ($01,X)         ; A=A+$57 ; [SP-579]
+anim_data_2D04  adc  ($01,X)         ; A=A+$57 ; [SP-579]
             brk  #$70            ; A=A+$57 ; [SP-582]
 
 ; --- Data region (149 bytes) ---
@@ -1920,7 +1966,7 @@ loc_002D04  adc  ($01,X)         ; A=A+$57 ; [SP-579]
             DB      $40,$0E,$66,$05,$60
 ; --- End data region (149 bytes) ---
 
-loc_002D9D  ora  $00             ; A=A+$57 ; [SP-629]
+anim_data_2D9D  ora  $00             ; A=A+$57 ; [SP-629]
             brk  #$7E            ; A=A+$57 ; [SP-632]
 
 ; --- Data region (35 bytes) ---
@@ -1929,14 +1975,14 @@ loc_002D9D  ora  $00             ; A=A+$57 ; [SP-629]
             DB      $66,$18,$60
 ; --- End data region (35 bytes) ---
 
-loc_002DC4  clc                  ; A=A+$57 ; [SP-642]
+anim_data_2DC4  clc                  ; A=A+$57 ; [SP-642]
             brk  #$00            ; A=A+$57 ; [SP-645]
 
 ; ---
             DB      $03,$63,$07,$40,$61,$40,$31,$66,$18,$60
 ; ---
 
-loc_002DD1  clc                  ; A=A+$57 ; [SP-643]
+anim_data_2DD1  clc                  ; A=A+$57 ; [SP-643]
             brk  #$40            ; A=A+$57 ; [SP-646]
 
 ; --- Data region (42 bytes) ---
@@ -1944,7 +1990,7 @@ loc_002DD1  clc                  ; A=A+$57 ; [SP-643]
             DB      $00,$00,$0C,$00,$00,$00,$06,$00,$00,$60,$00,$00,$00,$00,$00,$0C
             DS      3
             DB      $06,$00,$00,$50,$01,$60
-data_002DFD
+anim_data_2DFD
             DB      $0F
 ; --- End data region (42 bytes) ---
 
@@ -1954,7 +2000,7 @@ data_002DFD
             DB      $3F
             DB      $1C,$00,$0E,$06,$0E,$00,$7C,$03,$78,$03,$00,$38,$0C,$1C,$00,$0E
             DB      $06,$0E,$00,$60
-data_002E15
+anim_data_2E15
             DB      $03
 ; ---
 
@@ -1963,7 +2009,7 @@ data_002E15
 ; --- Data region (33 bytes) ---
             DB      $38,$0C,$1C,$0C,$0E,$0F,$0E,$00,$38,$03,$3F,$00,$00,$10,$0E,$08
             DB      $0C,$40,$06,$00,$30,$00,$46,$1F,$00,$00,$7E,$0D,$7F,$6C,$37,$60
-data_002E39
+anim_data_2E39
             DB      $37
 ; --- End data region (33 bytes) ---
 
@@ -1972,11 +2018,11 @@ data_002E39
 ; --- Data region (38 bytes) ---
             DB      $00,$6E,$0F,$00,$00,$7D,$4C,$3E,$6D,$37,$60,$77,$0D,$00,$7C,$07
             DB      $00,$40,$38,$2C,$1C,$6E,$17,$60
-data_002E53
+anim_data_2E53
             DB      $17
             DB      $07
             DB      $00,$7C,$0F,$00,$00,$11,$4C,$08,$6C,$17,$60
-data_002E60
+anim_data_2E60
             DB      $17
 ; --- End data region (38 bytes) ---
 
@@ -1990,7 +2036,7 @@ data_002E60
             DB      $07,$07,$00,$40,$43,$43,$63,$6D,$71,$60
 ; --- End data region (74 bytes) ---
 
-loc_002EAE  adc  ($00),Y         ; A=A+$57 ; [SP-740]
+anim_data_2EAE  adc  ($00),Y         ; A=A+$57 ; [SP-740]
             brk  #$05            ; A=A+$57 ; [SP-743]
 
 ; --- Data region (251 bytes) ---
@@ -2012,23 +2058,23 @@ loc_002EAE  adc  ($00),Y         ; A=A+$57 ; [SP-740]
             DB      $30,$00,$00,$00,$00,$00,$0D,$00,$00,$00,$60
 ; --- End data region (251 bytes) ---
 
-loc_002FAD  adc  $3073,Y         ; A=A+$57 ; [SP-854]
+anim_data_2FAD  adc  $3073,Y         ; A=A+$57 ; [SP-854]
             sec                  ; A=A+$57 ; [SP-854]
             brk  #$38            ; A=A+$57 ; [SP-857]
             DB      $00,$60
-data_002FB5
+anim_data_2FB5
             DB      $1F
             brk  #$00            ; A=A+$57 ; [SP-860]
             brk  #$60            ; A=A+$57 ; [SP-860]
-loc_002FBA  adc  ($70,X)         ; A=A+$57 ; [SP-858]
-            bmi  loc_002FF6      ; A=A+$57 ; [SP-858]
+anim_data_2FBA  adc  ($70,X)         ; A=A+$57 ; [SP-858]
+            bmi  anim_data_2FF6      ; A=A+$57 ; [SP-858]
             brk  #$38            ; A=A+$57 ; [SP-861]
 
 ; ---
             DB      $00,$00,$1E,$40,$7F,$00,$60
 ; ---
 
-loc_002FC7  adc  ($70),Y         ; A=A+$57 ; [SP-867]
+anim_data_2FC7  adc  ($70),Y         ; A=A+$57 ; [SP-867]
             sec                  ; A=A+$57 ; [SP-867]
             sec                  ; A=A+$57 ; [SP-867]
             clc                  ; A=A+$57 ; [SP-867]
@@ -2041,19 +2087,19 @@ loc_002FC7  adc  ($70),Y         ; A=A+$57 ; [SP-867]
             DB      $7A,$31,$5F,$1B,$5F,$1B,$02
 ; --- End data region (39 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_002FBA
-loc_002FF6  bvs  loc_003017      ; A=A+$57 ; [SP-875]
+; XREF: 1 ref (1 branch) from anim_data_2FBA
+anim_data_2FF6  bvs  anim_data_3017      ; A=A+$57 ; [SP-875]
             brk  #$00            ; A=A+$57 ; [SP-875]
 
 ; ---
             DB      $62,$61,$72,$30,$5F,$3C,$5F,$7C,$01,$70,$3F,$00,$00,$44,$60
-data_003009
+anim_data_3009
             DB      $22
 ; ---
 
             bmi  $306B           ; A=A+$57 ; [SP-876]
             clc                  ; A=A+$57 ; [SP-876]
-data_00300D
+anim_data_300D
             DB      $5F
             clc                  ; A=A+$57 ; [SP-876]
             brk  #$70            ; A=A+$57 ; [SP-876]
@@ -2062,12 +2108,12 @@ data_00300D
             DB      $7F,$00,$00,$68,$61,$72
 ; ---
 
-loc_003017  bmi  loc_003047      ; A=A+$57 ; [SP-876]
+anim_data_3017  bmi  anim_data_3047      ; A=A+$57 ; [SP-876]
             brk  #$2E            ; A=A+$57 ; [SP-879]
 
 ; ---
             DB      $00,$00,$70,$7F,$61,$00,$60,$61,$70,$30,$34,$00,$34,$00,$00,$60
-data_00302B
+anim_data_302B
             DB      $7F
             DB      $43
 ; ---
@@ -2079,8 +2125,8 @@ data_00302B
             DB      $46,$01,$46,$01,$00,$30,$18,$7E
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_003017
-loc_003047  brk  #$18            ; A=A+$57 ; [SP-890]
+; XREF: 1 ref (1 branch) from anim_data_3017
+anim_data_3047  brk  #$18            ; A=A+$57 ; [SP-890]
 
 ; --- Data region (127 bytes) ---
             DB      $06,$0C,$03,$06,$03,$46,$01,$00,$38,$1C,$3C,$00,$1C,$0E,$0E,$07
@@ -2094,7 +2140,7 @@ loc_003047  brk  #$18            ; A=A+$57 ; [SP-890]
             DB      $00,$00,$51,$41,$68,$00,$30,$00,$00,$14,$36,$7C,$07,$00,$70,$4F
             DB      $79,$67,$3E,$33,$3E,$03,$14,$70,$7E,$01,$00,$68,$47,$75,$63,$3E
             DB      $37,$3E,$37,$04,$60
-data_0030C7
+anim_data_30C7
             DB      $3F
 ; --- End data region (127 bytes) ---
 
@@ -2103,7 +2149,7 @@ data_0030C7
 ; ---
             DB      $44
             DB      $43,$65,$61,$3E,$79,$3E,$79,$03,$60
-data_0030D4
+anim_data_30D4
             DB      $7F
 ; ---
 
@@ -2114,7 +2160,7 @@ data_0030D4
             DB      "AE`>1>1"
             DB      $00 ; null terminator
             DB      $60
-data_0030E1
+anim_data_30E1
             DB      $7F
 ; ---
 
@@ -2123,7 +2169,7 @@ data_0030E1
 
 ; ---
             DB      $65,$61,$5C,$00,$5C,$00,$00,$60
-data_0030EE
+anim_data_30EE
             DB      $7F
             DB      $43
 ; ---
@@ -2134,22 +2180,22 @@ data_0030EE
             DB      $43,$61,$61,$68,$00,$68,$00,$00,$40,$7F,$07,$03,$60
 ; ---
 
-loc_0030FF  asl  $30             ; A=A+$57 ; [SP-934]
+anim_data_30FF  asl  $30             ; A=A+$57 ; [SP-934]
             DB      $03
             bvc  $3105           ; A=A+$57 ; [SP-934]
             bvc  $3107           ; A=A+$57 ; [SP-934]
             brk  #$60            ; A=A+$57 ; [SP-934]
-loc_003108  bmi  data_003119     ; A=A+$57 ; [SP-932]
+anim_data_3108  bmi  anim_data_3119     ; A=A+$57 ; [SP-932]
             DB      $83
-            bmi  data_003119     ; A=A+$57 ; [SP-932]
+            bmi  anim_data_3119     ; A=A+$57 ; [SP-932]
 
 ; ---
             DB      $18,$06,$0C,$03,$0C,$03,$00,$60
 ; ---
 
-loc_003115  bmi  data_003193     ; A=A+$57 ; [SP-930]
+anim_data_3115  bmi  anim_data_3193     ; A=A+$57 ; [SP-930]
             ora  ($30,X)         ; A=A+$57 ; [SP-930]
-data_003119
+anim_data_3119
             DB      $0C
             clc                  ; A=A+$57 ; [SP-930]
             asl  $0C             ; A=A+$57 ; [SP-930]
@@ -2162,7 +2208,7 @@ data_003119
             DB      $01,$60
 ; --- End data region (54 bytes) ---
 
-loc_003153  ora  ($00,X)         ; A=A+$57 ; [SP-963]
+anim_data_3153  ora  ($00,X)         ; A=A+$57 ; [SP-963]
             DB      $7F
             brk  #$00            ; A=A+$57 ; [SP-963]
             brk  #$00            ; A=A+$57 ; [SP-963]
@@ -2171,13 +2217,13 @@ loc_003153  ora  ($00,X)         ; A=A+$57 ; [SP-963]
             DB      $07,$43,$43,$61,$01,$60
 ; ---
 
-loc_003160  ora  ($00,X)         ; A=A+$57 ; [SP-964]
+anim_data_3160  ora  ($00,X)         ; A=A+$57 ; [SP-964]
             sei                  ; A=A+$57 ; [SP-964]
             brk  #$7E            ; A=A+$57 ; [SP-967]
 
 ; ---
             DB      $03,$00,$47,$43,$63,$61,$61,$60,$01,$20,$69,$60
-data_003171
+anim_data_3171
             DB      $3F
 ; ---
 
@@ -2186,7 +2232,7 @@ data_003171
 ; ---
             DB      $22
             DB      $03,$51,$01,$60,$00,$00,$28,$6C,$78,$0F,$00,$60
-data_003181
+anim_data_3181
             DB      $1F
             DB      $73
             DB      $4F
@@ -2195,12 +2241,12 @@ data_003181
             adc  $7C66,X         ; A=A+$57 ; [SP-972]
             asl  $28             ; A=A+$57 ; [SP-972]
             rts                  ; A=A+$57 ; [SP-970]
-loc_00318A  adc  !$0003,X        ; A=A+$57 ; [SP-970]
-            bvc  loc_00319E      ; A=A+$57 ; [SP-970]
+anim_data_318A  adc  !$0003,X        ; A=A+$57 ; [SP-970]
+            bvc  anim_data_319E      ; A=A+$57 ; [SP-970]
 
 ; ---
             DB      $6B,$47,$7D,$6E
-data_003193
+anim_data_3193
             DB      $7C
 ; ---
 
@@ -2210,8 +2256,8 @@ data_003193
             DB      $7F,$00,$00,$08,$07,$4B,$43
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_00318A
-loc_00319E  adc  $7D72,X         ; A=A+$57 ; [SP-965]
+; XREF: 1 ref (1 branch) from anim_data_318A
+anim_data_319E  adc  $7D72,X         ; A=A+$57 ; [SP-965]
 
 ; --- Data region (48 bytes) ---
             DB      $72
@@ -2221,7 +2267,7 @@ loc_00319E  adc  $7D72,X         ; A=A+$57 ; [SP-965]
             DB      $43,$43,$51,$01,$50,$01,$00,$00,$7F,$0F,$06,$40,$0D,$60
 ; --- End data region (48 bytes) ---
 
-loc_0031D1  asl  $20             ; A=A+$57 ; [SP-968]
+anim_data_31D1  asl  $20             ; A=A+$57 ; [SP-968]
             DB      $03
             jsr  !$0003          ; A=A+$57 ; [SP-968]
 
@@ -2229,32 +2275,32 @@ loc_0031D1  asl  $20             ; A=A+$57 ; [SP-968]
             DB      $40,$61,$1E,$86,$60
 ; ---
 
-loc_0031DC  clc                  ; A=A+$57 ; [SP-965]
-            bmi  loc_0031EB      ; A=A+$57 ; [SP-965]
+anim_data_31DC  clc                  ; A=A+$57 ; [SP-965]
+            bmi  anim_data_31EB      ; A=A+$57 ; [SP-965]
             clc                  ; A=A+$57 ; [SP-965]
             asl  $18             ; A=A+$57 ; [SP-965]
             asl  $00             ; A=A+$57 ; [SP-965]
 ; Interrupt return (RTI)
             rti                  ; A=A+$57 ; [SP-962]
             DB      $61,$78,$03,$60
-loc_0031E9  clc                  ; A=A+$57 ; [SP-962]
-            bmi  data_0031F8     ; A=A+$57 ; [SP-962]
+anim_data_31E9  clc                  ; A=A+$57 ; [SP-962]
+            bmi  anim_data_31F8     ; A=A+$57 ; [SP-962]
             clc                  ; A=A+$57 ; [SP-962]
             DB      $0C
 
 ; ---------------------------------------------------------------------------
-; sub_0031EE
+; anim_data_31EE
 ; ---------------------------------------------------------------------------
-sub_0031EE  clc                  ; [SP-962]
+anim_data_31EE  clc                  ; [SP-962]
             asl  $00             ; [SP-962]
             rts                  ; [SP-965]
-loc_0031F2  adc  ($70),Y         ; A=A+$57 ; [SP-965]
+anim_data_31F2  adc  ($70),Y         ; A=A+$57 ; [SP-965]
             ora  ($70,X)         ; A=A+$57 ; [SP-965]
             sec                  ; A=A+$57 ; [SP-965]
             sec                  ; A=A+$57 ; [SP-965]
 
 ; --- Data region (182 bytes) ---
-data_0031F8
+anim_data_31F8
             DB      $1C
             DB      $1C
             DB      $1C
@@ -2272,23 +2318,23 @@ data_0031F8
             DB      $40,$31,$60
 ; --- End data region (182 bytes) ---
 
-loc_0032AE  clc                  ; A=A+$57 ; [SP-1012]
-            bmi  loc_0032BD      ; A=A+$57 ; [SP-1012]
-            bmi  loc_0032BF      ; A=A+$57 ; [SP-1012]
+anim_data_32AE  clc                  ; A=A+$57 ; [SP-1012]
+            bmi  anim_data_32BD      ; A=A+$57 ; [SP-1012]
+            bmi  anim_data_32BF      ; A=A+$57 ; [SP-1012]
             brk  #$00            ; A=A+$57 ; [SP-1015]
 
 ; ---
             DB      $43,$71,$07,$40,$31,$60
 ; ---
 
-loc_0032BB  clc                  ; A=A+$57 ; [SP-1015]
-            bmi  loc_0032D6      ; A=A+$57 ; [SP-1015]
-            bmi  data_0032CC     ; A=A+$57 ; [SP-1015]
+anim_data_32BB  clc                  ; A=A+$57 ; [SP-1015]
+            bmi  anim_data_32D6      ; A=A+$57 ; [SP-1015]
+            bmi  anim_data_32CC     ; A=A+$57 ; [SP-1015]
             brk  #$40            ; A=A+$57 ; [SP-1018]
 
 ; ---
             DB      $63,$61,$03,$60,$71,$70,$38,$38,$38,$38
-data_0032CC
+anim_data_32CC
             DB      $1C
 ; ---
 
@@ -2298,8 +2344,8 @@ data_0032CC
             DB      $22,$01,$00,$00,$00,$0C,$00
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_0032BB
-loc_0032D6  asl  $00             ; A=A+$57 ; [SP-1027]
+; XREF: 1 ref (1 branch) from anim_data_32BB
+anim_data_32D6  asl  $00             ; A=A+$57 ; [SP-1027]
             brk  #$00            ; A=A+$57 ; [SP-1030]
 
 ; --- Data region (42 bytes) ---
@@ -2307,7 +2353,7 @@ loc_0032D6  asl  $00             ; A=A+$57 ; [SP-1027]
             DS      3
             DB      $1C,$3F,$0E,$06,$07,$00,$07,$00,$7C,$03,$00,$00,$00,$1C,$0C,$0E
             DB      $06,$07,$00,$07,$00,$60
-data_003303
+anim_data_3303
             DB      $03
 ; --- End data region (42 bytes) ---
 
@@ -2322,7 +2368,7 @@ data_003303
             DB      $1D,$2C,$0E,$66,$05,$60
 ; --- End data region (86 bytes) ---
 
-loc_00335B  ora  $00             ; A=A+$57 ; [SP-1092]
+anim_data_335B  ora  $00             ; A=A+$57 ; [SP-1092]
             brk  #$7E            ; A=A+$57 ; [SP-1095]
 
 ; --- Data region (33 bytes) ---
@@ -2331,14 +2377,14 @@ loc_00335B  ora  $00             ; A=A+$57 ; [SP-1092]
             DB      $60
 ; --- End data region (33 bytes) ---
 
-loc_003380  clc                  ; A=A+$57 ; [SP-1110]
+anim_data_3380  clc                  ; A=A+$57 ; [SP-1110]
             rts                  ; A=A+$57 ; [SP-1108]
 
 ; ---
             DB      $18,$00,$00,$06,$63,$0F,$00,$63,$40,$31,$60
 ; ---
 
-loc_00338D  bmi  loc_0033EF      ; A=A+$57 ; [SP-1111]
+anim_data_338D  bmi  anim_data_33EF      ; A=A+$57 ; [SP-1111]
             clc                  ; A=A+$57 ; [SP-1111]
             brk  #$00            ; A=A+$57 ; [SP-1114]
 
@@ -2351,8 +2397,8 @@ loc_00338D  bmi  loc_0033EF      ; A=A+$57 ; [SP-1111]
             DB      $03,$00,$10,$1A,$08,$0D,$00,$06,$00,$40,$62,$46,$7F
 ; --- End data region (93 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_00338D
-loc_0033EF  brk  #$00            ; A=A+$57 ; [SP-1173]
+; XREF: 1 ref (1 branch) from anim_data_338D
+anim_data_33EF  brk  #$00            ; A=A+$57 ; [SP-1173]
 
 ; --- Data region (181 bytes) ---
             DB      $7E,$19,$7F,$6C,$37,$66,$37,$40,$02,$6E,$1F,$00,$00,$7D,$58,$3E
@@ -2368,7 +2414,7 @@ loc_0033EF  brk  #$00            ; A=A+$57 ; [SP-1173]
             DS      4
             DB      $40,$06,$00,$00,$00,$70,$7C,$39,$18,$1C,$00,$1C,$00,$70,$0F,$00
             DB      $00,$00,$70,$30,$38,$18,$1C,$00,$1C,$00,$00,$0F,$60
-data_0034A5
+anim_data_34A5
             DB      $3F
 ; --- End data region (181 bytes) ---
 
@@ -2385,7 +2431,7 @@ data_0034A5
             DB      $00,$00,$70,$7F,$61,$00,$58,$01,$6C,$00,$34,$00,$34,$00,$00,$18
             DB      $6C,$E3,$00,$0C,$03,$46,$01,$63,$00,$63,$00,$00,$18,$0C,$3F,$00
             DB      $0C
-data_00352A
+anim_data_352A
             DB      $03
 ; --- End data region (130 bytes) ---
 
@@ -2396,31 +2442,31 @@ data_00352A
             DB      $01,$00,$14,$0A,$00,$50,$15,$20,$16,$F0,$16,$C0,$17,$90,$18,$60
 ; ---
 
-loc_00354D  ora  $1A30,Y         ; A=A+$57 ; [SP-1293]
+anim_data_354D  ora  $1A30,Y         ; A=A+$57 ; [SP-1293]
             brk  #$00            ; A=A+$57 ; [SP-1296]
 
 ; --- Data region (34 bytes) ---
             DB      $00,$30,$00,$30,$00,$00,$00,$06,$00,$00,$00,$00,$00,$00,$30,$00
             DB      $30,$00,$00,$00,$0D,$00,$3F,$00,$60,$31,$72,$30,$70,$30,$38,$00
             DB      $60
-data_003573
+anim_data_3573
             DB      $1F
 ; --- End data region (34 bytes) ---
 
             rts                  ; A=A+$57 ; [SP-1326]
             DB      $0F
             brk  #$60            ; [SP-1326]
-loc_003578  and  ($72),Y         ; [SP-1324]
-            bmi  loc_0035EC      ; [SP-1324]
-            bmi  loc_0035B6      ; [SP-1324]
+anim_data_3578  and  ($72),Y         ; [SP-1324]
+            bmi  anim_data_35EC      ; [SP-1324]
+            bmi  anim_data_35B6      ; [SP-1324]
             brk  #$00            ; A=A+$57 ; [SP-1327]
 
 ; ---
             DB      $1E,$78,$03,$00,$60
 ; ---
 
-loc_003585  adc  $3873,X         ; A=A+$57 ; [SP-1330]
-            bvs  loc_003602      ; A=A+$57 ; [SP-1330]
+anim_data_3585  adc  $3873,X         ; A=A+$57 ; [SP-1330]
+            bvs  anim_data_3602      ; A=A+$57 ; [SP-1330]
             sec                  ; A=A+$57 ; [SP-1330]
             clc                  ; A=A+$57 ; [SP-1330]
             plp                  ; A=A+$57 ; [SP-1329]
@@ -2431,8 +2477,8 @@ loc_003585  adc  $3873,X         ; A=A+$57 ; [SP-1330]
             DB      $78,$31,$3E,$01,$5F,$1B,$02,$70,$1F
 ; --- End data region (41 bytes) ---
 
-; XREF: 2 refs (2 branches) from loc_003578, loc_003585
-loc_0035B6  brk  #$00            ; A=A+$57 ; [SP-1329]
+; XREF: 2 refs (2 branches) from anim_data_3578, anim_data_3585
+anim_data_35B6  brk  #$00            ; A=A+$57 ; [SP-1329]
 
 ; --- Data region (40 bytes) ---
             DB      $62,$3D,$70,$30,$3E,$01,$5F,$3C,$00,$70,$3F,$00,$00,$44,$30,$20
@@ -2440,13 +2486,13 @@ loc_0035B6  brk  #$00            ; A=A+$57 ; [SP-1329]
             DB      $2E,$00,$00,$70,$7F,$01,$00,$60
 ; --- End data region (40 bytes) ---
 
-loc_0035E0  and  ($70),Y         ; A=A+$57 ; [SP-1333]
-            bmi  loc_00364C      ; A=A+$57 ; [SP-1333]
+anim_data_35E0  and  ($70),Y         ; A=A+$57 ; [SP-1333]
+            bmi  anim_data_364C      ; A=A+$57 ; [SP-1333]
             brk  #$34            ; A=A+$57 ; [SP-1336]
 
 ; ---
             DB      $00,$00,$60
-data_0035E9
+anim_data_35E9
             DB      $7F
             DB      $63
 ; ---
@@ -2455,15 +2501,15 @@ data_0035E9
             DB      $03
             cli                  ; A=A+$57 ; [SP-1337]
             ora  ($50,X)         ; A=A+$57 ; [SP-1337]
-loc_0035F1  ora  ($68,X)         ; A=A+$57 ; [SP-1337]
+anim_data_35F1  ora  ($68,X)         ; A=A+$57 ; [SP-1337]
             brk  #$00            ; A=A+$57 ; [SP-1340]
 
 ; ---
             DB      $30,$58,$47,$01,$18,$06,$0C,$03,$0C,$03,$46,$01,$00
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_003585
-loc_003602  bmi  loc_00361C      ; A=A+$57 ; [SP-1340]
+; XREF: 1 ref (1 branch) from anim_data_3585
+anim_data_3602  bmi  anim_data_361C      ; A=A+$57 ; [SP-1340]
             lsr  $1801           ; A=A+$57 ; [SP-1340]
             asl  $0C             ; A=A+$57 ; [SP-1340]
             asl  $06             ; A=A+$57 ; [SP-1340]
@@ -2474,8 +2520,8 @@ loc_003602  bmi  loc_00361C      ; A=A+$57 ; [SP-1340]
             DB      $00,$38,$1C,$7C,$00,$1C,$0E,$0E,$0E,$07,$07,$07,$07,$00
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_003602
-loc_00361C  plp                  ; A=A+$57 ; [SP-1343]
+; XREF: 1 ref (1 branch) from anim_data_3602
+anim_data_361C  plp                  ; A=A+$57 ; [SP-1343]
             DB      $14
             sec                  ; A=A+$57 ; [SP-1343]
 
@@ -2487,8 +2533,8 @@ loc_00361C  plp                  ; A=A+$57 ; [SP-1343]
             DB      $00,$40,$63,$64,$61,$60
 ; --- End data region (45 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_0035E0
-loc_00364C  adc  ($70,X)         ; A=A+$57 ; [SP-1378]
+; XREF: 1 ref (1 branch) from anim_data_35E0
+anim_data_364C  adc  ($70,X)         ; A=A+$57 ; [SP-1378]
             brk  #$00            ; A=A+$57 ; [SP-1381]
 
 ; --- Data region (54 bytes) ---
@@ -2496,50 +2542,50 @@ loc_00364C  adc  ($70,X)         ; A=A+$57 ; [SP-1378]
             DB      $00,$00,$61,$44,$68,$00,$68,$00,$30,$14,$36,$7C,$01,$00,$70,$6F
             DB      $78,$67,$7C,$06,$3E,$33,$14,$70,$7E,$00,$00,$68,$6F,$70,$63,$7C
             DB      $02,$3E,$37,$04,$60
-data_003685
+anim_data_3685
             DB      $3F
 ; --- End data region (54 bytes) ---
 
             brk  #$00            ; A=A+$57 ; [SP-1390]
             DB      $44
             DB      $7B,$60
-loc_00368B  adc  ($7C,X)         ; A=A+$57 ; [SP-1388]
+anim_data_368B  adc  ($7C,X)         ; A=A+$57 ; [SP-1388]
             DB      $02
             rol  !$0079,X        ; A=A+$57 ; [SP-1391]
             DB      $60
-data_003692
+anim_data_3692
             DB      $7F
             brk  #$00            ; A=A+$57 ; [SP-1391]
             php                  ; A=A+$57 ; [SP-1391]
 
 ; ---
             DB      $61,$40,$60
-data_003699
+anim_data_3699
             DB      $7C
             DB      $02
 ; ---
 
             rol  !$0031,X        ; [SP-1389]
             DB      $60
-data_00369F
+anim_data_369F
             DB      $7F
             ora  ($00,X)         ; A=A+$57 ; [SP-1387]
             bvc  $3707           ; A=A+$57 ; [SP-1387]
             DB      $60
-loc_0036A5  adc  ($38,X)         ; A=A+$57 ; [SP-1387]
+anim_data_36A5  adc  ($38,X)         ; A=A+$57 ; [SP-1387]
 
 ; ---
             DB      $03
             DB      $5C
             DB      $00,$00,$60
-data_0036AC
+anim_data_36AC
             DB      $7F
             DB      $03
 ; ---
 
             brk  #$40            ; [SP-1388]
             DB      $63,$60
-loc_0036B2  adc  ($50,X)         ; A=A+$57 ; [SP-1388]
+anim_data_36B2  adc  ($50,X)         ; A=A+$57 ; [SP-1388]
             ora  ($68,X)         ; A=A+$57 ; [SP-1388]
             brk  #$00            ; A=A+$57 ; [SP-1391]
 
@@ -2547,19 +2593,19 @@ loc_0036B2  adc  ($50,X)         ; A=A+$57 ; [SP-1388]
             DB      $40,$7F,$47,$01,$60
 ; ---
 
-loc_0036BD  asl  $30             ; A=A+$57 ; [SP-1388]
+anim_data_36BD  asl  $30             ; A=A+$57 ; [SP-1388]
             DB      $03
             jsr  $5003           ; A=A+$57 ; [SP-1388]
             DB      $01,$00,$60
-loc_0036C6  bmi  data_0036D7     ; A=A+$57 ; [SP-1386]
+anim_data_36C6  bmi  anim_data_36D7     ; A=A+$57 ; [SP-1386]
             DB      $03
-            bmi  data_0036D7     ; A=A+$57 ; [SP-1386]
+            bmi  anim_data_36D7     ; A=A+$57 ; [SP-1386]
 
 ; ---
             DB      $18,$06,$18,$06,$0C,$03,$00,$60
 ; ---
 
-loc_0036D3  bmi  loc_0036F1      ; A=A+$57 ; [SP-1384]
+anim_data_36D3  bmi  anim_data_36F1      ; A=A+$57 ; [SP-1384]
             DB      $03
             bmi  $36E4           ; A=A+$57 ; [SP-1384]
             clc                  ; A=A+$57 ; [SP-1384]
@@ -2570,14 +2616,14 @@ loc_0036D3  bmi  loc_0036F1      ; A=A+$57 ; [SP-1384]
             DB      $0E,$00,$50,$28,$70,$00,$00
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_0036D3
-loc_0036F1  brk  #$00            ; A=A+$57 ; [SP-1386]
+; XREF: 1 ref (1 branch) from anim_data_36D3
+anim_data_36F1  brk  #$00            ; A=A+$57 ; [SP-1386]
 
 ; --- Data region (48 bytes) ---
             DB      $40,$01,$40,$01,$00,$00,$18,$00,$00,$00,$00,$00,$00,$40,$01,$40
             DB      $01,$00,$00,$34,$00,$7C,$01,$00,$47,$49,$43,$41,$43,$61,$01,$00
             DB      $7F,$00,$3F,$00,$00,$47,$49,$43,$41,$43,$61,$01,$00,$78,$60
-data_003722
+anim_data_3722
             DB      $0F
 ; --- End data region (48 bytes) ---
 
@@ -2589,7 +2635,7 @@ data_003722
             DB      $50,$01,$60
 ; ---
 
-loc_003739  plp                  ; A=A+$57 ; [SP-1412]
+anim_data_3739  plp                  ; A=A+$57 ; [SP-1412]
             jmp  ($0378)         ; A=A+$57 ; [SP-1412]
 
 ; --- Data region (82 bytes) ---
@@ -2601,28 +2647,28 @@ loc_003739  plp                  ; A=A+$57 ; [SP-1412]
             DB      $0D,$60
 ; --- End data region (82 bytes) ---
 
-loc_00378F  asl  $40             ; A=A+$57 ; [SP-1409]
+anim_data_378F  asl  $40             ; A=A+$57 ; [SP-1409]
             asl  $20             ; A=A+$57 ; [SP-1409]
             DB      $03
             brk  #$40            ; A=A+$57 ; [SP-1409]
             DB      $61,$1E,$06,$60
-loc_00379A  clc                  ; A=A+$57 ; [SP-1406]
-            bmi  loc_0037A9      ; A=A+$57 ; [SP-1406]
-            bmi  data_0037AB     ; A=A+$57 ; [SP-1406]
+anim_data_379A  clc                  ; A=A+$57 ; [SP-1406]
+            bmi  anim_data_37A9      ; A=A+$57 ; [SP-1406]
+            bmi  anim_data_37AB     ; A=A+$57 ; [SP-1406]
             clc                  ; A=A+$57 ; [SP-1406]
             asl  $00             ; A=A+$57 ; [SP-1406]
 ; Interrupt return (RTI)
             rti                  ; A=A+$57 ; [SP-1403]
             DB      $61,$38,$06,$60
-loc_0037A7  clc                  ; A=A+$57 ; [SP-1403]
-            bmi  data_0037C2     ; A=A+$57 ; [SP-1403]
+anim_data_37A7  clc                  ; A=A+$57 ; [SP-1403]
+            bmi  anim_data_37C2     ; A=A+$57 ; [SP-1403]
             clc                  ; A=A+$57 ; [SP-1403]
-data_0037AB
+anim_data_37AB
             DB      $0C
             clc                  ; A=A+$57 ; [SP-1403]
             DB      $0C
             DB      $00,$60
-loc_0037B0  adc  ($70),Y         ; A=A+$57 ; [SP-1406]
+anim_data_37B0  adc  ($70),Y         ; A=A+$57 ; [SP-1406]
             DB      $03
             bvs  $37ED           ; A=A+$57 ; [SP-1406]
 
@@ -2630,11 +2676,11 @@ loc_0037B0  adc  ($70),Y         ; A=A+$57 ; [SP-1406]
             DB      $38,$38,$1C,$1C,$1C,$1C,$00,$20,$51,$60
 ; ---
 
-loc_0037BF  ora  ($00,X)         ; A=A+$57 ; [SP-1406]
+anim_data_37BF  ora  ($00,X)         ; A=A+$57 ; [SP-1406]
 
 ; --- Data region (171 bytes) ---
             DB      $00
-data_0037C2
+anim_data_37C2
             DB      $00,$00,$03,$00,$03,$00,$00,$30,$00,$00,$00,$00,$00,$00,$00,$03
             DB      $00,$03,$00,$00,$68,$00,$78,$03,$00,$0E,$13,$07,$03,$07,$43,$03
             DB      $00,$7E,$01,$7E,$00,$00,$0E,$13,$07,$03,$07,$43,$03,$00,$70,$41
@@ -2648,7 +2694,7 @@ data_0037C2
             DB      $40,$06,$00,$00,$43,$3D,$0C,$40,$31,$60
 ; --- End data region (171 bytes) ---
 
-loc_00386C  clc                  ; A=A+$57 ; [SP-1467]
+anim_data_386C  clc                  ; A=A+$57 ; [SP-1467]
             rts                  ; A=A+$57 ; [SP-1465]
 
 ; --- Data region (171 bytes) ---
@@ -2658,7 +2704,7 @@ loc_00386C  clc                  ; A=A+$57 ; [SP-1467]
             DS      3
             DB      $06,$00,$06,$00,$00,$50,$01,$70,$07,$00,$1C,$26,$0E,$06,$0E,$06
             DB      $07,$00,$7C,$03,$7C,$01,$00,$1C,$26,$0E,$06,$0E,$06,$07,$00,$60
-data_0038C1
+anim_data_38C1
             DB      $03
             DB      $3F
             DB      $00,$00,$5C,$3F,$0E,$07,$0E,$0F,$07,$03,$25,$43,$1F,$00,$00,$08
@@ -2669,7 +2715,7 @@ data_0038C1
             DB      $1D,$06,$0E,$46,$1B,$60
 ; --- End data region (171 bytes) ---
 
-loc_003919  ora  $00             ; A=A+$57 ; [SP-1526]
+anim_data_3919  ora  $00             ; A=A+$57 ; [SP-1526]
             brk  #$7E            ; A=A+$57 ; [SP-1529]
 
 ; --- Data region (35 bytes) ---
@@ -2678,7 +2724,7 @@ loc_003919  ora  $00             ; A=A+$57 ; [SP-1526]
             DB      $40,$31,$60
 ; --- End data region (35 bytes) ---
 
-loc_003940  clc                  ; A=A+$57 ; [SP-1541]
+anim_data_3940  clc                  ; A=A+$57 ; [SP-1541]
             brk  #$00            ; A=A+$57 ; [SP-1544]
 
 ; --- Data region (55 bytes) ---
@@ -2688,7 +2734,7 @@ loc_003940  clc                  ; A=A+$57 ; [SP-1541]
             DB      $00,$45,$02,$07,$00,$00,$00,$00,$0C,$00,$0C,$00,$00,$40,$01,$00
             DS      5
             DB      $0C,$00,$0C,$00,$00,$20,$03,$60
-data_003979
+anim_data_3979
             DB      $0F
 ; --- End data region (55 bytes) ---
 
@@ -2701,11 +2747,11 @@ data_003979
             DB      $3F,$00,$00,$10,$4C,$08,$0D,$00,$0D,$00,$46,$62,$46,$1F,$00,$00
             DB      $7E,$0D,$7F,$4C,$6F,$60,$37,$46,$02,$6E,$0F,$00,$00,$7D,$0D,$3E
             DB      $4C,$2F,$60,$77,$46,$00,$7C,$07,$00,$40,$38,$0F,$1C,$4C,$2F,$60
-data_0039CF
+anim_data_39CF
             DB      $17
             DB      $0F
             DB      $00,$7C,$0F,$00,$00,$11,$0C,$08,$4C,$2F,$60
-data_0039DC
+anim_data_39DC
             DB      $17
 ; --- End data region (94 bytes) ---
 
@@ -3220,9 +3266,9 @@ data_0039DC
             DS      24
             DB      $AA,$D5,$80,$80,$80,$80,$80,$81,$80,$90,$80,$80,$80,$81,$80,$C0
 ; Address table (3 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$84,$80,$90,$80,$80,$A0,$80,$80,$80,$88,$80,$80,$80,$88,$80
             DB      $82,$C0,$AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$00,$00,$00,$00
             DS      34
@@ -3250,7 +3296,7 @@ data_0039DC
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (9803 bytes) ---
 
-loc_00602A  rol  a               ; A=A+$57 ; [SP-11054]
+frame_data_602A  rol  a               ; A=A+$57 ; [SP-11054]
             adc  $00,X           ; A=A+$57 ; [SP-11054]
             brk  #$00            ; A=A+$57 ; [SP-11057]
 
@@ -3266,7 +3312,7 @@ loc_00602A  rol  a               ; A=A+$57 ; [SP-11054]
             DB      $AA,$D5,$60
 ; --- End data region (123 bytes) ---
 
-loc_0060AA  rol  a               ; A=A+$57 ; [SP-11179]
+frame_data_60AA  rol  a               ; A=A+$57 ; [SP-11179]
             eor  $2A,X           ; A=A+$57 ; [SP-11179]
             eor  $2A,X           ; A=A+$57 ; [SP-11179]
             eor  $06,X           ; A=A+$57 ; [SP-11179]
@@ -3290,7 +3336,7 @@ loc_0060AA  rol  a               ; A=A+$57 ; [SP-11179]
             DB      $00,$00,$30,$40,$31,$30,$40,$31,$00,$40,$41,$01,$03,$0C,$0C,$60
 ; ---
 
-loc_0060EB  clc                  ; A=A+$57 ; [SP-11182]
+frame_data_60EB  clc                  ; A=A+$57 ; [SP-11182]
             brk  #$46            ; A=A+$57 ; [SP-11185]
 
 ; ---
@@ -3298,7 +3344,7 @@ loc_0060EB  clc                  ; A=A+$57 ; [SP-11182]
             DB      $00,$00,$D5,$60
 ; ---
 
-loc_006102  rol  a               ; A=A+$57 ; [SP-11206]
+frame_data_6102  rol  a               ; A=A+$57 ; [SP-11206]
             eor  $2A,X           ; A=A+$57 ; [SP-11206]
             eor  $2A,X           ; A=A+$57 ; [SP-11206]
             eor  $06,X           ; A=A+$57 ; [SP-11206]
@@ -3313,7 +3359,7 @@ loc_006102  rol  a               ; A=A+$57 ; [SP-11206]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_006182  rol  a               ; A=A+$57 ; [SP-11374]
+frame_data_6182  rol  a               ; A=A+$57 ; [SP-11374]
             and  $00,X           ; A=A+$57 ; [SP-11374]
             brk  #$00            ; A=A+$57 ; [SP-11377]
 
@@ -3330,7 +3376,7 @@ loc_006182  rol  a               ; A=A+$57 ; [SP-11374]
             DB      $D5,$60
 ; --- End data region (123 bytes) ---
 
-loc_006202  rol  a               ; A=A+$57 ; [SP-11482]
+frame_data_6202  rol  a               ; A=A+$57 ; [SP-11482]
             ora  !$0000          ; A=A+$57 ; [SP-11482]
 
 ; --- Data region (48 bytes, mostly zeros) ---
@@ -3338,7 +3384,7 @@ loc_006202  rol  a               ; A=A+$57 ; [SP-11482]
             DB      $2B,$0D,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$AA,$D5,$00
             DS      4
             DB      $7E,$00,$70,$01,$7C,$01,$60
-data_006235
+frame_data_6235
             DB      $03
 ; --- End data region (48 bytes) ---
 
@@ -3347,7 +3393,7 @@ data_006235
 ; ---
             DS      10
             DB      $06,$70,$0F,$60
-data_006246
+frame_data_6246
             DB      $1F
 ; ---
 
@@ -3360,15 +3406,15 @@ data_006246
             DS      4
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$A2,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$FC,$8F,$80,$A0,$D5,$AA,$D5,$AA,$D5,$8A,$D5,$AA,$D5,$AA,$D5
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006282  rol  a               ; A=A+$57 ; [SP-11564]
+frame_data_6282  rol  a               ; A=A+$57 ; [SP-11564]
             eor  $2A,X           ; A=A+$57 ; [SP-11564]
             eor  $1A,X           ; A=A+$57 ; [SP-11564]
             brk  #$00            ; A=A+$57 ; [SP-11567]
@@ -3379,7 +3425,7 @@ loc_006282  rol  a               ; A=A+$57 ; [SP-11564]
             DS      5
             DB      $7E,$00,$70,$01,$7C,$01,$78,$03,$40,$1F,$00,$7F,$7F,$7F,$7F,$03
             DB      $3C,$70,$0F,$00,$00,$70,$0F,$60
-data_0062C6
+frame_data_62C6
             DB      $1F
 ; --- End data region (62 bytes) ---
 
@@ -3396,7 +3442,7 @@ data_0062C6
             DB      $00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006302  rol  a               ; A=A+$57 ; [SP-11606]
+frame_data_6302  rol  a               ; A=A+$57 ; [SP-11606]
             and  $00,X           ; A=A+$57 ; [SP-11606]
             brk  #$00            ; A=A+$57 ; [SP-11609]
 
@@ -3405,7 +3451,7 @@ loc_006302  rol  a               ; A=A+$57 ; [SP-11606]
             DB      $55,$01,$00,$2B,$0D,$30,$55,$01,$58,$6A,$00,$2B,$0D,$00,$00,$00
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$01,$78,$07,$7C,$01,$78,$03,$00
             DB      $1F,$00,$3F,$40,$1F,$60
-data_00633D
+frame_data_633D
             DB      $0F
             DB      $3C
 ; --- End data region (56 bytes) ---
@@ -3414,7 +3460,7 @@ data_00633D
 
 ; ---
             DB      $00,$70,$0F,$60
-data_006346
+frame_data_6346
             DB      $1F
 ; ---
 
@@ -3431,7 +3477,7 @@ data_006346
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006382  rol  a               ; A=A+$57 ; [SP-11658]
+frame_data_6382  rol  a               ; A=A+$57 ; [SP-11658]
             ora  !$0000          ; A=A+$57 ; [SP-11658]
 
 ; ---
@@ -3439,7 +3485,7 @@ loc_006382  rol  a               ; A=A+$57 ; [SP-11658]
             DB      $60
 ; ---
 
-loc_00638B  eor  $2A,X           ; A=A+$57 ; [SP-11662]
+frame_data_638B  eor  $2A,X           ; A=A+$57 ; [SP-11662]
             eor  $0E,X           ; A=A+$57 ; [SP-11662]
             brk  #$40            ; A=A+$57 ; [SP-11665]
 
@@ -3447,7 +3493,7 @@ loc_00638B  eor  $2A,X           ; A=A+$57 ; [SP-11662]
             DB      $55,$06,$00,$2B,$0D,$30,$55,$01,$00,$2B,$0D,$30,$55,$01,$58,$6A
             DB      $00,$2B,$55,$2A,$55,$06,$AA,$D5,$00,$00,$00,$00,$00,$00,$7E,$07
             DB      $00,$7F,$07,$40,$1F,$60
-data_0063B7
+frame_data_63B7
             DB      $7F
 ; --- End data region (39 bytes) ---
 
@@ -3457,7 +3503,7 @@ data_0063B7
 
 ; ---
             DB      $70,$03,$78,$0F,$7E,$01,$7C,$0F,$00,$60
-data_0063C6
+frame_data_63C6
             DB      $7F
             DB      $7F
             DB      $7F
@@ -3475,7 +3521,7 @@ data_0063C6
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (95 bytes) ---
 
-loc_00642A  rol  a               ; A=A+$57 ; [SP-11695]
+frame_data_642A  rol  a               ; A=A+$57 ; [SP-11695]
             eor  $03,X           ; A=A+$57 ; [SP-11695]
             brk  #$00            ; A=A+$57 ; [SP-11698]
 
@@ -3491,7 +3537,7 @@ loc_00642A  rol  a               ; A=A+$57 ; [SP-11695]
             DB      $AA,$D5,$60
 ; --- End data region (123 bytes) ---
 
-loc_0064AA  rol  a               ; A=A+$57 ; [SP-11825]
+frame_data_64AA  rol  a               ; A=A+$57 ; [SP-11825]
             eor  $2A,X           ; A=A+$57 ; [SP-11825]
             eor  $2A,X           ; A=A+$57 ; [SP-11825]
             eor  $06,X           ; A=A+$57 ; [SP-11825]
@@ -3509,7 +3555,7 @@ loc_0064AA  rol  a               ; A=A+$57 ; [SP-11825]
             rol  a               ; A=A+$57 ; [SP-11825]
             eor  $6A,X           ; A=A+$57 ; [SP-11825]
             brk  #$2B            ; A=A+$57 ; [SP-11828]
-xor_transform eor  $2A,X           ; A=A+$57 ; [SP-11828]
+anim_data_xor eor  $2A,X           ; A=A+$57 ; [SP-11828]
             eor  $06,X           ; A=A+$57 ; [SP-11828]
             tax                  ; A=A+$57 X=A ; [SP-11828]
             cmp  $00,X           ; A=A+$57 X=A ; [SP-11828]
@@ -3522,18 +3568,18 @@ xor_transform eor  $2A,X           ; A=A+$57 ; [SP-11828]
             asl  $00             ; A=A+$57 X=A ; [SP-11837]
             brk  #$18            ; A=A+$57 X=A ; [SP-11840]
             rts                  ; A=A+$57 X=A ; [SP-11838]
-loc_0064DF  clc                  ; A=A+$57 X=A ; [SP-11838]
+frame_data_64DF  clc                  ; A=A+$57 X=A ; [SP-11838]
             clc                  ; A=A+$57 X=A ; [SP-11838]
             rts                  ; A=A+$57 X=A ; [SP-11836]
             DB      $18,$00,$60
-loc_0064E5  rts                  ; A=A+$57 X=A ; [SP-11837]
+frame_data_64E5  rts                  ; A=A+$57 X=A ; [SP-11837]
 
 ; ---
             DB      $40,$01,$06,$06,$30,$30,$00,$63,$00,$00,$00,$00,$00,$00,$00,$00
             DB      $00,$AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; ---
 
-loc_006502  rol  a               ; A=A+$57 X=A ; [SP-11858]
+frame_data_6502  rol  a               ; A=A+$57 X=A ; [SP-11858]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-11858]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-11858]
             eor  $06,X           ; A=A+$57 X=A ; [SP-11858]
@@ -3548,7 +3594,7 @@ loc_006502  rol  a               ; A=A+$57 X=A ; [SP-11858]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_006582  rol  a               ; A=A+$57 X=A ; [SP-12026]
+frame_data_6582  rol  a               ; A=A+$57 X=A ; [SP-12026]
             ora  !$0000,X        ; A=A+$57 X=A ; [SP-12026]
 
 ; --- Data region (124 bytes) ---
@@ -3564,7 +3610,7 @@ loc_006582  rol  a               ; A=A+$57 X=A ; [SP-12026]
             DB      $D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_006602  rol  a               ; A=A+$57 X=A ; [SP-12121]
+frame_data_6602  rol  a               ; A=A+$57 X=A ; [SP-12121]
             ora  !$0000          ; A=A+$57 X=A ; [SP-12121]
 
 ; --- Data region (65 bytes) ---
@@ -3574,7 +3620,7 @@ loc_006602  rol  a               ; A=A+$57 X=A ; [SP-12121]
             DB      $7E,$00,$70,$01,$7C,$01,$70,$03,$00,$0C,$00,$00,$00,$00,$00,$00
             DS      4
             DB      $02,$70,$0F,$60
-data_006646
+frame_data_6646
             DB      $1F
 ; --- End data region (65 bytes) ---
 
@@ -3587,10 +3633,10 @@ data_006646
             DS      4
             DB      $AA,$D5,$AA,$C5,$AA,$D5,$A2,$95,$AA,$D4,$A2,$D5,$AA,$95,$AA,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$FC,$9F,$80,$A0,$C5,$A2,$C5,$AA,$D5,$82
             ASC     "E*E*T*"
             DB      $00 ; null terminator
@@ -3598,7 +3644,7 @@ data_006646
             DB      $D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006682  rol  a               ; A=A+$57 X=A ; [SP-12210]
+frame_data_6682  rol  a               ; A=A+$57 X=A ; [SP-12210]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12210]
             eor  $1A,X           ; A=A+$57 X=A ; [SP-12210]
             brk  #$00            ; A=A+$57 X=A ; [SP-12213]
@@ -3609,14 +3655,14 @@ loc_006682  rol  a               ; A=A+$57 X=A ; [SP-12210]
             DS      5
             DB      $7E,$00,$70,$01,$7C,$01,$78,$03,$70,$1F,$40,$7F,$7F,$7F,$7F,$07
             DB      $38,$60
-data_0066C0
+frame_data_66C0
             DB      $0F
 ; --- End data region (56 bytes) ---
 
             brk  #$00            ; A=A+$57 X=A ; [SP-12220]
             bvs  $66D4           ; A=A+$57 X=A ; [SP-12220]
             DB      $60
-data_0066C6
+frame_data_66C6
             DB      $1F
 ; Interrupt return (RTI)
             rti                  ; A=A+$57 X=A ; [SP-12220]
@@ -3631,11 +3677,11 @@ data_0066C6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006702  rol  a               ; A=A+$57 X=A ; [SP-12253]
+frame_data_6702  rol  a               ; A=A+$57 X=A ; [SP-12253]
             ora  !$0000,X        ; A=A+$57 X=A ; [SP-12253]
             DS      3
             DB      $60
-loc_00670A  rol  a               ; A=A+$57 X=A ; [SP-12259]
+frame_data_670A  rol  a               ; A=A+$57 X=A ; [SP-12259]
             eor  $3A,X           ; A=A+$57 X=A ; [SP-12259]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12259]
             ora  $5540           ; A=A+$57 X=A ; [SP-12259]
@@ -3646,7 +3692,7 @@ loc_00670A  rol  a               ; A=A+$57 X=A ; [SP-12259]
             DS      3
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$01,$78,$07,$7C,$01,$78,$03,$00
             DB      $1F,$00,$3F,$40,$1F,$60
-data_00673D
+frame_data_673D
             DB      $0F
             DB      $3C
 ; --- End data region (43 bytes) ---
@@ -3657,7 +3703,7 @@ data_00673D
 ; ---
             DB      $1F
             DB      $00,$00,$70,$0F,$60
-data_006746
+frame_data_6746
             DB      $1F
 ; ---
 
@@ -3674,7 +3720,7 @@ data_006746
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006782  rol  a               ; A=A+$57 X=A ; [SP-12299]
+frame_data_6782  rol  a               ; A=A+$57 X=A ; [SP-12299]
             ora  !$0000          ; A=A+$57 X=A ; [SP-12299]
 
 ; --- Data region (67 bytes) ---
@@ -3683,7 +3729,7 @@ loc_006782  rol  a               ; A=A+$57 X=A ; [SP-12299]
             DB      $2B,$0D,$30,$55,$01,$58,$6A,$00,$2E,$55,$2A,$55,$06,$AA,$D5,$00
             DS      18
             DB      $70,$03,$00,$00,$00,$00,$3C,$00,$00,$00,$60
-data_0067C7
+frame_data_67C7
             DB      $7F
             DB      $07
 ; --- End data region (67 bytes) ---
@@ -3700,13 +3746,13 @@ data_0067C7
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (95 bytes) ---
 
-loc_00682A  rol  a               ; A=A+$57 X=A ; [SP-12364]
+frame_data_682A  rol  a               ; A=A+$57 X=A ; [SP-12364]
             eor  $7E,X           ; A=A+$57 X=A ; [SP-12364]
             DB      $7F
             DB      $7F
             DB      $7F
             brk  #$60            ; [SP-12364]
-loc_006832  rol  a               ; A=A+$57 X=A ; [SP-12362]
+frame_data_6832  rol  a               ; A=A+$57 X=A ; [SP-12362]
             eor  $6E,X           ; A=A+$57 X=A ; [SP-12362]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12362]
             ora  $5540           ; A=A+$57 X=A ; [SP-12362]
@@ -3720,7 +3766,7 @@ loc_006832  rol  a               ; A=A+$57 X=A ; [SP-12362]
             DB      $2B,$0D,$30,$55,$03,$5C,$6A,$00,$00,$00,$60
 ; ---
 
-loc_00684D  eor  $06,X           ; A=A+$57 X=A ; [SP-12367]
+frame_data_684D  eor  $06,X           ; A=A+$57 X=A ; [SP-12367]
             tax                  ; A=A+$57 X=A ; [SP-12367]
             cmp  $00,X           ; A=A+$57 X=A ; [SP-12367]
             brk  #$00            ; A=A+$57 X=A ; [SP-12370]
@@ -3735,7 +3781,7 @@ loc_00684D  eor  $06,X           ; A=A+$57 X=A ; [SP-12367]
             DB      $AA,$D5,$60
 ; --- End data region (86 bytes) ---
 
-loc_0068AA  rol  a               ; A=A+$57 X=A ; [SP-12487]
+frame_data_68AA  rol  a               ; A=A+$57 X=A ; [SP-12487]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12487]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12487]
             eor  $06,X           ; A=A+$57 X=A ; [SP-12487]
@@ -3751,18 +3797,18 @@ loc_0068AA  rol  a               ; A=A+$57 X=A ; [SP-12487]
             DB      $03,$00,$00,$18,$60
 ; --- End data region (41 bytes) ---
 
-loc_0068DF  clc                  ; A=A+$57 X=A ; [SP-12499]
+frame_data_68DF  clc                  ; A=A+$57 X=A ; [SP-12499]
             clc                  ; A=A+$57 X=A ; [SP-12499]
             rts                  ; A=A+$57 X=A ; [SP-12497]
             DB      $18,$00,$60
-loc_0068E5  rts                  ; A=A+$57 X=A ; [SP-12498]
+frame_data_68E5  rts                  ; A=A+$57 X=A ; [SP-12498]
 
 ; ---
             DB      $40,$01,$06,$06,$30,$60,$00,$63,$00,$00,$00,$00,$00,$00,$00,$00
             DB      $00,$AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; ---
 
-loc_006902  rol  a               ; A=A+$57 X=A ; [SP-12523]
+frame_data_6902  rol  a               ; A=A+$57 X=A ; [SP-12523]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12523]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-12523]
             eor  $06,X           ; A=A+$57 X=A ; [SP-12523]
@@ -3778,7 +3824,7 @@ loc_006902  rol  a               ; A=A+$57 X=A ; [SP-12523]
             DB      $00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_006982  rol  a               ; A=A+$57 X=A ; [SP-12651]
+frame_data_6982  rol  a               ; A=A+$57 X=A ; [SP-12651]
             ora  !$0000          ; A=A+$57 X=A ; [SP-12651]
 
 ; --- Data region (124 bytes) ---
@@ -3796,7 +3842,7 @@ loc_006982  rol  a               ; A=A+$57 X=A ; [SP-12651]
             DB      $D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_006A02  rol  a               ; A=A+$57 X=A ; [SP-12740]
+frame_data_6A02  rol  a               ; A=A+$57 X=A ; [SP-12740]
             ora  !$0000,X        ; A=A+$57 X=A ; [SP-12740]
 
 ; --- Data region (65 bytes, mostly zeros) ---
@@ -3806,7 +3852,7 @@ loc_006A02  rol  a               ; A=A+$57 X=A ; [SP-12740]
             DB      $7E,$00,$70,$01,$7C,$01,$7E,$7F,$00,$00,$00,$00,$00,$00,$00,$00
             DS      5
             DB      $70,$0F,$60
-data_006A46
+frame_data_6A46
             DB      $1F
 ; --- End data region (65 bytes) ---
 
@@ -3818,7 +3864,7 @@ data_006A46
 ; ---
             DS      4
             DB      $AA,$D5,$8A,$85,$AA,$D5,$A2,$95,$AA
-data_006A58
+frame_data_6A58
             DB      $D4
 ; ---
 
@@ -3833,7 +3879,7 @@ data_006A58
             DB      $D5,$60
 ; --- End data region (39 bytes) ---
 
-loc_006A82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12830]
+frame_data_6A82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12830]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-12830]
             eor  $1A,X           ; -> $00DF ; A=A+$57 X=$00C5 ; [SP-12830]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-12833]
@@ -3843,18 +3889,18 @@ loc_006A82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12830]
             DB      $55,$2A,$0D,$30,$55,$01,$58,$6A,$00,$2B,$55,$2A,$55,$06,$AA,$D5
             DS      5
             DB      $7E,$00,$70,$01,$7C,$01,$78,$03,$00,$1F,$00,$7F,$60
-data_006ABB
+frame_data_6ABB
             DB      $3F
 ; --- End data region (51 bytes) ---
 
             bvs  $6AC5           ; A=A+$57 X=$00C5 ; [SP-12842]
             bvs  $6B20           ; A=A+$57 X=$00C5 ; [SP-12842]
-data_006AC0
+frame_data_6AC0
             DB      $0F
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-12840]
             bvs  $6AD4           ; A=A+$57 X=$00C5 ; [SP-12840]
             DB      $60
-data_006AC6
+frame_data_6AC6
             DB      $1F
 ; Interrupt return (RTI)
             rti                  ; A=A+$57 X=$00C5 ; [SP-12840]
@@ -3869,7 +3915,7 @@ data_006AC6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006B02  rol  a               ; A=A+$57 X=$00C5 ; [SP-12876]
+frame_data_6B02  rol  a               ; A=A+$57 X=$00C5 ; [SP-12876]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-12876]
 
 ; --- Data region (56 bytes) ---
@@ -3878,7 +3924,7 @@ loc_006B02  rol  a               ; A=A+$57 X=$00C5 ; [SP-12876]
             DB      $00,$2B,$0D,$30,$55,$01,$58,$6A,$00,$2B,$1D,$00,$00,$00,$AA,$D5
             DS      5
             DB      $7E,$03,$7C,$07,$7C,$01,$78,$03,$00,$1F,$00,$3F,$40,$1F,$60
-data_006B3D
+frame_data_6B3D
             DB      $0F
 ; --- End data region (56 bytes) ---
 
@@ -3887,18 +3933,18 @@ data_006B3D
 ; --- Data region (65 bytes) ---
             DB      $00,$00,$70,$1F,$70,$1F,$40,$3F,$40,$03,$00,$00,$00,$00,$AA,$D5
 ; Address table (6 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$80,$FC,$BF,$C0,$80,$00
             DS      10
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (65 bytes) ---
 
-loc_006B82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12925]
+frame_data_6B82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12925]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-12925]
 
 ; --- Data region (164 bytes) ---
@@ -3916,11 +3962,11 @@ loc_006B82  rol  a               ; A=A+$57 X=$00C5 ; [SP-12925]
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (164 bytes) ---
 
-loc_006C2A  rol  a               ; A=A+$57 X=$00C5 ; [SP-12996]
+frame_data_6C2A  rol  a               ; A=A+$57 X=$00C5 ; [SP-12996]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-12996]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-12996]
             eor  $01,X           ; -> $00C6 ; A=A+$57 X=$00C5 ; [SP-12996]
-            bvs  loc_006C5D      ; A=A+$57 X=$00C5 ; [SP-12996]
+            bvs  frame_data_6C5D      ; A=A+$57 X=$00C5 ; [SP-12996]
             eor  $46,X           ; -> $010B ; A=A+$57 X=$00C5 ; [SP-12996]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-12996]
             ora  $5540,X         ; -> $5605 ; A=A+$57 X=$00C5 ; [SP-12996]
@@ -3931,8 +3977,8 @@ loc_006C2A  rol  a               ; A=A+$57 X=$00C5 ; [SP-12996]
             DS      3
 ; --- End data region (35 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_006C2A
-loc_006C5D  bvs  loc_006C7E      ; A=A+$57 X=$00C5 ; [SP-13015]
+; XREF: 1 ref (1 branch) from frame_data_6C2A
+frame_data_6C5D  bvs  frame_data_6C7E      ; A=A+$57 X=$00C5 ; [SP-13015]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13015]
 
 ; ---
@@ -3941,7 +3987,7 @@ loc_006C5D  bvs  loc_006C7E      ; A=A+$57 X=$00C5 ; [SP-13015]
             DB      $AA,$00,$00,$00,$00,$00,$00
 ; ---
 
-loc_006C7E  brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13042]
+frame_data_6C7E  brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13042]
 
 ; --- Data region (130 bytes) ---
             DB      $D5,$00,$7E,$7F,$7F,$7F,$7F,$7F,$00,$00,$00,$00,$00,$00,$00,$00
@@ -3954,7 +4000,7 @@ loc_006C7E  brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13042]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (130 bytes) ---
 
-loc_006D02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13137]
+frame_data_6D02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13137]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13137]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13137]
             eor  $03,X           ; -> $00C8 ; A=A+$57 X=$00C5 ; [SP-13137]
@@ -3970,7 +4016,7 @@ loc_006D02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13137]
             DB      $00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_006D82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13267]
+frame_data_6D82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13267]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-13267]
 
 ; --- Data region (45 bytes, mostly zeros) ---
@@ -3978,13 +4024,13 @@ loc_006D82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13267]
             DB      $2B,$0D,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$AA,$D5,$00
             DS      3
             DB      $60
-data_006DAE
+frame_data_6DAE
             DB      $43
             DB      $07
             DB      $1E,$0F,$60
 ; --- End data region (45 bytes) ---
 
-loc_006DB3  ora  ($00,X)         ; A=A+$57 X=$00C5 ; [SP-13317]
+frame_data_6DB3  ora  ($00,X)         ; A=A+$57 X=$00C5 ; [SP-13317]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13320]
 
 ; --- Data region (75 bytes) ---
@@ -3998,7 +4044,7 @@ loc_006DB3  ora  ($00,X)         ; A=A+$57 X=$00C5 ; [SP-13317]
             DB      $D5,$60
 ; --- End data region (75 bytes) ---
 
-loc_006E02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13356]
+frame_data_6E02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13356]
             and  $00,X           ; -> $00C5 ; A=A+$57 X=$00C5 ; [SP-13356]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13359]
 
@@ -4008,7 +4054,7 @@ loc_006E02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13356]
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$00,$70,$01,$7C,$41,$7F,$7F,$00
             DS      12
             DB      $70,$0F,$60
-data_006E46
+frame_data_6E46
             DB      $1F
 ; --- End data region (64 bytes) ---
 
@@ -4021,15 +4067,15 @@ data_006E46
             DS      4
             DB      $AA,$D5,$8A,$81,$AA,$D5,$A0,$95,$88,$D4,$82,$C5,$A2,$85,$AA,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$F8,$FF,$B0,$A0,$C1,$80,$C1,$AA,$D4,$80,$C0,$AA,$C0,$8A,$D4
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006E82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13435]
+frame_data_6E82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13435]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13435]
             eor  $1A,X           ; -> $00DF ; A=A+$57 X=$00C5 ; [SP-13435]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13438]
@@ -4039,18 +4085,18 @@ loc_006E82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13435]
             DB      $55,$2A,$0D,$30,$55,$01,$58,$6A,$00,$2B,$55,$2A,$55,$06,$AA,$D5
             DS      5
             DB      $7E,$00,$70,$01,$7C,$01,$78,$03,$00,$1F,$00,$7F,$60
-data_006EBB
+frame_data_6EBB
             DB      $3F
 ; --- End data region (51 bytes) ---
 
             bvs  $6ECD           ; A=A+$57 X=$00C5 ; [SP-13447]
             brk  #$60            ; A=A+$57 X=$00C5 ; [SP-13447]
-data_006EC0
+frame_data_6EC0
             DB      $0F
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13445]
             bvs  $6ED4           ; A=A+$57 X=$00C5 ; [SP-13445]
             DB      $60
-data_006EC6
+frame_data_6EC6
             DB      $1F
 ; Interrupt return (RTI)
             rti                  ; A=A+$57 X=$00C5 ; [SP-13445]
@@ -4065,7 +4111,7 @@ data_006EC6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_006F02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13481]
+frame_data_6F02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13481]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-13481]
 
 ; --- Data region (56 bytes) ---
@@ -4074,7 +4120,7 @@ loc_006F02  rol  a               ; A=A+$57 X=$00C5 ; [SP-13481]
             DB      $2B,$0D,$30,$55,$01,$58,$6A,$00,$2B,$75,$00,$00,$00,$AA,$D5,$00
             DS      4
             DB      $7E,$07,$7E,$07,$7C,$01,$78,$03,$01,$1F,$00,$3F,$40,$1F,$60
-data_006F3D
+frame_data_6F3D
             DB      $0F
 ; --- End data region (56 bytes) ---
 
@@ -4083,18 +4129,18 @@ data_006F3D
 ; --- Data region (65 bytes) ---
             DB      $00,$00,$70,$7F,$7F,$1F,$40,$7F,$70,$01,$00,$00,$00,$00,$AA,$D5
 ; Address table (6 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$A8,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$8A,$80,$F8,$FF,$E0,$80,$00
             DS      10
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (65 bytes) ---
 
-loc_006F82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13530]
+frame_data_6F82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13530]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-13530]
 
 ; ---
@@ -4102,7 +4148,7 @@ loc_006F82  rol  a               ; A=A+$57 X=$00C5 ; [SP-13530]
             DB      $60
 ; ---
 
-loc_006F8B  eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13534]
+frame_data_6F8B  eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13534]
             eor  $0E,X           ; -> $00D3 ; A=A+$57 X=$00C5 ; [SP-13534]
             brk  #$40            ; A=A+$57 X=$00C5 ; [SP-13537]
 
@@ -4120,7 +4166,7 @@ loc_006F8B  eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13534]
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (153 bytes) ---
 
-loc_00702A  rol  a               ; A=A+$57 X=$00C5 ; [SP-13605]
+frame_data_702A  rol  a               ; A=A+$57 X=$00C5 ; [SP-13605]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13605]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13605]
             eor  $03,X           ; -> $00C8 ; A=A+$57 X=$00C5 ; [SP-13605]
@@ -4141,7 +4187,7 @@ loc_00702A  rol  a               ; A=A+$57 X=$00C5 ; [SP-13605]
             DB      $AA,$D5,$00,$2B,$55,$2A,$55,$2A,$55,$01,$60
 ; --- End data region (123 bytes) ---
 
-loc_0070B2  ror  a               ; A=A+$57 X=$00C5 ; [SP-13694]
+frame_data_70B2  ror  a               ; A=A+$57 X=$00C5 ; [SP-13694]
             ora  ($00,X)         ; A=A+$57 X=$00C5 ; [SP-13694]
             brk  #$2E            ; A=A+$57 X=$00C5 ; [SP-13697]
 
@@ -4153,7 +4199,7 @@ loc_0070B2  ror  a               ; A=A+$57 X=$00C5 ; [SP-13694]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (75 bytes) ---
 
-loc_007102  rol  a               ; A=A+$57 X=$00C5 ; [SP-13745]
+frame_data_7102  rol  a               ; A=A+$57 X=$00C5 ; [SP-13745]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13745]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-13745]
             eor  $01,X           ; -> $00C6 ; A=A+$57 X=$00C5 ; [SP-13745]
@@ -4169,7 +4215,7 @@ loc_007102  rol  a               ; A=A+$57 X=$00C5 ; [SP-13745]
             DB      $00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_007182  rol  a               ; A=A+$57 X=$00C5 ; [SP-13874]
+frame_data_7182  rol  a               ; A=A+$57 X=$00C5 ; [SP-13874]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-13874]
 
 ; --- Data region (124 bytes) ---
@@ -4187,14 +4233,14 @@ loc_007182  rol  a               ; A=A+$57 X=$00C5 ; [SP-13874]
             DB      $D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_007202  rol  a               ; A=A+$57 X=$00C5 ; [SP-13963]
+frame_data_7202  rol  a               ; A=A+$57 X=$00C5 ; [SP-13963]
             adc  $01,X           ; -> $00C6 ; A=A+$57 X=$00C5 ; [SP-13963]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-13966]
 
 ; ---
             DS      10
             DB      $7C,$7F,$7F,$7F,$01,$40,$55,$2A,$75,$2B,$0D,$40,$3F,$00,$60
-data_007220
+frame_data_7220
             DB      $1F
 ; ---
 
@@ -4205,7 +4251,7 @@ data_007220
             DB      $55,$01,$AA,$D5,$00,$00,$00,$00,$00,$7E,$00,$70,$01,$7C,$41,$7F
             DB      $7F,$00,$00,$00,$20,$00,$00,$00,$00,$00,$00,$00,$00,$00,$70,$0F
             DB      $60
-data_007246
+frame_data_7246
             DB      $1F
 ; --- End data region (34 bytes) ---
 
@@ -4218,15 +4264,15 @@ data_007246
             DS      4
             DB      $AA,$D5,$82,$80,$A8,$D4,$A0,$85,$88,$D4,$80,$C1,$A2,$85,$88,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$8C,$F6,$B1,$A0,$81,$80,$81,$AA,$94,$80,$80,$8A,$C0,$8A,$D0
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007282  rol  a               ; A=A+$57 X=$00C5 ; [SP-14026]
+frame_data_7282  rol  a               ; A=A+$57 X=$00C5 ; [SP-14026]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-14026]
             eor  $1A,X           ; -> $00DF ; A=A+$57 X=$00C5 ; [SP-14026]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-14029]
@@ -4236,7 +4282,7 @@ loc_007282  rol  a               ; A=A+$57 X=$00C5 ; [SP-14026]
             DB      $5F,$2A,$0D,$30,$55,$01,$58,$6A,$00,$2B,$55,$7F,$55,$06,$AA,$D5
             DS      5
             DB      $7E,$00,$70,$01,$7C,$01,$78,$03,$00,$1F,$00,$3F,$40,$1F,$60
-data_0072BD
+frame_data_72BD
             DB      $0F
 ; --- End data region (53 bytes) ---
 
@@ -4245,7 +4291,7 @@ data_0072BD
 ; ---
             DB      $1F
             DB      $00,$00,$70,$0F,$60
-data_0072C6
+frame_data_72C6
             DB      $1F
 ; ---
 
@@ -4262,7 +4308,7 @@ data_0072C6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007302  rol  a               ; A=A+$57 X=$00C5 ; [SP-14068]
+frame_data_7302  rol  a               ; A=A+$57 X=$00C5 ; [SP-14068]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-14068]
 
 ; --- Data region (56 bytes) ---
@@ -4271,7 +4317,7 @@ loc_007302  rol  a               ; A=A+$57 X=$00C5 ; [SP-14068]
             DB      $2B,$0D,$30,$55,$01,$58,$6A,$00,$2B,$55,$7F,$7F,$00,$AA,$D5,$00
             DS      4
             DB      $7C,$7F,$7F,$03,$7C,$01,$78,$43,$01,$1F,$00,$3F,$40,$1F,$60
-data_00733D
+frame_data_733D
             DB      $0F
 ; --- End data region (56 bytes) ---
 
@@ -4279,7 +4325,7 @@ data_00733D
 
 ; ---
             DB      $00,$00,$78,$7F,$7F,$3F,$60
-data_007348
+frame_data_7348
             DB      $7F
             DB      $7F
 ; ---
@@ -4294,7 +4340,7 @@ data_007348
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (54 bytes) ---
 
-loc_007382  rol  a               ; A=A+$57 X=$00C5 ; [SP-14119]
+frame_data_7382  rol  a               ; A=A+$57 X=$00C5 ; [SP-14119]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-14119]
 
 ; --- Data region (164 bytes) ---
@@ -4312,7 +4358,7 @@ loc_007382  rol  a               ; A=A+$57 X=$00C5 ; [SP-14119]
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (164 bytes) ---
 
-loc_00742A  rol  a               ; A=A+$57 X=$00C5 ; [SP-14202]
+frame_data_742A  rol  a               ; A=A+$57 X=$00C5 ; [SP-14202]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-14202]
             eor  $2A,X           ; -> $00EF ; A=A+$57 X=$00C5 ; [SP-14202]
             eor  $06,X           ; -> $00CB ; A=A+$57 X=$00C5 ; [SP-14202]
@@ -4339,25 +4385,25 @@ loc_00742A  rol  a               ; A=A+$57 X=$00C5 ; [SP-14202]
             DB      $7F,$0F,$00,$78,$7F,$7F,$7F,$00,$AA,$D5,$00,$00,$00,$00,$00,$00
             DS      5
             DB      $18,$1F,$60
-data_0074DF
+frame_data_74DF
             DB      $07
 ; --- End data region (160 bytes) ---
 
             asl  $60             ; A=A+$57 X=$00C5 ; [SP-14322]
 
 ; ---
-data_0074E2
+frame_data_74E2
             DB      $1B,$00,$58,$1F,$30,$40,$01,$3E,$0C,$7C,$60
 ; ---
 
-loc_0074ED  rts                  ; A=A+$57 X=$00C5 ; [SP-14319]
+anim_data_74ED  rts                  ; A=A+$57 X=$00C5 ; [SP-14319]
 
 ; ---
             DB      $60,$00,$00,$00,$00,$00,$00,$00,$00,$AA,$00,$00,$00,$00,$00,$00
             DB      $00,$00,$D5,$60
 ; ---
 
-loc_007502  rol  a               ; A=A+$57 X=$00C5 ; [SP-14341]
+frame_data_7502  rol  a               ; A=A+$57 X=$00C5 ; [SP-14341]
             eor  $7E,X           ; -> $0143 ; A=A+$57 X=$00C5 ; [SP-14341]
             DB      $7F
             DB      $7F
@@ -4375,7 +4421,7 @@ loc_007502  rol  a               ; A=A+$57 X=$00C5 ; [SP-14341]
             DB      $D5,$60
 ; --- End data region (120 bytes) ---
 
-loc_007582  rol  a               ; A=A+$57 X=$00C5 ; [SP-14479]
+frame_data_7582  rol  a               ; A=A+$57 X=$00C5 ; [SP-14479]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-14479]
 
 ; --- Data region (124 bytes) ---
@@ -4387,9 +4433,9 @@ loc_007582  rol  a               ; A=A+$57 X=$00C5 ; [SP-14479]
             DB      $7C,$7F,$1F,$70,$7F,$7F,$7F,$00,$00,$00,$00,$00,$00,$AA,$D5,$AA
             DB      $D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$80,$80,$80,$80
 ; Address table (3 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $C6,$9F,$80
             ASC     " U*U*U*U*U*U*"
             DB      $00 ; null terminator
@@ -4397,7 +4443,7 @@ loc_007582  rol  a               ; A=A+$57 X=$00C5 ; [SP-14479]
             DB      $D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_007602  rol  a               ; A=A+$57 X=$00C5 ; [SP-14565]
+frame_data_7602  rol  a               ; A=A+$57 X=$00C5 ; [SP-14565]
             eor  $03,X           ; -> $00C8 ; A=A+$57 X=$00C5 ; [SP-14565]
             brk  #$00            ; A=A+$57 X=$00C5 ; [SP-14568]
 
@@ -4406,7 +4452,7 @@ loc_007602  rol  a               ; A=A+$57 X=$00C5 ; [SP-14565]
             DB      $55,$2A,$55,$2B,$0D,$60,$75,$00,$70,$3A,$00,$2E,$55,$2A,$55,$03
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$00,$70,$01,$7C,$01,$78,$03,$00
             DB      $18,$00,$30,$7E,$70,$1F,$00,$0E,$7F,$01,$00,$00,$70,$0F,$60
-data_007646
+frame_data_7646
             DB      $1F
 ; --- End data region (64 bytes) ---
 
@@ -4419,15 +4465,15 @@ data_007646
             DS      4
             DB      $AA,$D5,$82,$80,$A8,$D0,$80,$85,$88,$D4,$80,$C0,$A2,$85,$88,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$8C,$CC,$9F,$A0,$81,$80,$80,$AA,$94,$80,$80,$8A,$80,$8A,$C0
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007682  rol  a               ; A=A+$57 X=$00C5 ; [SP-14607]
+frame_data_7682  rol  a               ; A=A+$57 X=$00C5 ; [SP-14607]
             eor  $7E,X           ; -> $0143 ; A=A+$57 X=$00C5 ; [SP-14607]
             DB      $7F
             DB      $0F
@@ -4438,7 +4484,7 @@ loc_007682  rol  a               ; A=A+$57 X=$00C5 ; [SP-14607]
             DB      $70,$2A,$0D,$30,$55,$01,$58,$6A,$00,$2B,$75,$00,$7F,$03,$AA,$D5
             DS      5
             DB      $7E,$00,$70,$03,$7C,$01,$78,$03,$00,$1F,$00,$3F,$40,$1F,$60
-data_0076BD
+frame_data_76BD
             DB      $0F
 ; --- End data region (53 bytes) ---
 
@@ -4448,7 +4494,7 @@ data_0076BD
             DB      $43
             DB      $1F
             DB      $00,$00,$70,$0F,$60
-data_0076C6
+frame_data_76C6
             DB      $1F
 ; ---
 
@@ -4465,7 +4511,7 @@ data_0076C6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007702  rol  a               ; A=A+$57 X=$00C5 ; [SP-14662]
+frame_data_7702  rol  a               ; A=A+$57 X=$00C5 ; [SP-14662]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-14662]
 
 ; --- Data region (124 bytes) ---
@@ -4475,7 +4521,7 @@ loc_007702  rol  a               ; A=A+$57 X=$00C5 ; [SP-14662]
             DB      $40,$55,$06,$00,$2B,$0D,$30,$55,$01,$00,$2B,$0D,$30,$55,$01,$58
             DB      $6A,$00,$2B,$55,$2A,$55,$01,$AA,$D5,$00,$00,$00,$00,$00,$7C,$7F
             DB      $7F,$03,$7C,$01,$70,$67,$01,$1F,$00,$3F,$40,$1F,$60
-data_00773D
+frame_data_773D
             DB      $07
             DB      $7C
             DB      $70,$3F,$00,$00,$7F,$7F,$7F,$7F,$7F,$7F,$7F,$00,$00,$00,$00,$00
@@ -4485,7 +4531,7 @@ data_00773D
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_007782  rol  a               ; A=A+$57 X=$00C5 ; [SP-14721]
+frame_data_7782  rol  a               ; A=A+$57 X=$00C5 ; [SP-14721]
             ora  !$0000          ; A=A+$57 X=$00C5 ; [SP-14721]
 
 ; ---
@@ -4496,7 +4542,7 @@ loc_007782  rol  a               ; A=A+$57 X=$00C5 ; [SP-14721]
             DB      $6A,$00,$00,$00,$60
 ; ---
 
-loc_0077A5  eor  $06,X           ; -> $00CB ; A=A+$57 X=$00C5 ; [SP-14738]
+frame_data_77A5  eor  $06,X           ; -> $00CB ; A=A+$57 X=$00C5 ; [SP-14738]
             tax                  ; A=A+$57 X=A ; [SP-14738]
             cmp  $00,X           ; A=A+$57 X=A ; [SP-14738]
             brk  #$00            ; A=A+$57 X=A ; [SP-14741]
@@ -4509,9 +4555,9 @@ loc_0077A5  eor  $06,X           ; -> $00CB ; A=A+$57 X=$00C5 ; [SP-14738]
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$00,$00,$00,$00,$00,$00,$00
             DB      $00
-data_007800
+frame_data_7800
             DB      $D5
-data_007801
+frame_data_7801
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60,$2A,$55,$2A,$55,$2A,$55,$06
@@ -4530,7 +4576,7 @@ data_007801
             DB      $D5,$60
 ; --- End data region (73 bytes) ---
 
-loc_007882  rol  a               ; A=A+$57 X=A ; [SP-14840]
+frame_data_7882  rol  a               ; A=A+$57 X=A ; [SP-14840]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-14840]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-14840]
             eor  $06,X           ; A=A+$57 X=A ; [SP-14840]
@@ -4546,7 +4592,7 @@ loc_007882  rol  a               ; A=A+$57 X=A ; [SP-14840]
             DB      $00,$00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_007902  rol  a               ; A=A+$57 X=A ; [SP-15005]
+frame_data_7902  rol  a               ; A=A+$57 X=A ; [SP-15005]
             eor  $03,X           ; A=A+$57 X=A ; [SP-15005]
             brk  #$00            ; A=A+$57 X=A ; [SP-15008]
 
@@ -4561,7 +4607,7 @@ loc_007902  rol  a               ; A=A+$57 X=A ; [SP-15005]
             DB      $D5,$60
 ; --- End data region (123 bytes) ---
 
-loc_007982  rol  a               ; A=A+$57 X=A ; [SP-15136]
+frame_data_7982  rol  a               ; A=A+$57 X=A ; [SP-15136]
             ora  !$0000          ; A=A+$57 X=A ; [SP-15136]
 
 ; --- Data region (67 bytes) ---
@@ -4571,7 +4617,7 @@ loc_007982  rol  a               ; A=A+$57 X=A ; [SP-15136]
             DB      $7F,$01,$78,$03,$7F,$01,$40,$03,$00,$0C,$00,$00,$00,$00,$00,$00
             DS      4
             DB      $3C,$78,$0F,$60
-data_0079C6
+frame_data_79C6
             DB      $7F
             DB      $7F
             DB      $3F
@@ -4583,10 +4629,10 @@ data_0079C6
             DS      4
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$EE,$8F,$80
             ASC     " U*U*U*U*U*U*"
             DB      $00 ; null terminator
@@ -4594,13 +4640,13 @@ data_0079C6
             DB      $D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007A02  rol  a               ; A=A+$57 X=A ; [SP-15223]
+frame_data_7A02  rol  a               ; A=A+$57 X=A ; [SP-15223]
             eor  $7E,X           ; A=A+$57 X=A ; [SP-15223]
             DB      $7F
             DB      $0F
             brk  #$00            ; [SP-15223]
             DB      $60
-loc_007A0A  ror  a               ; A=A+$57 X=A ; [SP-15221]
+frame_data_7A0A  ror  a               ; A=A+$57 X=A ; [SP-15221]
             ora  ($00,X)         ; A=A+$57 X=A ; [SP-15221]
             brk  #$2E            ; A=A+$57 X=A ; [SP-15224]
 
@@ -4609,7 +4655,7 @@ loc_007A0A  ror  a               ; A=A+$57 X=A ; [SP-15221]
             DB      $58,$6A,$00,$2B,$55,$2A,$55,$06,$AA,$D5,$00,$00,$00,$00,$00,$7E
             DB      $00,$70,$01,$7C,$01,$78,$03,$00,$1C,$00,$78,$7F,$79,$7F,$00,$7E
             DB      $7F,$07,$00,$00,$70,$0F,$60
-data_007A46
+frame_data_7A46
             DB      $1F
 ; --- End data region (56 bytes) ---
 
@@ -4626,7 +4672,7 @@ data_007A46
             DB      $00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007A82  rol  a               ; A=A+$57 X=A ; [SP-15255]
+frame_data_7A82  rol  a               ; A=A+$57 X=A ; [SP-15255]
             eor  $03,X           ; A=A+$57 X=A ; [SP-15255]
             brk  #$00            ; A=A+$57 X=A ; [SP-15258]
 
@@ -4635,7 +4681,7 @@ loc_007A82  rol  a               ; A=A+$57 X=A ; [SP-15255]
             DB      $55,$06,$60,$2A,$0D,$30,$55,$01,$58,$6A,$00,$2B,$1D,$00,$00,$00
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$00,$70,$07,$7C,$01,$78,$03,$00
             DB      $1F,$00,$3F,$40,$1F,$60
-data_007ABD
+frame_data_7ABD
             DB      $0F
 ; --- End data region (55 bytes) ---
 
@@ -4645,7 +4691,7 @@ data_007ABD
             DB      $47
             DB      $1F
             DB      $00,$00,$70,$0F,$60
-data_007AC6
+frame_data_7AC6
             DB      $1F
 ; ---
 
@@ -4662,7 +4708,7 @@ data_007AC6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007B02  rol  a               ; A=A+$57 X=A ; [SP-15308]
+frame_data_7B02  rol  a               ; A=A+$57 X=A ; [SP-15308]
             ora  !$0000          ; A=A+$57 X=A ; [SP-15308]
 
 ; --- Data region (124 bytes) ---
@@ -4672,7 +4718,7 @@ loc_007B02  rol  a               ; A=A+$57 X=A ; [SP-15308]
             DB      $40,$55,$06,$00,$2B,$0D,$30,$55,$01,$00,$2B,$0D,$30,$55,$01,$58
             DB      $6A,$00,$2B,$55,$2A,$55,$03,$AA,$D5,$00,$00,$00,$00,$00,$78,$7F
             DB      $7F,$01,$7C,$01,$70,$7F,$00,$1F,$00,$3F,$40,$1F,$60
-data_007B3D
+frame_data_7B3D
             DB      $07
             DB      $7C
             DB      $3F,$3F,$00,$70,$7F,$7F,$7F,$7F,$7F,$7F,$3F,$00,$00,$00,$00,$00
@@ -4682,7 +4728,7 @@ data_007B3D
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (124 bytes) ---
 
-loc_007B82  rol  a               ; A=A+$57 X=A ; [SP-15364]
+frame_data_7B82  rol  a               ; A=A+$57 X=A ; [SP-15364]
             ora  !$0000,X        ; A=A+$57 X=A ; [SP-15364]
 
 ; --- Data region (164 bytes) ---
@@ -4702,7 +4748,7 @@ loc_007B82  rol  a               ; A=A+$57 X=A ; [SP-15364]
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$60
 ; --- End data region (164 bytes) ---
 
-loc_007C2A  rol  a               ; A=A+$57 X=A ; [SP-15444]
+frame_data_7C2A  rol  a               ; A=A+$57 X=A ; [SP-15444]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15444]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15444]
             eor  $06,X           ; A=A+$57 X=A ; [SP-15444]
@@ -4710,7 +4756,7 @@ loc_007C2A  rol  a               ; A=A+$57 X=A ; [SP-15444]
             rol  a               ; A=A+$57 X=A ; [SP-15444]
             and  $00,X           ; A=A+$57 X=A ; [SP-15444]
             cli                  ; A=A+$57 X=A ; [SP-15444]
-loc_007C36  rol  a               ; A=A+$57 X=A ; [SP-15444]
+frame_data_7C36  rol  a               ; A=A+$57 X=A ; [SP-15444]
             and  $40,X           ; A=A+$57 X=A ; [SP-15444]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15444]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15444]
@@ -4727,7 +4773,7 @@ loc_007C36  rol  a               ; A=A+$57 X=A ; [SP-15444]
             DB      $00,$00,$30,$40,$31,$70,$40,$31,$00,$40,$41,$01,$07,$0C,$0C,$60
 ; ---
 
-loc_007C6B  clc                  ; A=A+$57 X=A ; [SP-15450]
+frame_data_7C6B  clc                  ; A=A+$57 X=A ; [SP-15450]
             asl  $46             ; A=A+$57 X=A ; [SP-15450]
             ora  ($00,X)         ; A=A+$57 X=A ; [SP-15450]
             brk  #$00            ; A=A+$57 X=A ; [SP-15453]
@@ -4737,7 +4783,7 @@ loc_007C6B  clc                  ; A=A+$57 X=A ; [SP-15450]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; ---
 
-loc_007C82  rol  a               ; A=A+$57 X=A ; [SP-15474]
+frame_data_7C82  rol  a               ; A=A+$57 X=A ; [SP-15474]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15474]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15474]
             eor  $06,X           ; A=A+$57 X=A ; [SP-15474]
@@ -4753,7 +4799,7 @@ loc_007C82  rol  a               ; A=A+$57 X=A ; [SP-15474]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (119 bytes) ---
 
-loc_007D02  rol  a               ; A=A+$57 X=A ; [SP-15612]
+frame_data_7D02  rol  a               ; A=A+$57 X=A ; [SP-15612]
             adc  $00,X           ; A=A+$57 X=A ; [SP-15612]
             brk  #$00            ; A=A+$57 X=A ; [SP-15615]
 
@@ -4766,7 +4812,7 @@ loc_007D02  rol  a               ; A=A+$57 X=A ; [SP-15612]
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (123 bytes) ---
 
-loc_007D82  rol  a               ; A=A+$57 X=A ; [SP-15783]
+frame_data_7D82  rol  a               ; A=A+$57 X=A ; [SP-15783]
             ora  !$0000          ; A=A+$57 X=A ; [SP-15783]
 
 ; --- Data region (65 bytes) ---
@@ -4776,7 +4822,7 @@ loc_007D82  rol  a               ; A=A+$57 X=A ; [SP-15783]
             DB      $7E,$00,$70,$01,$7C,$01,$40,$03,$00,$1E,$00,$00,$00,$00,$00,$00
             DS      4
             DB      $0E,$70,$0F,$60
-data_007DC6
+anim_data_7DC6
             DB      $3F
 ; --- End data region (65 bytes) ---
 
@@ -4788,20 +4834,20 @@ data_007DC6
             DS      4
             DB      $AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$D5,$AA,$80
 ; Address table (4 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $80,$FC,$87,$80
             ASC     " U*U*U*U*U*U*"
             DB      $00 ; null terminator
             DS      7
             DB      $D5
-data_007E01
+frame_data_7E01
             DB      $60
 ; --- End data region (55 bytes) ---
 
-loc_007E02  rol  a               ; A=A+$57 X=A ; [SP-15866]
+frame_data_7E02  rol  a               ; A=A+$57 X=A ; [SP-15866]
             eor  $2A,X           ; A=A+$57 X=A ; [SP-15866]
             eor  $1A,X           ; A=A+$57 X=A ; [SP-15866]
             brk  #$00            ; A=A+$57 X=A ; [SP-15869]
@@ -4809,14 +4855,14 @@ loc_007E02  rol  a               ; A=A+$57 X=A ; [SP-15866]
 ; --- Data region (62 bytes) ---
             DB      $70,$2A,$03,$00,$00,$2B,$1D,$40,$55,$2A,$55,$2A,$0D,$30,$55,$2A
             DB      $55,$2A
-data_007E1B
+frame_data_7E1B
             DB      $0D,$30,$55,$01,$58,$6A,$00,$2B,$55,$2A,$55,$06,$AA,$D5,$00,$00
             DS      3
             DB      $7E,$00,$70,$01,$7C
-data_007E33
+frame_data_7E33
             DB      $01,$78,$03,$00,$1E,$00,$7E,$7F,$7F,$7F,$01,$7E,$7F,$0F,$00,$00
             DB      $70,$0F,$60
-data_007E46
+frame_data_7E46
             DB      $1F
 ; --- End data region (62 bytes) ---
 
@@ -4833,7 +4879,7 @@ data_007E46
             DB      $00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007E82  rol  a               ; A=A+$57 X=A ; [SP-15903]
+frame_data_7E82  rol  a               ; A=A+$57 X=A ; [SP-15903]
             adc  $00,X           ; A=A+$57 X=A ; [SP-15903]
             brk  #$00            ; A=A+$57 X=A ; [SP-15906]
 
@@ -4842,13 +4888,13 @@ loc_007E82  rol  a               ; A=A+$57 X=A ; [SP-15903]
             DB      $55,$03,$40,$2B,$0D,$30,$55,$01,$58,$6A,$00,$2B,$0D,$00,$00,$00
             DB      $AA,$D5,$00,$00,$00,$00,$00,$7E,$00,$70,$07,$7C,$01,$78,$03,$00
             DB      $1F,$00,$3F,$40,$1F,$60
-data_007EBD
+frame_data_7EBD
             DB      $0F
             DB      $7C
             DB      $4F
             DB      $1F
             DB      $00,$00,$70,$0F,$60
-data_007EC6
+frame_data_7EC6
             DB      $1F
 ; --- End data region (64 bytes) ---
 
@@ -4865,52 +4911,52 @@ data_007EC6
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (55 bytes) ---
 
-loc_007F02  rol  a               ; A=A+$57 X=A ; [SP-15950]
+frame_data_7F02  rol  a               ; A=A+$57 X=A ; [SP-15950]
             ora  !$0000          ; A=A+$57 X=A ; [SP-15950]
 
 ; --- Data region (43 bytes) ---
             DS      4
             DB      $30,$55,$2A,$55,$1A,$00,$40,$55,$06,$00,$2B,$0D,$30,$55,$01,$00
             DB      $2B,$0D,$30,$55,$01
-data_007F1F
+frame_data_7F1F
 ; Jump table (2 entries)
-            DW      data_006A58
-            DW      data_002B00
+            DW      frame_data_6A58
+            DW      anim_data_2B00
             DB      $55,$2A,$55,$06,$AA,$D5,$00,$00,$00,$00,$00,$60
-data_007F2F
+frame_data_7F2F
             DB      $7F
             DB      $3F
 ; --- End data region (43 bytes) ---
 
             brk  #$7E            ; [SP-15968]
             DB      $03,$60
-data_007F35
+frame_data_7F35
             DB      $3F
             brk  #$1F            ; A=A+$57 X=A ; [SP-15968]
             brk  #$3F            ; A=A+$57 X=A ; [SP-15968]
 
 ; --- Data region (72 bytes) ---
             DB      $40,$1F,$60
-data_007F3D
+frame_data_7F3D
             DB      $07
             DB      $7C
             DB      $1F,$7F
-data_007F41
+frame_data_7F41
             DB      $00,$78,$7F,$7F,$7F,$7F,$7F,$7F,$07,$00,$00,$00,$00,$00,$AA,$D5
 ; Address table (7 entries)
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
-            DW      data_008080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
+            DW      frame_data_8080
             DB      $95,$A8,$85,$A8,$C1,$AA,$D0,$82,$80,$8A,$8A,$80,$80,$00,$00,$00
             DS      8
             DB      $AA,$00,$00,$00,$00,$00,$00,$00,$00,$D5,$60
 ; --- End data region (72 bytes) ---
 
-loc_007F82  rol  a               ; A=A+$57 X=A ; [SP-16004]
+frame_data_7F82  rol  a               ; A=A+$57 X=A ; [SP-16004]
             and  $00,X           ; A=A+$57 X=A ; [SP-16004]
             brk  #$00            ; A=A+$57 X=A ; [SP-16007]
 
@@ -4933,7 +4979,7 @@ loc_007F82  rol  a               ; A=A+$57 X=A ; [SP-16004]
             DB      $30,$7F,$30,$81,$30,$83,$30,$85,$30,$87,$30,$89,$30,$8B,$30,$8D
             DB      $30,$8F,$30,$91,$30,$93,$30,$95,$30,$97,$30,$99,$30,$9B,$30,$9D
             DB      $30
-data_008080
+frame_data_8080
             DB      $9F
 ; --- End data region (250 bytes) ---
 
@@ -4970,9 +5016,9 @@ data_008080
 ; --- End data region (411 bytes) ---
 
 ; XREF: 1 ref (1 jump) from $002000
-loc_008220  bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            jsr  sub_00825E      ; A=A+$57 X=A ; [SP-16089]
-            jsr  sub_00823D      ; A=A+$57 X=A ; [SP-16089]
+intro_entry  bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
+            jsr  intro_sequence      ; A=A+$57 X=A ; [SP-16089]
+            jsr  intro_print_string      ; A=A+$57 X=A ; [SP-16089]
 
 ; ---
             DB      $04 ; string length
@@ -4985,59 +5031,59 @@ loc_008220  bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <k
 
 
 ; ---------------------------------------------------------------------------
-; sub_00823D
+; intro_print_string
 ;   ROM: COUT1
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00823D: register -> A:X []
 ; Proto: uint32_t func_00823D(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-sub_00823D  pla                  ; A=[stk] X=A ; [SP-16095]
+intro_print_string  pla                  ; A=[stk] X=A ; [SP-16095]
             sta  $FE             ; A=[stk] X=A ; [SP-16095]
             pla                  ; A=[stk] X=A ; [SP-16094]
             sta  $FF             ; A=[stk] X=A ; [SP-16094]
             ldy  #$00            ; A=[stk] X=A Y=$0000 ; [SP-16094]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 jump) from loc_00824B
-loc_008245  inc  $FE             ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            bne  loc_00824B      ; A=[stk] X=A Y=$0000 ; [SP-16094]
+; XREF: 1 ref (1 jump) from intro_print_char
+intro_print_next  inc  $FE             ; A=[stk] X=A Y=$0000 ; [SP-16094]
+            bne  intro_print_char      ; A=[stk] X=A Y=$0000 ; [SP-16094]
             inc  $FF             ; A=[stk] X=A Y=$0000 ; [SP-16094]
-; XREF: 1 ref (1 branch) from loc_008245
-loc_00824B  lda  ($FE),Y         ; A=[stk] X=A Y=$0000 ; [SP-16094]
-            beq  loc_008257      ; A=[stk] X=A Y=$0000 ; [SP-16094]
+; XREF: 1 ref (1 branch) from intro_print_next
+intro_print_char  lda  ($FE),Y         ; A=[stk] X=A Y=$0000 ; [SP-16094]
+            beq  intro_print_done      ; A=[stk] X=A Y=$0000 ; [SP-16094]
             ora  #$80            ; A=A|$80 X=A Y=$0000 ; [SP-16094]
             jsr  $FDED           ; COUT - Character output routine
-            jmp  loc_008245      ; A=A|$80 X=A Y=$0000 ; [SP-16096]
-; XREF: 1 ref (1 branch) from loc_00824B
-loc_008257  lda  $FF             ; A=[$00FF] X=A Y=$0000 ; [SP-16096]
+            jmp  intro_print_next      ; A=A|$80 X=A Y=$0000 ; [SP-16096]
+; XREF: 1 ref (1 branch) from intro_print_char
+intro_print_done  lda  $FF             ; A=[$00FF] X=A Y=$0000 ; [SP-16096]
             pha                  ; A=[$00FF] X=A Y=$0000 ; [SP-16097]
             lda  $FE             ; A=[$00FE] X=A Y=$0000 ; [SP-16097]
             pha                  ; A=[$00FE] X=A Y=$0000 ; [SP-16098]
             rts                  ; A=[$00FE] X=A Y=$0000 ; [SP-16096]
 
 ; ---------------------------------------------------------------------------
-; sub_00825E
-;   Calls: move_data_6, move_data_7, move_data, check_key, move_data_2, sub_00836E, move_data_3, sub_0083AD
+; intro_sequence
+;   Calls: intro_memcpy, intro_memswap, intro_wipe_title, intro_check_key, intro_wipe_serpent, intro_load_castle, intro_text_crawl, intro_load_exodus
 ;   ROM: WAIT
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00825E: register -> A:X []
 ; Liveness: returns(A,X,Y) [14 dead stores]
-sub_00825E  ldx  #$04            ; A=[$00FE] X=$0004 Y=$0000 ; [SP-16096]
+intro_sequence  ldx  #$04            ; A=[$00FE] X=$0004 Y=$0000 ; [SP-16096]
             lda  #$24            ; A=$0024 X=$0004 Y=$0000 ; [SP-16096]
             ldy  #$88            ; A=$0024 X=$0004 Y=$0088 ; [SP-16096]
-            jsr  move_data_6     ; Call $0084A4(A)
+            jsr  intro_memcpy     ; Call $0084A4(A)
             ldx  #$38            ; A=$0024 X=$0038 Y=$0088 ; [SP-16098]
             lda  #$28            ; A=$0028 X=$0038 Y=$0088 ; [SP-16098]
             ldy  #$08            ; A=$0028 X=$0038 Y=$0008 ; [SP-16098]
-            jsr  move_data_6     ; Call $0084A4(A)
+            jsr  intro_memcpy     ; Call $0084A4(A)
 ; -- video_mode_read: Hi-res graphics mode --
             bit  $C057           ; HIRES - Hi-res graphics mode {Video} <video_mode_read>
             bit  $C052           ; MIXCLR - Full screen graphics {Video} <video_mode_read>
             bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
             bit  $C050           ; TXTCLR - Enable graphics mode {Video} <video_mode_read>
-            jsr  move_data_7     ; A=$0028 X=$0038 Y=$0008 ; [SP-16102]
+            jsr  intro_memswap     ; A=$0028 X=$0038 Y=$0008 ; [SP-16102]
             lda  #$E3            ; A=$00E3 X=$0038 Y=$0008 ; [SP-16102]
             sta  $19             ; A=$00E3 X=$0038 Y=$0008 ; [SP-16102]
             lda  #$9D            ; A=$009D X=$0038 Y=$0008 ; [SP-16102]
@@ -5046,64 +5092,64 @@ sub_00825E  ldx  #$04            ; A=[$00FE] X=$0004 Y=$0000 ; [SP-16096]
             sta  $1B             ; A=$0060 X=$0038 Y=$0008 ; [SP-16102]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 branch) from loc_00828D
-loc_00828B  ldy  #$05            ; A=$0060 X=$0038 Y=$0005 ; [SP-16102]
+; XREF: 1 ref (1 branch) from intro_delay_loop
+intro_wait_nokey  ldy  #$05            ; A=$0060 X=$0038 Y=$0005 ; [SP-16102]
 
 ; === loop starts here (counter: Y, range: 5..0, iters: 5) [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_00828D
-loc_00828D  lda  #$FF            ; A=$00FF X=$0038 Y=$0005 ; [SP-16102]
+; XREF: 1 ref (1 branch) from intro_delay_loop
+intro_delay_loop  lda  #$FF            ; A=$00FF X=$0038 Y=$0005 ; [SP-16102]
             bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
             jsr  $FCA8           ; WAIT - Apple II delay routine
             dey                  ; A=$00FF X=$0038 Y=$0004 ; [SP-16104]
-            bne  loc_00828D      ; A=$00FF X=$0038 Y=$0004 ; [SP-16104]
+            bne  intro_delay_loop      ; A=$00FF X=$0038 Y=$0004 ; [SP-16104]
 ; === End of loop (counter: Y) ===
 
             lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bmi  loc_00828B      ; A=[$C000] X=$0038 Y=$0004 ; [SP-16104]
+            bmi  intro_wait_nokey      ; A=[$C000] X=$0038 Y=$0004 ; [SP-16104]
 ; === End of while loop ===
 
-            jsr  move_data       ; A=[$C000] X=$0038 Y=$0004 ; [SP-16106]
+            jsr  intro_wipe_title       ; A=[$C000] X=$0038 Y=$0004 ; [SP-16106]
             ldy  #$02            ; A=[$C000] X=$0038 Y=$0002 ; [SP-16106]
-            jsr  check_key       ; A=[$C000] X=$0038 Y=$0002 ; [SP-16108]
-            jsr  move_data_2     ; A=[$C000] X=$0038 Y=$0002 ; [SP-16110]
+            jsr  intro_check_key       ; A=[$C000] X=$0038 Y=$0002 ; [SP-16108]
+            jsr  intro_wipe_serpent     ; A=[$C000] X=$0038 Y=$0002 ; [SP-16110]
             ldy  #$05            ; A=[$C000] X=$0038 Y=$0005 ; [SP-16110]
-            jsr  check_key       ; A=[$C000] X=$0038 Y=$0005 ; [SP-16112]
+            jsr  intro_check_key       ; A=[$C000] X=$0038 Y=$0005 ; [SP-16112]
             lda  #$00            ; A=$0000 X=$0038 Y=$0005 ; [SP-16112]
             sta  $1B             ; A=$0000 X=$0038 Y=$0005 ; [SP-16112]
             bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
-            jsr  sub_00836E      ; Call $00836E(A, Y)
+            jsr  intro_load_castle      ; Call $00836E(A, Y)
             ldy  #$02            ; A=$0000 X=$0038 Y=$0002 ; [SP-16114]
-            jsr  check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16116]
-            jsr  move_data_3     ; A=$0000 X=$0038 Y=$0002 ; [SP-16118]
+            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16116]
+            jsr  intro_text_crawl     ; A=$0000 X=$0038 Y=$0002 ; [SP-16118]
             ldy  #$02            ; A=$0000 X=$0038 Y=$0002 ; [SP-16118]
-            jsr  check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16120]
-            jsr  sub_0083AD      ; A=$0000 X=$0038 Y=$0002 ; [SP-16122]
+            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0002 ; [SP-16120]
+            jsr  intro_load_exodus      ; A=$0000 X=$0038 Y=$0002 ; [SP-16122]
             ldy  #$06            ; A=$0000 X=$0038 Y=$0006 ; [SP-16122]
-            jsr  check_key       ; A=$0000 X=$0038 Y=$0006 ; [SP-16124]
-            jsr  move_data_9     ; A=$0000 X=$0038 Y=$0006 ; [SP-16126]
+            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0006 ; [SP-16124]
+            jsr  intro_reveal_anim     ; A=$0000 X=$0038 Y=$0006 ; [SP-16126]
             ldy  #$04            ; A=$0000 X=$0038 Y=$0004 ; [SP-16126]
-            jsr  check_key       ; A=$0000 X=$0038 Y=$0004 ; [SP-16128]
-            jsr  sub_0083BF      ; A=$0000 X=$0038 Y=$0004 ; [SP-16130]
-            jsr  move_data_8     ; A=$0000 X=$0038 Y=$0004 ; [SP-16132]
-            jsr  sub_0083D1      ; A=$0000 X=$0038 Y=$0004 ; [SP-16134]
+            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0004 ; [SP-16128]
+            jsr  intro_load_frame_3      ; A=$0000 X=$0038 Y=$0004 ; [SP-16130]
+            jsr  intro_sound_effect     ; A=$0000 X=$0038 Y=$0004 ; [SP-16132]
+            jsr  intro_load_frame_4      ; A=$0000 X=$0038 Y=$0004 ; [SP-16134]
             ldy  #$05            ; A=$0000 X=$0038 Y=$0005 ; [SP-16134]
-            jsr  check_key       ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
+            jsr  intro_check_key       ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
 
 ; === while loop starts here (counter: Y 'j') ===
-; XREF: 1 ref (1 jump) from check_key_L1
-loc_0082E2  jsr  move_data_7     ; A=$0000 X=$0038 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0082E2 followed by RTS ; [SP-16138]
+; XREF: 1 ref (1 jump) from intro_key_pressed
+intro_finish  jsr  intro_memswap     ; A=$0000 X=$0038 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0082E2 followed by RTS ; [SP-16138]
             rts                  ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
 
 ; ---------------------------------------------------------------------------
-; move_data  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4, utility
+; intro_wipe_title  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit, intro_toggle_page
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0082E6: register -> A:X []
 ; Liveness: returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from loc_00828D
-move_data   lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_wipe_title   lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
             sta  $0B             ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
             lda  #$01            ; A=$0001 X=$0038 Y=$0005 ; [SP-16136]
             sta  $0A             ; A=$0001 X=$0038 Y=$0005 ; [SP-16136]
@@ -5113,18 +5159,18 @@ move_data   lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
             sta  $18             ; A=$0000 X=$0038 Y=$0005 ; [SP-16136]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from move_data_L1
-move_data_L1 lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
+; XREF: 1 ref (1 branch) from intro_wipe_title_loop
+intro_wipe_title_loop lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
             ldx  #$26            ; A=$0008 X=$0026 Y=$0005 ; [SP-16136]
             ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16136]
-            jsr  move_data_4     ; Call $0083E3(X)
-            jsr  utility         ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
+            jsr  intro_hgr_blit     ; Call $0083E3(X)
+            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
             lda  $18             ; A=[$0018] X=$0026 Y=$004D ; [SP-16140]
             clc                  ; A=[$0018] X=$0026 Y=$004D ; [SP-16140]
             adc  #$04            ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
             sta  $18             ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
             cmp  #$00            ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
-            bne  move_data_L1    ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
+            bne  intro_wipe_title_loop    ; A=A+$04 X=$0026 Y=$004D ; [SP-16140]
 ; === End of while loop ===
 
             lda  #$00            ; A=$0000 X=$0026 Y=$004D ; [SP-16140]
@@ -5132,25 +5178,25 @@ move_data_L1 lda  #$08            ; A=$0008 X=$0038 Y=$0005 ; [SP-16136]
             lda  #$08            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
             ldx  #$26            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
             ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16140]
-            jsr  move_data_4     ; A=$0008 X=$0026 Y=$004D ; [SP-16142]
-            jsr  utility         ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
+            jsr  intro_hgr_blit     ; A=$0008 X=$0026 Y=$004D ; [SP-16142]
+            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
             lda  #$08            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
             ldx  #$26            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
             ldy  #$4D            ; A=$0008 X=$0026 Y=$004D ; [SP-16144]
-            jsr  move_data_4     ; A=$0008 X=$0026 Y=$004D ; [SP-16146]
-            jsr  utility         ; A=$0008 X=$0026 Y=$004D ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $008326 followed by RTS ; [SP-16148]
+            jsr  intro_hgr_blit     ; A=$0008 X=$0026 Y=$004D ; [SP-16146]
+            jsr  intro_toggle_page         ; A=$0008 X=$0026 Y=$004D ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $008326 followed by RTS ; [SP-16148]
             rts                  ; A=$0008 X=$0026 Y=$004D ; [SP-16146]
 
 ; ---------------------------------------------------------------------------
-; move_data_2  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4, utility
+; intro_wipe_serpent  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit, intro_toggle_page
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00832A: register -> A:X []
 ; Liveness: returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from loc_00828D
-move_data_2 lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_wipe_serpent lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
             sta  $0B             ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
             lda  #$05            ; A=$0005 X=$0026 Y=$004D ; [SP-16146]
             sta  $0A             ; A=$0005 X=$0026 Y=$004D ; [SP-16146]
@@ -5160,18 +5206,18 @@ move_data_2 lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
             sta  $18             ; A=$0000 X=$0026 Y=$004D ; [SP-16146]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from move_data_2_L1
-move_data_2_L1 lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
+; XREF: 1 ref (1 branch) from intro_wipe_serpent_loop
+intro_wipe_serpent_loop lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
             ldx  #$1F            ; A=$0055 X=$001F Y=$004D ; [SP-16146]
             ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16146]
-            jsr  move_data_4     ; Call $0083E3(X)
-            jsr  utility         ; A=$0055 X=$001F Y=$002B ; [SP-16150]
+            jsr  intro_hgr_blit     ; Call $0083E3(X)
+            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [SP-16150]
             lda  $18             ; A=[$0018] X=$001F Y=$002B ; [SP-16150]
             clc                  ; A=[$0018] X=$001F Y=$002B ; [SP-16150]
             adc  #$02            ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
             sta  $18             ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
             cmp  #$00            ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
-            bne  move_data_2_L1  ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
+            bne  intro_wipe_serpent_loop  ; A=A+$02 X=$001F Y=$002B ; [SP-16150]
 ; === End of while loop ===
 
             lda  #$00            ; A=$0000 X=$001F Y=$002B ; [SP-16150]
@@ -5179,26 +5225,26 @@ move_data_2_L1 lda  #$55            ; A=$0055 X=$0026 Y=$004D ; [SP-16146]
             lda  #$55            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
             ldx  #$1F            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
             ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16150]
-            jsr  move_data_4     ; A=$0055 X=$001F Y=$002B ; [SP-16152]
-            jsr  utility         ; A=$0055 X=$001F Y=$002B ; [SP-16154]
+            jsr  intro_hgr_blit     ; A=$0055 X=$001F Y=$002B ; [SP-16152]
+            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [SP-16154]
             lda  #$55            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
             ldx  #$1F            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
             ldy  #$2B            ; A=$0055 X=$001F Y=$002B ; [SP-16154]
-            jsr  move_data_4     ; A=$0055 X=$001F Y=$002B ; [SP-16156]
-            jsr  utility         ; A=$0055 X=$001F Y=$002B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $00836A followed by RTS ; [SP-16158]
+            jsr  intro_hgr_blit     ; A=$0055 X=$001F Y=$002B ; [SP-16156]
+            jsr  intro_toggle_page         ; A=$0055 X=$001F Y=$002B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $00836A followed by RTS ; [SP-16158]
             rts                  ; A=$0055 X=$001F Y=$002B ; [SP-16156]
 
 ; ---------------------------------------------------------------------------
-; sub_00836E  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4
+; intro_load_castle  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00836E: register -> A:X []
 ; Proto: uint32_t func_00836E(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-sub_00836E  lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_load_castle  lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
             sta  $0B             ; A=$0084 X=$001F Y=$002B ; [SP-16156]
             lda  #$08            ; A=$0008 X=$001F Y=$002B ; [SP-16156]
             sta  $0A             ; A=$0008 X=$001F Y=$002B ; [SP-16156]
@@ -5207,114 +5253,114 @@ sub_00836E  lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
             lda  #$84            ; A=$0084 X=$001F Y=$002B ; [SP-16156]
             ldx  #$03            ; A=$0084 X=$0003 Y=$002B ; [SP-16156]
             ldy  #$09            ; A=$0084 X=$0003 Y=$0009 ; [SP-16156]
-            jsr  move_data_4     ; Call $0083E3(X)
+            jsr  intro_hgr_blit     ; Call $0083E3(X)
             rts                  ; A=$0084 X=$0003 Y=$0009 ; [SP-16156]
 
 ; ---------------------------------------------------------------------------
-; move_data_3  [1 call]
-;   Called by: loc_00828D
-;   Calls: increment, move_data_10
+; intro_text_crawl  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_inc_ptr, intro_plot_pair
 ;   ROM: WAIT
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008384: register -> A:X [I]
 ; Proto: uint32_t func_008384(uint16_t param_Y);
 ; Liveness: params(Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-move_data_3 lda  #$00            ; A=$0000 X=$0003 Y=$0009 ; [SP-16156]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_text_crawl lda  #$00            ; A=$0000 X=$0003 Y=$0009 ; [SP-16156]
             sta  $00             ; A=$0000 X=$0003 Y=$0009 ; [SP-16156]
             lda  #$80            ; A=$0080 X=$0003 Y=$0009 ; [SP-16156]
             sta  $01             ; A=$0080 X=$0003 Y=$0009 ; [SP-16156]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 jump) from move_data_3_L1
-move_data_3_L1 ldx  #$00            ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
+; XREF: 1 ref (1 jump) from intro_crawl_loop
+intro_crawl_loop ldx  #$00            ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
             lda  ($00,X)         ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            beq  move_data_3_L2  ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
+            beq  intro_crawl_done  ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
             sta  $0A             ; A=$0080 X=$0000 Y=$0009 ; [SP-16156]
-            jsr  increment       ; Call $008476(A, X)
+            jsr  intro_inc_ptr       ; Call $008476(A, X)
             lda  #$BF            ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
             sec                  ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
             sbc  ($00,X)         ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
             sta  $0B             ; A=$00BF X=$0000 Y=$0009 ; [SP-16158]
-            jsr  increment       ; A=$00BF X=$0000 Y=$0009 ; [SP-16160]
-            jsr  move_data_10    ; A=$00BF X=$0000 Y=$0009 ; [SP-16162]
+            jsr  intro_inc_ptr       ; A=$00BF X=$0000 Y=$0009 ; [SP-16160]
+            jsr  intro_plot_pair    ; A=$00BF X=$0000 Y=$0009 ; [SP-16162]
             lda  #$40            ; A=$0040 X=$0000 Y=$0009 ; [SP-16162]
             jsr  $FCA8           ; WAIT - Apple II delay routine
-            jmp  move_data_3_L1  ; A=$0040 X=$0000 Y=$0009 ; [SP-16164]
-; XREF: 1 ref (1 branch) from move_data_3_L1
-move_data_3_L2 rts                  ; A=$0040 X=$0000 Y=$0009 ; [SP-16162]
+            jmp  intro_crawl_loop  ; A=$0040 X=$0000 Y=$0009 ; [SP-16164]
+; XREF: 1 ref (1 branch) from intro_crawl_loop
+intro_crawl_done rts                  ; A=$0040 X=$0000 Y=$0009 ; [SP-16162]
 
 ; ---------------------------------------------------------------------------
-; sub_0083AD  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4
+; intro_load_exodus  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0083AD: register -> A:X []
 ; Proto: uint32_t func_0083AD(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-sub_0083AD  lda  #$92            ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_load_exodus  lda  #$92            ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
             sta  $0B             ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
             lda  #$04            ; A=$0004 X=$0000 Y=$0009 ; [SP-16162]
             sta  $0A             ; A=$0004 X=$0000 Y=$0009 ; [SP-16162]
             lda  #$92            ; A=$0092 X=$0000 Y=$0009 ; [SP-16162]
             ldx  #$20            ; A=$0092 X=$0020 Y=$0009 ; [SP-16162]
             ldy  #$05            ; A=$0092 X=$0020 Y=$0005 ; [SP-16162]
-            jsr  move_data_4     ; A=$0092 X=$0020 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083BB followed by RTS ; [SP-16164]
+            jsr  intro_hgr_blit     ; A=$0092 X=$0020 Y=$0005 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083BB followed by RTS ; [SP-16164]
             rts                  ; A=$0092 X=$0020 Y=$0005 ; [SP-16162]
 
 ; ---------------------------------------------------------------------------
-; sub_0083BF  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4
+; intro_load_frame_3  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0083BF: register -> A:X []
 ; Proto: uint32_t func_0083BF(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-sub_0083BF  lda  #$0E            ; A=$000E X=$0020 Y=$0005 ; [SP-16162]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_load_frame_3  lda  #$0E            ; A=$000E X=$0020 Y=$0005 ; [SP-16162]
             sta  $0A             ; A=$000E X=$0020 Y=$0005 ; [SP-16162]
             lda  #$A8            ; A=$00A8 X=$0020 Y=$0005 ; [SP-16162]
             sta  $0B             ; A=$00A8 X=$0020 Y=$0005 ; [SP-16162]
             lda  #$A8            ; A=$00A8 X=$0020 Y=$0005 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0083C3 ; [SP-16162]
             ldx  #$0D            ; A=$00A8 X=$000D Y=$0005 ; [SP-16162]
             ldy  #$10            ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
-            jsr  move_data_4     ; A=$00A8 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083CD followed by RTS ; [SP-16164]
+            jsr  intro_hgr_blit     ; A=$00A8 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083CD followed by RTS ; [SP-16164]
             rts                  ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
 
 ; ---------------------------------------------------------------------------
-; sub_0083D1  [1 call]
-;   Called by: loc_00828D
-;   Calls: move_data_4
+; intro_load_frame_4  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_hgr_blit
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0083D1: register -> A:X []
 ; Proto: uint32_t func_0083D1(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-sub_0083D1  lda  #$0E            ; A=$000E X=$000D Y=$0010 ; [SP-16162]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_load_frame_4  lda  #$0E            ; A=$000E X=$000D Y=$0010 ; [SP-16162]
             sta  $0A             ; A=$000E X=$000D Y=$0010 ; [SP-16162]
             lda  #$A8            ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
             sta  $0B             ; A=$00A8 X=$000D Y=$0010 ; [SP-16162]
             lda  #$98            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
             ldx  #$0D            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
             ldy  #$10            ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
-            jsr  move_data_4     ; A=$0098 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083DF followed by RTS ; [SP-16164]
+            jsr  intro_hgr_blit     ; A=$0098 X=$000D Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0083DF followed by RTS ; [SP-16164]
             rts                  ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
 
 ; ---------------------------------------------------------------------------
-; move_data_4  [10 calls]
-;   Called by: sub_00836E, move_data_2_L1, sub_0083BF, sub_0083D1, move_data_L1, sub_0083AD
+; intro_hgr_blit  [10 calls]
+;   Called by: intro_load_castle, intro_wipe_serpent_loop, intro_load_frame_3, intro_load_frame_4, intro_wipe_title_loop, intro_load_exodus
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0083E3: register -> A:X [LI]
 ; Proto: uint32_t func_0083E3(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y) [6 dead stores]
-; XREF: 10 refs (10 calls) from sub_00836E, move_data_2_L1, sub_0083BF, move_data_2_L1, sub_0083D1, ...
-move_data_4 sta  $0C             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
+; XREF: 10 refs (10 calls) from intro_load_castle, intro_wipe_serpent_loop, intro_load_frame_3, intro_wipe_serpent_loop, intro_load_frame_4, ...
+intro_hgr_blit sta  $0C             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
             stx  $0F             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
             lda  $0B             ; A=[$000B] X=$000D Y=$0010 ; [SP-16162]
             pha                  ; A=[$000B] X=$000D Y=$0010 ; [SP-16163]
@@ -5324,8 +5370,8 @@ move_data_4 sta  $0C             ; A=$0098 X=$000D Y=$0010 ; [SP-16162]
             sty  $0E             ; A=A&$F8 X=$000D Y=$0010 ; [SP-16163]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 1 ref (1 branch) from move_data_4_L4
-move_data_4_L1 lda  $0F             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
+; XREF: 1 ref (1 branch) from intro_blit_store
+intro_blit_row lda  $0F             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
             sta  $0D             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
             ldy  $0B             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
             lda  $1B00,Y         ; -> $1B10 ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
@@ -5342,11 +5388,11 @@ move_data_4_L1 lda  $0F             ; A=[$000F] X=$000D Y=$0010 ; [SP-16163]
             ldy  $0A             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:2] ===
-; XREF: 1 ref (1 branch) from move_data_4_L4
-move_data_4_L2 lda  ($12),Y         ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            beq  move_data_4_L4  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
+; XREF: 1 ref (1 branch) from intro_blit_store
+intro_blit_col lda  ($12),Y         ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
+            beq  intro_blit_store  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
             bit  $17             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
-            bpl  move_data_4_L4  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
+            bpl  intro_blit_store  ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
             sta  $14             ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
             lda  $19             ; A=[$0019] X=$000D Y=$0010 ; [SP-16163]
             adc  #$1D            ; A=A+$1D X=$000D Y=$0010 ; [SP-16163]
@@ -5355,24 +5401,24 @@ move_data_4_L2 lda  ($12),Y         ; A=A|$40 X=$000D Y=$0010 ; [SP-16163]
             sta  $19             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
             stx  $1A             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
             cmp  $18             ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            bcc  move_data_4_L3  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
-            beq  move_data_4_L3  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
+            bcc  intro_blit_draw  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
+            beq  intro_blit_draw  ; A=A+$1D X=A Y=$0010 ; [SP-16163]
             lda  #$00            ; A=$0000 X=A Y=$0010 ; [SP-16163]
-            jmp  move_data_4_L4  ; A=$0000 X=A Y=$0010 ; [SP-16163]
-; XREF: 2 refs (2 branches) from move_data_4_L2, move_data_4_L2
-move_data_4_L3 lda  $14             ; A=[$0014] X=A Y=$0010 ; [SP-16163]
+            jmp  intro_blit_store  ; A=$0000 X=A Y=$0010 ; [SP-16163]
+; XREF: 2 refs (2 branches) from intro_blit_col, intro_blit_col
+intro_blit_draw lda  $14             ; A=[$0014] X=A Y=$0010 ; [SP-16163]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-; XREF: 3 refs (1 jump) (2 branches) from move_data_4_L2, move_data_4_L2, move_data_4_L2
-move_data_4_L4 sta  ($10),Y         ; A=[$0014] X=A Y=$0010 ; [SP-16163]
+; XREF: 3 refs (1 jump) (2 branches) from intro_blit_col, intro_blit_col, intro_blit_col
+intro_blit_store sta  ($10),Y         ; A=[$0014] X=A Y=$0010 ; [SP-16163]
             iny                  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
             dec  $0D             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            bne  move_data_4_L2  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
+            bne  intro_blit_col  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
 ; === End of while loop (counter: Y) ===
 
             inc  $0B             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
             inc  $0C             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
             dec  $0E             ; A=[$0014] X=A Y=$0011 ; [SP-16163]
-            bne  move_data_4_L1  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
+            bne  intro_blit_row  ; A=[$0014] X=A Y=$0011 ; [SP-16163]
 ; === End of while loop (counter: Y) ===
 
             pla                  ; A=[stk] X=A Y=$0011 ; [SP-16162]
@@ -5380,28 +5426,28 @@ move_data_4_L4 sta  ($10),Y         ; A=[$0014] X=A Y=$0010 ; [SP-16163]
             rts                  ; A=[stk] X=A Y=$0011 ; [SP-16160]
 
 ; ---------------------------------------------------------------------------
-; move_data_10  [1 call]
-;   Called by: move_data_3_L1
-;   Calls: move_data_5
+; intro_plot_pair  [1 call]
+;   Called by: intro_crawl_loop
+;   Calls: intro_plot_pixel
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00844C: unknown -> A:X []
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from move_data_3_L1
-move_data_10 inc  $0A             ; A=[stk] X=A Y=$0011 ; [SP-16160]
-            jsr  move_data_5     ; A=[stk] X=A Y=$0011 ; [SP-16162]
+; XREF: 1 ref (1 call) from intro_crawl_loop
+intro_plot_pair inc  $0A             ; A=[stk] X=A Y=$0011 ; [SP-16160]
+            jsr  intro_plot_pixel     ; A=[stk] X=A Y=$0011 ; [SP-16162]
             dec  $0A             ; A=[stk] X=A Y=$0011 ; [SP-16162]
 
 ; ---------------------------------------------------------------------------
-; move_data_5  [1 call]
-;   Called by: move_data_10
+; intro_plot_pixel  [1 call]
+;   Called by: intro_plot_pair
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008453: register -> A:X [L]
 ; Proto: uint32_t func_008453(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 1 ref (1 call) from move_data_10
-move_data_5 ldy  $0B             ; A=[stk] X=A Y=$0011 ; [SP-16162]
+; XREF: 1 ref (1 call) from intro_plot_pair
+intro_plot_pixel ldy  $0B             ; A=[stk] X=A Y=$0011 ; [SP-16162]
             lda  $1B00,Y         ; -> $1B11 ; A=[stk] X=A Y=$0011 ; [SP-16162]
             sta  $10             ; A=[stk] X=A Y=$0011 ; [SP-16162]
             sta  $12             ; A=[stk] X=A Y=$0011 ; [SP-16162]
@@ -5419,19 +5465,19 @@ move_data_5 ldy  $0B             ; A=[stk] X=A Y=$0011 ; [SP-16162]
             rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16160]
 
 ; ---------------------------------------------------------------------------
-; increment  [2 calls]
-;   Called by: move_data_3_L1
+; intro_inc_ptr  [2 calls]
+;   Called by: intro_crawl_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008476: register -> A:X []
 ; Proto: uint32_t func_008476(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from move_data_3_L1, move_data_3_L1
-increment   inc  $00             ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-            bne  increment_L1    ; A=A^$60 X=A Y=$0011 ; [SP-16160]
+; XREF: 2 refs (2 calls) from intro_crawl_loop, intro_crawl_loop
+intro_inc_ptr   inc  $00             ; A=A^$60 X=A Y=$0011 ; [SP-16160]
+            bne  intro_inc_ptr_done    ; A=A^$60 X=A Y=$0011 ; [SP-16160]
             inc  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16160]
-; XREF: 1 ref (1 branch) from increment
-increment_L1 rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16158]
+; XREF: 1 ref (1 branch) from intro_inc_ptr
+intro_inc_ptr_done rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16158]
 
 ; --- Data region (39 bytes) ---
             DB      $68,$85,$08,$68,$85,$09,$E6,$08,$D0,$02,$E6,$09,$A2,$00,$A1,$08
@@ -5441,15 +5487,15 @@ increment_L1 rts                  ; A=A^$60 X=A Y=$0011 ; [SP-16158]
 
 
 ; ---------------------------------------------------------------------------
-; move_data_6  [2 calls]
-;   Called by: sub_00825E
+; intro_memcpy  [2 calls]
+;   Called by: intro_sequence
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0084A4: register -> A:X [L]
 ; Proto: uint32_t func_0084A4(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from sub_00825E, sub_00825E
-move_data_6 sta  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
+; XREF: 2 refs (2 calls) from intro_sequence, intro_sequence
+intro_memcpy sta  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
             sty  $05             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
             lda  #$00            ; A=$0000 X=A Y=$0011 ; [SP-16158]
             sta  $00             ; A=$0000 X=A Y=$0011 ; [SP-16158]
@@ -5457,31 +5503,31 @@ move_data_6 sta  $01             ; A=A^$60 X=A Y=$0011 ; [SP-16158]
             ldy  #$00            ; A=$0000 X=A Y=$0000 ; [SP-16158]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 2 refs (2 branches) from move_data_6_L1, move_data_6_L1
-move_data_6_L1 lda  ($00),Y         ; A=$0000 X=A Y=$0000 ; [SP-16158]
+; XREF: 2 refs (2 branches) from intro_memcpy_loop, intro_memcpy_loop
+intro_memcpy_loop lda  ($00),Y         ; A=$0000 X=A Y=$0000 ; [SP-16158]
             sta  ($04),Y         ; A=$0000 X=A Y=$0000 ; [SP-16158]
             iny                  ; A=$0000 X=A Y=$0001 ; [SP-16158]
-            bne  move_data_6_L1  ; A=$0000 X=A Y=$0001 ; [SP-16158]
+            bne  intro_memcpy_loop  ; A=$0000 X=A Y=$0001 ; [SP-16158]
 ; === End of while loop (counter: Y) ===
 
             inc  $01             ; A=$0000 X=A Y=$0001 ; [SP-16158]
             inc  $05             ; A=$0000 X=A Y=$0001 ; [SP-16158]
             dex                  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16158]
-            bne  move_data_6_L1  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16158]
+            bne  intro_memcpy_loop  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16158]
 ; === End of loop (counter: X) ===
 
             rts                  ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
 
 ; ---------------------------------------------------------------------------
-; move_data_7  [2 calls]
-;   Called by: loc_0082E2, sub_00825E
+; intro_memswap  [2 calls]
+;   Called by: intro_finish, intro_sequence
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0084BF: register -> A:X [L]
 ; Proto: uint32_t func_0084BF(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 2 refs (2 calls) from loc_0082E2, sub_00825E
-move_data_7 lda  #$00            ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
+; XREF: 2 refs (2 calls) from intro_finish, intro_sequence
+intro_memswap lda  #$00            ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
             sta  $00             ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
             sta  $04             ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
             lda  #$04            ; A=$0004 X=X-$01 Y=$0001 ; [SP-16156]
@@ -5492,105 +5538,105 @@ move_data_7 lda  #$00            ; A=$0000 X=X-$01 Y=$0001 ; [SP-16156]
             ldx  #$04            ; A=$0088 X=$0004 Y=$0000 ; [SP-16156]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 2 refs (2 branches) from move_data_7_L1, move_data_7_L1
-move_data_7_L1 lda  ($00),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16156]
+; XREF: 2 refs (2 branches) from intro_memswap_loop, intro_memswap_loop
+intro_memswap_loop lda  ($00),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16156]
             pha                  ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
             lda  ($04),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
             sta  ($00),Y         ; A=$0088 X=$0004 Y=$0000 ; [SP-16157]
             pla                  ; A=[stk] X=$0004 Y=$0000 ; [SP-16156]
             sta  ($04),Y         ; A=[stk] X=$0004 Y=$0000 ; [SP-16156]
             iny                  ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
-            bne  move_data_7_L1  ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
+            bne  intro_memswap_loop  ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
 ; === End of while loop (counter: Y) ===
 
             inc  $01             ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
             inc  $05             ; A=[stk] X=$0004 Y=$0001 ; [SP-16156]
             dex                  ; A=[stk] X=$0003 Y=$0001 ; [SP-16156]
-            bne  move_data_7_L1  ; A=[stk] X=$0003 Y=$0001 ; [SP-16156]
+            bne  intro_memswap_loop  ; A=[stk] X=$0003 Y=$0001 ; [SP-16156]
 ; === End of loop (counter: X) ===
 
             rts                  ; A=[stk] X=$0003 Y=$0001 ; [SP-16154]
 
 ; ---------------------------------------------------------------------------
-; check_key  [7 calls, 1 branch]
-;   Called by: loc_00828D
+; intro_check_key  [7 calls, 1 branch]
+;   Called by: intro_delay_loop
 ;   ROM: WAIT
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0084E6: register -> A:X []
 ; Proto: uint32_t func_0084E6(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 8 refs (7 calls) (1 branch) from loc_00828D, loc_00828D, loc_00828D, loc_00828D, loc_00828D, ...
-check_key   lda  #$FF            ; A=$00FF X=$0003 Y=$0001 ; [SP-16154]
+; XREF: 8 refs (7 calls) (1 branch) from intro_delay_loop, intro_delay_loop, intro_delay_loop, intro_delay_loop, intro_delay_loop, ...
+intro_check_key   lda  #$FF            ; A=$00FF X=$0003 Y=$0001 ; [SP-16154]
             jsr  $FCA8           ; WAIT - Apple II delay routine
             lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bmi  check_key_L1    ; A=[$C000] X=$0003 Y=$0001 ; [SP-16156]
+            bmi  intro_key_pressed    ; A=[$C000] X=$0003 Y=$0001 ; [SP-16156]
             dey                  ; A=[$C000] X=$0003 Y=$0000 ; [SP-16156]
-            bne  check_key       ; A=[$C000] X=$0003 Y=$0000 ; [SP-16156]
+            bne  intro_check_key       ; A=[$C000] X=$0003 Y=$0000 ; [SP-16156]
 ; === End of loop (counter: Y) ===
 
             rts                  ; A=[$C000] X=$0003 Y=$0000 ; [SP-16154]
-; XREF: 1 ref (1 branch) from check_key
-check_key_L1 bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
+; XREF: 1 ref (1 branch) from intro_check_key
+intro_key_pressed bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
             pla                  ; A=[stk] X=$0003 Y=$0000 ; [SP-16153]
             pla                  ; A=[stk] X=$0003 Y=$0000 ; [SP-16152]
-            jmp  loc_0082E2      ; A=[stk] X=$0003 Y=$0000 ; [SP-16152]
+            jmp  intro_finish      ; A=[stk] X=$0003 Y=$0000 ; [SP-16152]
 ; === End of while loop (counter: Y) ===
 
 
 ; ---------------------------------------------------------------------------
-; utility  [6 calls]
-;   Called by: move_data_L1, move_data_2_L1
+; intro_toggle_page  [6 calls]
+;   Called by: intro_wipe_title_loop, intro_wipe_serpent_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0084FC: register -> A:X [L]
 ; Proto: uint32_t func_0084FC(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 6 refs (6 calls) from move_data_L1, move_data_L1, move_data_L1, move_data_2_L1, move_data_2_L1, ...
-utility     lda  $1B             ; A=[$001B] X=$0003 Y=$0000 ; [SP-16152]
+; XREF: 6 refs (6 calls) from intro_wipe_title_loop, intro_wipe_title_loop, intro_wipe_title_loop, intro_wipe_serpent_loop, intro_wipe_serpent_loop, ...
+intro_toggle_page     lda  $1B             ; A=[$001B] X=$0003 Y=$0000 ; [SP-16152]
             eor  #$60            ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
             sta  $1B             ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
-            bne  utility_L1      ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
+            bne  intro_show_page1      ; A=A^$60 X=$0003 Y=$0000 ; [SP-16152]
             bit  $C055           ; HISCR - Display page 2 {Video} <page_switch>
             rts                  ; A=A^$60 X=$0003 Y=$0000 ; [SP-16150]
-; XREF: 1 ref (1 branch) from utility
-utility_L1  bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
+; XREF: 1 ref (1 branch) from intro_toggle_page
+intro_show_page1  bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
             rts                  ; A=A^$60 X=$0003 Y=$0000 ; [SP-16148]
 
 ; ---------------------------------------------------------------------------
-; move_data_8  [1 call]
-;   Called by: loc_00828D
-;   Calls: store_values
+; intro_sound_effect  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_prng_mod
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00850C: register -> A:X []
 ; Proto: uint32_t func_00850C(uint16_t param_Y);
 ; Liveness: params(Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00828D
-move_data_8 lda  #$00            ; A=$0000 X=$0003 Y=$0000 ; [SP-16148]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_sound_effect lda  #$00            ; A=$0000 X=$0003 Y=$0000 ; [SP-16148]
             sta  $14             ; A=$0000 X=$0003 Y=$0000 ; [SP-16148]
             lda  #$05            ; A=$0005 X=$0003 Y=$0000 ; [SP-16148]
             sta  $15             ; A=$0005 X=$0003 Y=$0000 ; [SP-16148]
 
 ; === while loop starts here ===
-; XREF: 2 refs (2 branches) from move_data_8_L2, move_data_8_L2
-move_data_8_L1 lda  #$FF            ; A=$00FF X=$0003 Y=$0000 ; [SP-16148]
-            jsr  store_values    ; A=$00FF X=$0003 Y=$0000 ; [SP-16150]
+; XREF: 2 refs (2 branches) from intro_sound_inner, intro_sound_inner
+intro_sound_outer lda  #$FF            ; A=$00FF X=$0003 Y=$0000 ; [SP-16148]
+            jsr  intro_prng_mod    ; A=$00FF X=$0003 Y=$0000 ; [SP-16150]
             tax                  ; A=$00FF X=$00FF Y=$0000 ; [SP-16150]
 
 ; === loop starts here (counter: X) [nest:2] ===
-; XREF: 1 ref (1 branch) from move_data_8_L2
-move_data_8_L2 dex                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  move_data_8_L2  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
+; XREF: 1 ref (1 branch) from intro_sound_inner
+intro_sound_inner dex                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
+            bne  intro_sound_inner  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
 ; === End of loop (counter: X) ===
 
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $14             ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  move_data_8_L1  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
+            bne  intro_sound_outer  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
 ; === End of while loop ===
 
             dec  $15             ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
-            bne  move_data_8_L1  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
+            bne  intro_sound_outer  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
             rts                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
 
 ; ---
@@ -5600,17 +5646,17 @@ move_data_8_L2 dex                  ; A=$00FF X=$00FE Y=$0000 ; [SP-16150]
 
 
 ; ---------------------------------------------------------------------------
-; store_values  [2 calls]
-;   Called by: move_data_8_L1, move_data_8_L2
+; intro_prng_mod  [2 calls]
+;   Called by: intro_sound_outer, intro_sound_inner
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008548: register -> A:X [L]
 ; Proto: uint32_t func_008548(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 2 refs (2 calls) from move_data_8_L1, move_data_8_L2
-store_values sta  $8569           ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
+; XREF: 2 refs (2 calls) from intro_sound_outer, intro_sound_inner
+intro_prng_mod sta  $8569           ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
             cmp  #$00            ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
-            beq  store_values_L2 ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
+            beq  intro_prng_done ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
             lda  $19             ; A=[$0019] X=$00FE Y=$0000 ; [SP-16148]
             pha                  ; A=[$0019] X=$00FE Y=$0000 ; [SP-16149]
             adc  $1A             ; A=[$0019] X=$00FE Y=$0000 ; [SP-16149]
@@ -5621,29 +5667,29 @@ store_values sta  $8569           ; A=$00FF X=$00FE Y=$0000 ; [SP-16148]
             sta  $1A             ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 jump) from store_values_L1
-store_values_L1 cmp  $8569           ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            bcc  store_values_L2 ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
+; XREF: 1 ref (1 jump) from intro_prng_loop
+intro_prng_loop cmp  $8569           ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
+            bcc  intro_prng_done ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
             sec                  ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
             sbc  $8569           ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
-            jmp  store_values_L1 ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
+            jmp  intro_prng_loop ; A=A+$17 X=$00FE Y=$0000 ; [SP-16148]
 ; === End of while loop ===
 
-; XREF: 2 refs (2 branches) from store_values, store_values_L1
-store_values_L2 rts                  ; A=A+$17 X=$00FE Y=$0000 ; [SP-16146]
+; XREF: 2 refs (2 branches) from intro_prng_mod, intro_prng_loop
+intro_prng_done rts                  ; A=A+$17 X=$00FE Y=$0000 ; [SP-16146]
             DB      $00
 
 ; ---------------------------------------------------------------------------
-; move_data_9  [1 call]
-;   Called by: loc_00828D
-;   Calls: shift_bits_2
+; intro_reveal_anim  [1 call]
+;   Called by: intro_delay_loop
+;   Calls: intro_draw_column
 ;   ROM: WAIT
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00856A: register -> A:X []
 ; Liveness: returns(A,X,Y) [4 dead stores]
-; XREF: 1 ref (1 call) from loc_00828D
-move_data_9 lda  #$00            ; A=$0000 X=$00FE Y=$0000 ; [SP-16149]
+; XREF: 1 ref (1 call) from intro_delay_loop
+intro_reveal_anim lda  #$00            ; A=$0000 X=$00FE Y=$0000 ; [SP-16149]
             sta  $1B             ; A=$0000 X=$00FE Y=$0000 ; [SP-16152]
             bit  $C054           ; LOWSCR - Display page 1 {Video} <page_switch>
             lda  #$2A            ; A=$002A X=$00FE Y=$0000 ; [SP-16152]
@@ -5651,14 +5697,14 @@ move_data_9 lda  #$00            ; A=$0000 X=$00FE Y=$0000 ; [SP-16149]
             ldy  #$02            ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
 
 ; === while loop starts here ===
-; XREF: 2 refs (2 branches) from move_data_9_L2, move_data_9_L2
-move_data_9_L1 lda  $85B5,Y         ; -> $85B7 ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
+; XREF: 2 refs (2 branches) from intro_reveal_inner, intro_reveal_inner
+intro_reveal_outer lda  $85B5,Y         ; -> $85B7 ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
             sta  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
 
 ; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from move_data_9_L2
-move_data_9_L2 ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
-            jsr  shift_bits_2    ; A=$002A X=$00FE Y=$0002 ; [SP-16154]
+; XREF: 1 ref (1 branch) from intro_reveal_inner
+intro_reveal_inner ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
+            jsr  intro_draw_column    ; A=$002A X=$00FE Y=$0002 ; [SP-16154]
             lda  #$D0            ; A=$00D0 X=$00FE Y=$0002 ; [SP-16154]
             jsr  $FCA8           ; WAIT - Apple II delay routine
             lda  $71             ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
@@ -5666,7 +5712,7 @@ move_data_9_L2 ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
             adc  $85A9,Y         ; -> $85AB ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
             sta  $71             ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
             cmp  $85AC,Y         ; -> $85AE ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
-            bne  move_data_9_L2  ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
+            bne  intro_reveal_inner  ; A=[$0071] X=$00FE Y=$0002 ; [SP-16156]
 ; === End of while loop ===
 
             lda  $0A             ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
@@ -5674,13 +5720,13 @@ move_data_9_L2 ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
             adc  $85AF,Y         ; -> $85B1 ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
             sta  $0A             ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
             cmp  $85B2,Y         ; -> $85B4 ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
-            bne  move_data_9_L1  ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
+            bne  intro_reveal_outer  ; A=[$000A] X=$00FE Y=$0002 ; [SP-16156]
 ; === End of while loop ===
 
             dey                  ; A=[$000A] X=$00FE Y=$0001 ; [SP-16156]
-            bpl  move_data_9_L1  ; A=[$000A] X=$00FE Y=$0001 ; [SP-16156]
+            bpl  intro_reveal_outer  ; A=[$000A] X=$00FE Y=$0001 ; [SP-16156]
             ldx  #$00            ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
-            jsr  shift_bits_2    ; A=[$000A] X=$0000 Y=$0001 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0085A5 followed by RTS ; [SP-16158]
+            jsr  intro_draw_column    ; A=[$000A] X=$0000 Y=$0001 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0085A5 followed by RTS ; [SP-16158]
             rts                  ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
 
 ; ---
@@ -5689,15 +5735,15 @@ move_data_9_L2 ldx  $71             ; A=$002A X=$00FE Y=$0002 ; [SP-16152]
 
 
 ; ---------------------------------------------------------------------------
-; shift_bits_2  [2 calls]
-;   Called by: move_data_9_L2
+; intro_draw_column  [2 calls]
+;   Called by: intro_reveal_inner
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0085B8: register -> A:X [L]
 ; Proto: uint32_t func_0085B8(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y) [9 dead stores]
-; XREF: 2 refs (2 calls) from move_data_9_L2, move_data_9_L2
-shift_bits_2 sta  $1C             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
+; XREF: 2 refs (2 calls) from intro_reveal_inner, intro_reveal_inner
+intro_draw_column sta  $1C             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
             stx  $1E             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
             sty  $1D             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
             lda  $0A             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
@@ -5708,37 +5754,37 @@ shift_bits_2 sta  $1C             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16155]
             asl  a               ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
             tax                  ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
             lda  $0400,X         ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            sta  shift_bits_2_L3 ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L3
-            sta  shift_bits_2_L5 ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L5
+            sta  intro_draw_src_lo ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src_lo
+            sta  intro_draw_src2_lo ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src2_lo
             lda  $0401,X         ; A=$0000 X=$0000 Y=$0001 ; [SP-16156]
-            sta  shift_bits_2_L4 ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L4
-            sta  shift_bits_2_L6 ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L6
+            sta  intro_draw_src_hi ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src_hi
+            sta  intro_draw_src2_hi ; A=$0000 X=$0000 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_src2_hi
             lda  $0A             ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
             asl  a               ; A=[$000A] X=$0000 Y=$0001 ; [SP-16156]
             tax                  ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            bcs  shift_bits_2_L1 ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
+            bcs  intro_draw_alt_base ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             lda  $1D80,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             sta  $1F             ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             lda  $1E98,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            jmp  shift_bits_2_L2 ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-; XREF: 1 ref (1 branch) from shift_bits_2
-shift_bits_2_L1 lda  $1E80,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
+            jmp  intro_draw_calc_src ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
+; XREF: 1 ref (1 branch) from intro_draw_column
+intro_draw_alt_base lda  $1E80,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             sta  $1F             ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             lda  $1E9C,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-; XREF: 1 ref (1 jump) from shift_bits_2
-shift_bits_2_L2 asl  a               ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
+; XREF: 1 ref (1 jump) from intro_draw_column
+intro_draw_calc_src asl  a               ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             tax                  ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
             lda  $FFFF,X         ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156]
-            sta  shift_bits_2_L9 ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L9
+            sta  intro_draw_glyph_lo ; A=[$000A] X=[$000A] Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_glyph_lo
             inx                  ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156]
             lda  $FFFF,X         ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156]
-            sta  shift_bits_2_L10 ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> shift_bits_2_L10
+            sta  intro_draw_glyph_hi ; A=[$000A] X=X+$01 Y=$0001 ; [SP-16156] ; WARNING: Self-modifying code -> intro_draw_glyph_hi
             lda  #$10            ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
             sta  $0E             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
 
 ; === while loop starts here (counter: Y 'iter_y') ===
-; XREF: 1 ref (1 branch) from shift_bits_2_L11
-shift_bits_2_L7 ldy  $0B             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
+; XREF: 1 ref (1 branch) from intro_draw_next_byte
+intro_draw_row_loop ldy  $0B             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
             lda  $1B00,Y         ; -> $1B01 ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
             sta  $10             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
             lda  $1BC0,Y         ; -> $1BC1 ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
@@ -5759,22 +5805,22 @@ shift_bits_2_L7 ldy  $0B             ; A=$0010 X=X+$01 Y=$0001 ; [SP-16156]
             ldy  $1F             ; A=$000D X=X+$01 Y=A ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $008614 ; [SP-16156]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:1] ===
-; XREF: 1 ref (1 branch) from shift_bits_2_L11
-shift_bits_2_L8 lda  $FFFF           ; A=[$FFFF] X=X+$01 Y=A ; [SP-16156]
+; XREF: 1 ref (1 branch) from intro_draw_next_byte
+intro_draw_byte lda  $FFFF           ; A=[$FFFF] X=X+$01 Y=A ; [SP-16156]
             ora  #$80            ; A=A|$80 X=X+$01 Y=A ; [SP-16156]
             sta  ($10),Y         ; A=A|$80 X=X+$01 Y=A ; [SP-16156]
             iny                  ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            inc  shift_bits_2_L9 ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  shift_bits_2_L11 ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            inc  shift_bits_2_L10 ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-; XREF: 1 ref (1 branch) from shift_bits_2_L10
-shift_bits_2_L11 dec  $0D             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  shift_bits_2_L8 ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+            inc  intro_draw_glyph_lo ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+            bne  intro_draw_next_byte ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+            inc  intro_draw_glyph_hi ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+; XREF: 1 ref (1 branch) from intro_draw_glyph_hi
+intro_draw_next_byte dec  $0D             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+            bne  intro_draw_byte ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
 ; === End of while loop (counter: Y) ===
 
             inc  $0B             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
             dec  $0E             ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
-            bne  shift_bits_2_L7 ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
+            bne  intro_draw_row_loop ; A=A|$80 X=X+$01 Y=Y+$01 ; [SP-16156]
 ; === End of while loop (counter: Y) ===
 
             pla                  ; A=[stk] X=X+$01 Y=Y+$01 ; [SP-16155]

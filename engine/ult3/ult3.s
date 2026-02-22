@@ -1,3 +1,63 @@
+; ===========================================================================
+; ULT3.s — Ultima III: Exodus Main Game Engine
+; ===========================================================================
+;
+; 17,408 bytes at $5000. Core game logic, combat, magic, equipment, I/O.
+; Reassembled byte-identical from CIDAR disassembly via asmiigs.
+;
+; Subsystems:
+;   $5000-$54FF  Boot / Initialization — game setup, data init, quit handler
+;   $5506-$58E8  Character Management — record decrypt/encrypt, field access
+;   $58E9-$5C62  Character Field Read — char_decrypt_records (14 callers)
+;   $5C63-$6457  Character Field Write — char_combat_turn, BCD arithmetic
+;   $6458-$65AF  File I/O — save/load PLRS, PRTY, SOSA, overlays
+;   $65B0-$6F42  Game Main Loop — central state machine, command dispatch
+;   $6F43-$7086  Location & World — check_location, advance_turn
+;   $7087-$71FF  Combat HP & Damage — BCD multiply, apply damage, party alive
+;   $7200-$731F  Combat End — termination check, XOR checksum
+;   $7320-$7445  Movement Display — save cursor, show party status
+;   $7446-$746F  Input — input_wait_key, keyboard polling
+;   $7470-$75AD  Turn Processing — move_process_turn, turn resolution
+;   $75AE-$761C  Magic — cast spell, resolve effect, check MP
+;   $761D-$772C  Equipment — equip_handle, class restrictions
+;   $772D-$79FF  Shops & Items — shop_handle, transactions
+;   $7961-$7A80  World Movement — world_move_handler, overworld dispatch
+;   $7A0C-$7C0B  Dungeon — dungeon_handle, level navigation
+;   $7C0C-$7DFF  Tile & Map — passability, special tiles, map read
+;   $7E00-$88FF  Rendering — viewport, sprites, animation, HGR math
+;   $897A-$8CFF  Name Table — 921 bytes, all entity names (high-ASCII)
+;   $93DE        calc_hgr_scanline — HGR scanline address computation
+;
+; Key Forward References (EQU, mid-instruction entry points):
+;   $5882  input_return_to_loop    Return from input to main loop
+;   $658D  game_loop_vblank        VBlank sync point
+;   $65B0  game_main_loop          Central state machine entry
+;   $71F6  combat_dead_xor_addr    Death state XOR address
+;   $746E  input_wait_restore_y    Input wait Y register restore
+;   $7CFC  tile_lookup_data        Combat tile lookup table
+;   $882D  render_party_drop_jmp   Party render jump point
+;   $882F  render_animate          Animation frame handler
+;   $8880  render_party_exit       Party render exit point
+;
+; Zero-Page Usage:
+;   $00/$01    map_cursor_x/y        Map/overworld position
+;   $02/$03    combat_cursor_x/y     Combat grid position
+;   $0E        transport_type        Movement mode (SPEEDZ alias)
+;   $0F        animation_slot        Tile animation table offset
+;   $10        combat_active_flag    Nonzero = in combat
+;   $B0-$B2    disk_io_flags         Disk I/O state
+;   $CE        current_tile          Tile under player
+;   $D0-$D5    display_state         Viewport rendering state
+;   $E0        party_transport       PRTY transport byte
+;   $E1        party_size            Active party member count
+;   $E2        location_type         PRTY location type
+;   $E3/$E4    saved_x/saved_y       PRTY overworld coords
+;   $E5        party_sentinel        $FF when party active
+;   $E6-$E9    party_slots           Roster indices for 4 members
+;   $F0-$F3    temp_work             General scratch registers
+;   $F9/$FA    text_cursor_x/y       Text output cursor position
+;   $FE/$FF    data_pointer          General data pointer
+;
 ; === Optimization Hints Report ===
 ; Total hints: 31
 ; Estimated savings: 70 cycles/bytes
@@ -8,28 +68,28 @@
 ; $006F7C   PEEPHOLE          MEDIUM    4        Load after store: 2 byte pattern at $006F7C
 ; $0077AE   PEEPHOLE          MEDIUM    7        Redundant PHA/PLA: 2 byte pattern at $0077AE
 ; $007B4A   REDUNDANT_LOAD    MEDIUM    3        Redundant LDA: same value loaded at $007B3F
-; $005896   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $005897   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $005C86   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $005C87   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $007A3B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $007E08   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $007E1B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $007E1C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $00879C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $00879D   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $00879E   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088BF   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088C0   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088C1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088C2   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088E6   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088E7   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088E8   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0088E9   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0093E1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0093E2   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0093E3   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
+; $005896   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $005897   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $005C86   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $005C87   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $007A3B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $007E08   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $007E1B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $007E1C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $00879C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $00879D   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $00879E   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088BF   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088C0   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088C1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088C2   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088E6   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088E7   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088E8   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0088E9   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0093E1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0093E2   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
+; $0093E3   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for render_encrypt_records
 ; $005C90   TAIL_CALL         HIGH      6        Tail call: JSR/JSL at $005C90 followed by RTS
 ; $0074B0   TAIL_CALL         HIGH      6        Tail call: JSR/JSL at $0074B0 followed by RTS
 ; $007728   TAIL_CALL         HIGH      6        Tail call: JSR/JSL at $007728 followed by RTS
@@ -1445,37 +1505,37 @@
 ; Forward references — labels at mid-instruction addresses
 ; ===========================================================================
 
-; NOTE: loc_005882 enters mid-instruction — alternate decode: JMP $6E35
-loc_005882   EQU $5882
+; NOTE: input_return_to_loop enters mid-instruction — alternate decode: JMP $6E35
+input_return_to_loop   EQU $5882
 
-; NOTE: data_00658D enters mid-instruction — alternate decode: LDA $B2 / BNE $658D / JSR $46B7
-data_00658D  EQU $658D
+; NOTE: game_loop_vblank enters mid-instruction — alternate decode: LDA $B2 / BNE $658D / JSR $46B7
+game_loop_vblank  EQU $658D
 
-; NOTE: move_data enters mid-instruction — alternate decode: LDA $B0 / PHA / LDA #$00
-move_data    EQU $65B0
+; NOTE: game_main_loop enters mid-instruction — alternate decode: LDA $B0 / PHA / LDA #$00
+game_main_loop    EQU $65B0
 
-; NOTE: helper_8_L2 enters mid-instruction — alternate decode: BVC $7180 / BPL $71F4 / LDX #$50
-helper_8_L2  EQU $71F6
+; NOTE: combat_dead_xor_addr enters mid-instruction — alternate decode: BVC $7180 / BPL $71F4 / LDX #$50
+combat_dead_xor_addr  EQU $71F6
 
-; NOTE: set_value_3_L4 enters mid-instruction — alternate decode: BRK #$20 / LDA $B769 / ORA #$55
-set_value_3_L4 EQU $746E
+; NOTE: input_wait_restore_y enters mid-instruction — alternate decode: BRK #$20 / LDA $B769 / ORA #$55
+input_wait_restore_y EQU $746E
 
-; NOTE: data_007CFC enters mid-instruction — alternate decode: CMP ... / CMP ... / ORA ...
-data_007CFC  EQU $7CFC
+; NOTE: tile_lookup_data enters mid-instruction — alternate decode: CMP ... / CMP ... / ORA ...
+tile_lookup_data  EQU $7CFC
 
-; NOTE: dispatch_4_L1 enters mid-instruction — alternate decode: EOR ($A0) / BMI $8802 / INC $4CF0,X
-dispatch_4_L1 EQU $882D
+; NOTE: render_party_drop_jmp enters mid-instruction — alternate decode: EOR ($A0) / BMI $8802 / INC $4CF0,X
+render_party_drop_jmp EQU $882D
 
-; NOTE: loc_008880 enters mid-instruction — alternate decode: RTS
-loc_008880   EQU $8880
+; NOTE: render_party_exit enters mid-instruction — alternate decode: RTS
+render_party_exit   EQU $8880
 
-; NOTE: helper_9 enters mid-instruction — alternate decode: JSR $46E7 / AND #$03 / BEQ $8889
-helper_9     EQU $8881
+; NOTE: render_get_tile_char enters mid-instruction — alternate decode: JSR $46E7 / AND #$03 / BEQ $8889
+render_get_tile_char     EQU $8881
 
-; NOTE: get_value_7_L3 enters mid-instruction — alternate decode: INC $FF49,X / STA ($FE),Y / DEX
-get_value_7_L3 EQU $88D9
+; NOTE: render_offset_end enters mid-instruction — alternate decode: INC $FF49,X / STA ($FE),Y / DEX
+render_offset_end EQU $88D9
 
-adjust       EQU $882F
+render_animate       EQU $882F
 
 ; (11 forward-reference equates, 10 with alternate decode notes)
 
@@ -1503,15 +1563,15 @@ adjust       EQU $882F
             DB      $00,$85,$FA,$A9,$1E,$85,$F9,$20,$BA,$46,$1D,$31,$1E,$00,$A9,$1E
             DB      $85,$F9,$A9,$04,$85,$FA,$20,$BA,$46,$1D,$32,$1E,$00,$A9,$1E,$85
             DB      $F9
-data_00506C
+boot_init_data_1
             DB      $A9,$08,$85
-data_00506F
+boot_init_data_2
             DB      $FA,$20,$BA,$46,$1D,$33,$1E,$00,$A9,$1E,$85,$F9,$A9,$0C,$85,$FA
             DB      $20,$BA,$46,$1D,$34,$1E,$00,$60
 ; --- End data region (129 bytes) ---
 
 ; XREF: 1 ref (1 jump) from $005047
-loc_005087  lda  #$58            ; A=$0058 ; [SP-34]
+boot_setup_game  lda  #$58            ; A=$0058 ; [SP-34]
             sta  $B403           ; A=$0058 ; [SP-34]
             lda  #$FF            ; A=$00FF ; [SP-34]
             sta  $B404           ; A=$00FF ; [SP-34]
@@ -1527,25 +1587,25 @@ loc_005087  lda  #$58            ; A=$0058 ; [SP-34]
             bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
 
 ; === while loop starts here (counter: Y 'j') ===
-; XREF: 3 refs (3 jumps) from dispatch_3_L1, dispatch_3_L2, dispatch_3_L3
-loc_0050A7  lda  $36             ; A=[$0036] ; [SP-36]
+; XREF: 3 refs (3 jumps) from world_move_start, world_move_check_torch, world_move_dungeon
+boot_check_quit  lda  $36             ; A=[$0036] ; [SP-36]
             cmp  #$4A            ; A=[$0036] ; [SP-36]
-            bne  loc_0050B5      ; A=[$0036] ; [SP-36]
+            bne  boot_clear_floor      ; A=[$0036] ; [SP-36]
             lda  $37             ; A=[$0037] ; [SP-36]
             cmp  #$B4            ; A=[$0037] ; [SP-36]
-            beq  loc_0050B5      ; A=[$0037] ; [SP-36]
+            beq  boot_clear_floor      ; A=[$0037] ; [SP-36]
 
 ; === while loop starts here [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_0050B5
-loc_0050B3  pla                  ; A=[stk] ; [SP-35]
+; XREF: 1 ref (1 branch) from boot_clear_floor
+boot_quit_pop_rts  pla                  ; A=[stk] ; [SP-35]
 ; LUMA: epilogue_rts
             rts                  ; A=[stk] ; [SP-33]
-; XREF: 2 refs (2 branches) from loc_0050A7, loc_0050A7
-loc_0050B5  lda  #$00            ; A=$0000 ; [SP-33]
+; XREF: 2 refs (2 branches) from boot_check_quit, boot_check_quit
+boot_clear_floor  lda  #$00            ; A=$0000 ; [SP-33]
             sta  $13             ; A=$0000 ; [SP-33]
-            jsr  set_value_2     ; A=$0000 ; [SP-35]
+            jsr  combat_check_party_alive     ; A=$0000 ; [SP-35]
             cmp  #$0F            ; A=$0000 ; [SP-35]
-            bne  loc_0050B3      ; A=$0000 ; [SP-35]
+            bne  boot_quit_pop_rts      ; A=$0000 ; [SP-35]
 ; === End of while loop ===
 
             lda  #$18            ; A=$0018 ; [SP-35]
@@ -1581,10 +1641,10 @@ loc_0050B5  lda  #$00            ; A=$0000 ; [SP-33]
             DB      $A0,$33,$6B
 ; --- End data region (307 bytes) ---
 
-loc_005206  inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
+input_dispatch_entry  inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
             ora  $52             ; A=$0017 ; [SP-71]
             cmp  #$1A            ; A=$0017 ; [SP-71]
-            bne  loc_00521F      ; A=$0017 ; [SP-71]
+            bne  input_dispatch_jump      ; A=$0017 ; [SP-71]
             pla                  ; A=[stk] ; [SP-70]
             sec                  ; A=[stk] ; [SP-70]
             sbc  #$C1            ; A=A-$C1 ; [SP-70]
@@ -1596,19 +1656,19 @@ loc_005206  inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600
 ; LUMA: data_array_y
             lda  $5223,Y         ; A=A-$C1 Y=A ; [SP-70]
             sta  $FF             ; A=A-$C1 Y=A ; [SP-70]
-; XREF: 1 ref (1 branch) from loc_005206
-loc_00521F  jmp  ($00FE)         ; A=A-$C1 Y=A ; [SP-70]
+; XREF: 1 ref (1 branch) from input_dispatch_entry
+input_dispatch_jump  jmp  ($00FE)         ; A=A-$C1 Y=A ; [SP-70]
 
 ; ---
             DB      $99,$52,$F5,$52,$5C,$53,$10,$59,$1E,$59,$9A,$5A,$69,$5B,$8F,$5D
             DB      $F1,$5F,$4E,$60
 ; ---
 
-loc_005236  ldy  $D160,X         ; A=A-$C1 Y=A ; [SP-71]
+input_load_cmd_offset  ldy  $D160,X         ; A=A-$C1 Y=A ; [SP-71]
 ; LUMA: epilogue_rts
             rts                  ; A=A-$C1 Y=A ; [SP-69]
             DB      $F6,$60
-loc_00523C  lda  ($61,X)         ; A=A-$C1 Y=A ; [SP-69]
+input_parse_action  lda  ($61,X)         ; A=A-$C1 Y=A ; [SP-69]
             DB      $E2
             adc  ($9D,X)         ; A=A-$C1 Y=A ; [SP-69]
 
@@ -1619,12 +1679,12 @@ loc_00523C  lda  ($61,X)         ; A=A-$C1 Y=A ; [SP-69]
             DB      $AA,$D0,$02,$68,$60
 ; --- End data region (53 bytes) ---
 
-; XREF: 1 ref (1 branch) from loc_00523C
-loc_005276  jmp  move_data_L10   ; A=A-$C1 Y=A ; [SP-70]
+; XREF: 1 ref (1 branch) from input_parse_action
+input_jump_to_loop  jmp  game_loop_end_turn   ; A=A-$C1 Y=A ; [SP-70]
 
 ; ---
             DB      $20,$BA,$46,$BC,$AD,$D7,$C8,$C1,$D4,$BF,$FF,$00,$4C,$68,$52
-loc_005288
+input_not_here_msg
             DB      $20,$BA,$46,$CE,$CF,$D4,$A0,$C8,$C5,$D2,$C5,$A1,$FF
 ; ---
 
@@ -1639,8 +1699,8 @@ loc_005288
 
 
 ; === while loop starts here (counter: Y 'j') ===
-; XREF: 1 ref (1 jump) from set_value_4_L3
-loc_0052B3  txa                  ; Y=A ; [SP-76]
+; XREF: 1 ref (1 jump) from tile_update_check_special
+input_combat_render_unit  txa                  ; Y=A ; [SP-76]
             pha                  ; Y=A ; [SP-77]
             jsr  $0230           ; Y=A ; [SP-79]
             pla                  ; A=[stk] Y=A ; [SP-78]
@@ -1653,14 +1713,14 @@ loc_0052B3  txa                  ; Y=A ; [SP-76]
             jsr  $46FF           ; A=[stk] X=[stk] Y=A ; [SP-80]
 ; LUMA: data_array_x
             lda  $4F20,X         ; A=[stk] X=[stk] Y=A ; [SP-80]
-            beq  loc_0052D3      ; A=[stk] X=[stk] Y=A ; [SP-80]
+            beq  input_store_tile      ; A=[stk] X=[stk] Y=A ; [SP-80]
             lsr  a               ; A=[stk] X=[stk] Y=A ; [SP-80]
             lsr  a               ; A=[stk] X=[stk] Y=A ; [SP-80]
             and  #$03            ; A=A&$03 X=[stk] Y=A ; [SP-80]
             clc                  ; A=A&$03 X=[stk] Y=A ; [SP-80]
             adc  #$24            ; A=A+$24 X=[stk] Y=A ; [SP-80]
-; XREF: 1 ref (1 branch) from loc_0052B3
-loc_0052D3  sta  ($FE),Y         ; A=A+$24 X=[stk] Y=A ; [SP-80]
+; XREF: 1 ref (1 branch) from input_combat_render_unit
+input_store_tile  sta  ($FE),Y         ; A=A+$24 X=[stk] Y=A ; [SP-80]
 ; LUMA: data_array_x
             lda  $4F00,X         ; A=A+$24 X=[stk] Y=A ; [SP-80]
             lsr  a               ; A=A+$24 X=[stk] Y=A ; [SP-80]
@@ -1670,14 +1730,14 @@ loc_0052D3  sta  ($FE),Y         ; A=A+$24 X=[stk] Y=A ; [SP-80]
             sta  $4F00,X         ; A=$0000 X=[stk] Y=A ; [SP-81]
             pla                  ; A=[stk] X=[stk] Y=A ; [SP-80]
             cmp  #$1E            ; A=[stk] X=[stk] Y=A ; [SP-80]
-            bne  loc_0052F0      ; A=[stk] X=[stk] Y=A ; [SP-80]
+            bne  input_jump_render      ; A=[stk] X=[stk] Y=A ; [SP-80]
             lda  $0E             ; A=[$000E] X=[stk] Y=A ; [SP-80]
             cmp  #$16            ; A=[$000E] X=[stk] Y=A ; [SP-80]
-            beq  loc_0052F0      ; A=[$000E] X=[stk] Y=A ; [SP-80]
+            beq  input_jump_render      ; A=[$000E] X=[stk] Y=A ; [SP-80]
             lda  #$2C            ; A=$002C X=[stk] Y=A ; [SP-80]
             sta  ($FE),Y         ; A=$002C X=[stk] Y=A ; [SP-80]
-; XREF: 2 refs (2 branches) from loc_0052D3, loc_0052D3
-loc_0052F0  jmp  helper_7_L1     ; A=$002C X=[stk] Y=A ; [SP-80]
+; XREF: 2 refs (2 branches) from input_store_tile, input_store_tile
+input_jump_render  jmp  render_combat_update     ; A=$002C X=[stk] Y=A ; [SP-80]
 
 ; --- Data region (356 bytes, text data) ---
             DB      $A3,$03,$A5,$0E,$C9,$7E,$F0,$0C,$20,$BA,$46,$C2,$EF,$E1,$F2,$E4
@@ -1711,15 +1771,15 @@ loc_0052F0  jmp  helper_7_L1     ; A=$002C X=[stk] Y=A ; [SP-80]
 
 
 ; === while loop starts here [nest:7] ===
-; XREF: 1 ref (1 branch) from loc_005459
-loc_005457  pla                  ; A=[stk] X=[stk] Y=A ; [SP-129]
+; XREF: 1 ref (1 branch) from input_spell_check_done
+input_spell_pop_rts  pla                  ; A=[stk] X=[stk] Y=A ; [SP-129]
 ; LUMA: epilogue_rts
             rts                  ; A=[stk] X=[stk] Y=A ; [SP-129]
 ; LUMA: hw_keyboard_read
 ; XREF: 2 refs (2 jumps) from $005446, $005422
-loc_005459  lda  $5362           ; A=[$5362] X=[stk] Y=A ; [SP-129]
+input_spell_check_done  lda  $5362           ; A=[$5362] X=[stk] Y=A ; [SP-129]
             cmp  #$20            ; A=[$5362] X=[stk] Y=A ; [SP-129]
-            bne  loc_005457      ; A=[$5362] X=[stk] Y=A ; [SP-129]
+            bne  input_spell_pop_rts      ; A=[$5362] X=[stk] Y=A ; [SP-129]
 ; === End of while loop ===
 
             jsr  $46F6           ; A=[$5362] X=[stk] Y=A ; [SP-131]
@@ -1727,12 +1787,12 @@ loc_005459  lda  $5362           ; A=[$5362] X=[stk] Y=A ; [SP-129]
             and  #$0F            ; A=A&$0F X=[stk] Y=A ; [SP-131]
             tax                  ; A=A&$0F X=A Y=A ; [SP-131]
             lda  #$05            ; A=$0005 X=A Y=A ; [SP-131]
-            jsr  sub_00707A      ; A=$0005 X=A Y=A ; [SP-133]
+            jsr  combat_bcd_multiply      ; A=$0005 X=A Y=A ; [SP-133]
             ldy  #$19            ; A=$0005 X=A Y=$0019 ; [SP-133]
 ; LUMA: data_ptr_offset
             lda  ($FE),Y         ; A=$0005 X=A Y=$0019 ; [SP-133]
             cmp  $D0             ; A=$0005 X=A Y=$0019 ; [SP-133]
-            bcs  data_00548A     ; A=$0005 X=A Y=$0019 ; [SP-133]
+            bcs  input_cmd_table     ; A=$0005 X=A Y=$0019 ; [SP-133]
             jsr  $46BA           ; Call $0046BA(A, Y)
             cmp  $D0AE           ; A=$0005 X=A Y=$0019 ; [SP-135]
             ldx  $D4A0           ; A=$0005 X=A Y=$0019 ; [SP-135]
@@ -1742,7 +1802,7 @@ loc_005459  lda  $5362           ; A=[$5362] X=[stk] Y=A ; [SP-129]
 
 ; ---
             DB      $CF,$D7,$A1,$FF,$00,$4C,$68,$52
-data_00548A
+input_cmd_table
             DB      $F8,$38,$B1,$FE,$E5,$D0,$91,$FE,$D8,$20,$BA,$46,$FF
 ; ---
 
@@ -1771,8 +1831,8 @@ data_00548A
             DB      $03,$4C,$6E,$58,$20,$85,$58,$A5,$13,$D0,$03,$4C,$6B
 ; --- End data region (259 bytes) ---
 
-loc_00559C  ror  $13C6           ; A=$0005 X=A Y=$0019 ; [SP-168]
-            jmp  loc_00572B      ; A=$0005 X=A Y=$0019 ; [SP-168]
+input_dungeon_random_pos  ror  $13C6           ; A=$0005 X=A Y=$0019 ; [SP-168]
+            jmp  input_dungeon_gen_pos      ; A=$0005 X=A Y=$0019 ; [SP-168]
 
 ; --- Data region (393 bytes) ---
             DB      $A9,$4B,$85,$D0,$4C,$2B,$55,$20,$85,$58,$A5,$E2,$F0,$03,$4C,$6E
@@ -1806,20 +1866,20 @@ loc_00559C  ror  $13C6           ; A=$0005 X=A Y=$0019 ; [SP-168]
 
 
 ; === while loop starts here [nest:7] ===
-; XREF: 4 refs (2 jumps) (2 branches) from loc_00572B, loc_00559C, $005726, $005587
-loc_00572B  lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-236]
+; XREF: 4 refs (2 jumps) (2 branches) from input_dungeon_gen_pos, input_dungeon_random_pos, $005726, $005587
+input_dungeon_gen_pos  lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-236]
             jsr  $46E4           ; Call $0046E4(A)
             sta  $02             ; A=$0010 X=A Y=$0019 ; [SP-238]
             lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-238]
             jsr  $46E4           ; A=$0010 X=A Y=$0019 ; [SP-240]
             sta  $03             ; A=$0010 X=A Y=$0019 ; [SP-240]
-            jsr  multiply_2      ; A=$0010 X=A Y=$0019 ; [SP-242]
-            bne  loc_00572B      ; A=$0010 X=A Y=$0019 ; [SP-242]
+            jsr  calc_hgr_scanline      ; A=$0010 X=A Y=$0019 ; [SP-242]
+            bne  input_dungeon_gen_pos      ; A=$0010 X=A Y=$0019 ; [SP-242]
             lda  $02             ; A=[$0002] X=A Y=$0019 ; [SP-242]
             sta  $00             ; A=[$0002] X=A Y=$0019 ; [SP-242]
             lda  $03             ; A=[$0003] X=A Y=$0019 ; [SP-242]
             sta  $01             ; A=[$0003] X=A Y=$0019 ; [SP-242]
-            jmp  loc_005882      ; A=[$0003] X=A Y=$0019 ; [SP-242]
+            jmp  input_return_to_loop      ; A=[$0003] X=A Y=$0019 ; [SP-242]
 
 ; --- Data region (276 bytes, text data) ---
             DB      $20,$BA,$46
@@ -1850,22 +1910,22 @@ loc_00572B  lda  #$10            ; A=$0010 X=A Y=$0019 ; [SP-236]
 
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:7] ===
-; XREF: 1 ref (1 branch) from loc_00589C
-loc_00585D  inc  $68D8,X         ; A=[$0003] X=A Y=$0019 ; [SP-298]
+; XREF: 1 ref (1 branch) from input_spell_setup_slot
+input_recall_set_status  inc  $68D8,X         ; A=[$0003] X=A Y=$0019 ; [SP-298]
             sta  $D5             ; A=[$0003] X=A Y=$0019 ; [SP-297]
             jsr  $46F6           ; A=[$0003] X=A Y=$0019 ; [SP-299]
             lda  #$C7            ; A=$00C7 X=A Y=$0019 ; [SP-299]
             ldy  #$11            ; A=$00C7 X=A Y=$0011 ; [SP-299]
             sta  ($FE),Y         ; A=$00C7 X=A Y=$0011 ; [SP-299]
-            jmp  loc_005882      ; A=$00C7 X=A Y=$0011 ; [SP-299]
+            jmp  input_return_to_loop      ; A=$00C7 X=A Y=$0011 ; [SP-299]
 
 ; ---
             DB      $20,$BA,$46,$C6,$C1,$C9,$CC,$C5,$C4,$A1,$FF,$00,$A9,$FA,$20,$05
             DB      $47,$4C,$35,$6E
 ; ---
 
-; XREF: 10 refs (10 jumps) from loc_00585D, $005563, $00556D, $00580E, $00571C, ...
-loc_005882  jmp  move_data_L10   ; A=$00C7 X=A Y=$0011 ; [SP-305]
+; XREF: 10 refs (10 jumps) from input_recall_set_status, $005563, $00556D, $00580E, $00571C, ...
+input_return_to_loop  jmp  game_loop_end_turn   ; A=$00C7 X=A Y=$0011 ; [SP-305]
 
 ; ---
             DB      $20,$C8,$58,$20,$E9,$58,$C9,$D1,$F0,$03
@@ -1873,23 +1933,23 @@ loc_005882  jmp  move_data_L10   ; A=$00C7 X=A Y=$0011 ; [SP-305]
 
 
 ; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from loc_00589C
-loc_00588F  pla                  ; A=[stk] X=A Y=$0011 ; [SP-308]
-            bne  loc_0058C7      ; A=[stk] X=A Y=$0011 ; [SP-308]
+; XREF: 1 ref (1 branch) from input_spell_setup_slot
+input_spell_check_class  pla                  ; A=[stk] X=A Y=$0011 ; [SP-308]
+            bne  input_spell_done      ; A=[stk] X=A Y=$0011 ; [SP-308]
             lda  $D7             ; A=[$00D7] X=A Y=$0011 ; [SP-308]
             and  #$0F            ; A=A&$0F X=A Y=$0011 ; [SP-308]
-            asl  a               ; A=A&$0F X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-308]
-            asl  a               ; A=A&$0F X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-308]
+            asl  a               ; A=A&$0F X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-308]
+            asl  a               ; A=A&$0F X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-308]
             asl  a               ; A=A&$0F X=A Y=$0011 ; [SP-308]
             clc                  ; A=A&$0F X=A Y=$0011 ; [SP-308]
             adc  #$60            ; A=A+$60 X=A Y=$0011 ; [SP-308]
-loc_00589C  tax                  ; A=A+$60 X=A Y=$0011 ; [SP-308]
+input_spell_setup_slot  tax                  ; A=A+$60 X=A Y=$0011 ; [SP-308]
             lda  #$FD            ; A=$00FD X=A Y=$0011 ; [SP-308]
             ldy  #$30            ; A=$00FD X=A Y=$0030 ; [SP-308]
             jsr  $4705           ; A=$00FD X=A Y=$0030 ; [SP-310]
-            jsr  get_value       ; A=$00FD X=A Y=$0030 ; [SP-312]
+            jsr  char_decrypt_records       ; A=$00FD X=A Y=$0030 ; [SP-312]
             cmp  #$D1            ; A=$00FD X=A Y=$0030 ; [SP-312]
-            bne  loc_00588F      ; A=$00FD X=A Y=$0030 ; [SP-312]
+            bne  input_spell_check_class      ; A=$00FD X=A Y=$0030 ; [SP-312]
 ; === End of while loop ===
 
             lda  #$03            ; A=$0003 X=A Y=$0030 ; [SP-312]
@@ -1897,7 +1957,7 @@ loc_00589C  tax                  ; A=A+$60 X=A Y=$0011 ; [SP-308]
             ldx  #$A3            ; A=$0003 X=$00A3 Y=$0030 ; [SP-312]
             dec  $58B8           ; A=$0003 X=$00A3 Y=$0030 ; [SP-312]
             ldy  #$33            ; A=$0003 X=$00A3 Y=$0033 ; [SP-312]
-            bpl  loc_00585D      ; A=$0003 X=$00A3 Y=$0033 ; [SP-312]
+            bpl  input_recall_set_status      ; A=$0003 X=$00A3 Y=$0033 ; [SP-312]
 ; === End of while loop (counter: Y) ===
 
             DB      $03
@@ -1907,8 +1967,8 @@ loc_00589C  tax                  ; A=A+$60 X=A Y=$0011 ; [SP-308]
             DB      $EE,$B8,$58,$C9,$1A,$F0,$03,$6C,$F0,$03
 ; ---
 
-; XREF: 2 refs (2 branches) from loc_00589C, loc_00588F
-loc_0058C7  rts                  ; A=$0003 X=$00A3 Y=$0033 ; [SP-310]
+; XREF: 2 refs (2 branches) from input_spell_setup_slot, input_spell_check_class
+input_spell_done  rts                  ; A=$0003 X=$00A3 Y=$0033 ; [SP-310]
 
 ; --- Data region (33 bytes, text data) ---
             DB      $A5,$10,$30,$1C,$A5,$D7,$29,$0F,$0A,$69,$08,$85,$FB,$20,$E7,$46
@@ -1922,36 +1982,36 @@ loc_0058C7  rts                  ; A=$0003 X=$00A3 Y=$0033 ; [SP-310]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; get_value  [14 calls]
-;   Called by: process_5_L5, loc_005882, loc_00589C, loc_00864A, dispatch_3
+; char_decrypt_records  [14 calls]
+;   Called by: combat_end_flag, input_return_to_loop, input_spell_setup_slot, render_combat_mon_wait, world_move_handler
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0058E9: register -> A:X [I]
 ; Proto: uint32_t func_0058E9(void);
 ; Liveness: returns(A,X,Y) [24 dead stores]
-; XREF: 14 refs (14 calls) from process_5_L5, process_5_L5, process_5_L5, loc_005882, loc_00589C, ...
-get_value   ldx  #$08            ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
+; XREF: 14 refs (14 calls) from combat_end_flag, combat_end_flag, combat_end_flag, input_return_to_loop, input_spell_setup_slot, ...
+char_decrypt_records   ldx  #$08            ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
 
 ; === while loop starts here (counter: X 'iter_x', range: 0..184, iters: 184) [nest:13] ===
-; XREF: 1 ref (1 branch) from get_value_L2
-get_value_L1 lda  $4300,X         ; -> $4308 ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
+; XREF: 1 ref (1 branch) from char_decrypt_inner
+char_decrypt_outer lda  $4300,X         ; -> $4308 ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
             sta  $FC             ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
             lda  $43C0,X         ; -> $43C8 ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
             sta  $FD             ; A=$0003 X=$0008 Y=$0033 ; [SP-310]
             ldy  #$16            ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
 
 ; === loop starts here (counter: Y, range: 22..0, iters: 22) [nest:14] ===
-; XREF: 1 ref (1 branch) from get_value_L2
-get_value_L2 lda  ($FC),Y         ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
+; XREF: 1 ref (1 branch) from char_decrypt_inner
+char_decrypt_inner lda  ($FC),Y         ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
             eor  #$FF            ; A=A^$FF X=$0008 Y=$0016 ; [SP-310]
             sta  ($FC),Y         ; A=A^$FF X=$0008 Y=$0016 ; [SP-310]
             dey                  ; A=A^$FF X=$0008 Y=$0015 ; [SP-310]
-            bne  get_value_L2    ; A=A^$FF X=$0008 Y=$0015 ; [SP-310]
+            bne  char_decrypt_inner    ; A=A^$FF X=$0008 Y=$0015 ; [SP-310]
 ; === End of loop (counter: Y) ===
 
             inx                  ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
             cpx  #$B8            ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
-            bcc  get_value_L1    ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
+            bcc  char_decrypt_outer    ; A=A^$FF X=$0009 Y=$0015 ; [SP-310]
 ; === End of while loop (counter: X) ===
 
             ldy  #$80            ; A=A^$FF X=$0009 Y=$0080 ; [SP-310]
@@ -2032,43 +2092,43 @@ get_value_L2 lda  ($FC),Y         ; A=$0003 X=$0008 Y=$0016 ; [SP-310]
 
 
 ; ---------------------------------------------------------------------------
-; set_value  [3 calls]
-;   Called by: set_value_4_L9, move_data_L22
-;   Calls: process_4, multiply, process_2, process_3
+; char_combat_turn  [3 calls]
+;   Called by: tile_update_bcd_food, game_loop_combat_lookup2
+;   Calls: magic_resolve_effect, render_encrypt_records, combat_apply_damage, move_display_party_status
 ; ---------------------------------------------------------------------------
 
 ; FUNC $005C63: register -> A:X [IJ]
 ; Proto: uint32_t func_005C63(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from set_value_4_L9, move_data_L22, $005C5D
-set_value   lda  $E1             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
+; XREF: 3 refs (3 calls) from tile_update_bcd_food, game_loop_combat_lookup2, $005C5D
+char_combat_turn   lda  $E1             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
             sta  $D5             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
             dec  $D5             ; A=[$00E1] X=$0010 Y=$0080 ; [SP-456]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from set_value_L2
-set_value_L1 jsr  process_4       ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
-            bne  set_value_L2    ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
-            jsr  multiply        ; A=[$00E1] X=$0010 Y=$0080 ; [SP-460]
+; XREF: 1 ref (1 branch) from char_turn_next
+char_turn_loop jsr  magic_resolve_effect       ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
+            bne  char_turn_next    ; A=[$00E1] X=$0010 Y=$0080 ; [SP-458]
+            jsr  render_encrypt_records        ; A=[$00E1] X=$0010 Y=$0080 ; [SP-460]
             lda  #$F7            ; A=$00F7 X=$0010 Y=$0080 ; [SP-460]
             jsr  $4705           ; A=$00F7 X=$0010 Y=$0080 ; [SP-462]
-            jsr  multiply        ; A=$00F7 X=$0010 Y=$0080 ; [SP-464]
+            jsr  render_encrypt_records        ; A=$00F7 X=$0010 Y=$0080 ; [SP-464]
             jsr  $46E7           ; A=$00F7 X=$0010 Y=$0080 ; [SP-466]
             and  #$77            ; A=A&$77 X=$0010 Y=$0080 ; [SP-466]
-            jsr  process_2       ; A=A&$77 X=$0010 Y=$0080 ; [SP-468]
+            jsr  combat_apply_damage       ; A=A&$77 X=$0010 Y=$0080 ; [SP-468]
             lda  $13             ; A=[$0013] X=$0010 Y=$0080 ; [SP-468]
             clc                  ; A=[$0013] X=$0010 Y=$0080 ; [SP-468]
             adc  #$01            ; A=A+$01 X=$0010 Y=$0080 ; [SP-468]
-            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-468]
-            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-468]
+            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-468]
+            asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-468]
             asl  a               ; A=A+$01 X=$0010 Y=$0080 ; [SP-468]
-            jsr  process_2       ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
-; XREF: 1 ref (1 branch) from set_value_L1
-set_value_L2 dec  $D5             ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
-            bpl  set_value_L1    ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
+            jsr  combat_apply_damage       ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
+; XREF: 1 ref (1 branch) from char_turn_loop
+char_turn_next dec  $D5             ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
+            bpl  char_turn_loop    ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
 ; === End of while loop ===
 
-            jsr  process_3       ; Call $007338(A, X, 1 stack)
+            jsr  move_display_party_status       ; Call $007338(A, X, 1 stack)
             rts                  ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
 
 ; --- Data region (469 bytes, text data) ---
@@ -2110,7 +2170,7 @@ set_value_L2 dec  $D5             ; A=A+$01 X=$0010 Y=$0080 ; [SP-470]
             DB      $BE,$5F,$F0,$18,$20,$BA,$46,$CE,$CF,$D4,$A0,$C5,$CE,$CF,$D5,$C7
             DB      $C8,$A1,$FF,$00,$A9,$FF,$20,$05,$47,$4C,$35,$6E,$A5,$D6,$85,$D5
             DB      $A5,$D0,$A0,$20,$20,$20,$74
-set_value_L3
+char_turn_done_msg
             DB      $20,$BA,$46,$C4,$CF,$CE,$C5,$A1,$FF
 ; --- End data region (469 bytes) ---
 
@@ -2139,9 +2199,9 @@ set_value_L3
             DB      $20,$49,$54,$C9,$C2
 ; --- End data region (179 bytes) ---
 
-set_value_L4 bcc  set_value_L6    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
+char_equip_check_weapon bcc  char_equip_none_msg    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
             cmp  #$D1            ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
-            bcs  set_value_L6    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
+            bcs  char_equip_none_msg    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
             sec                  ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
             sbc  #$C1            ; A=A-$C1 X=$0010 Y=$0080 ; [SP-604]
             sta  $F0             ; A=A-$C1 X=$0010 Y=$0080 ; [SP-604]
@@ -2149,15 +2209,15 @@ set_value_L4 bcc  set_value_L6    ; A=A+$01 X=$0010 Y=$0080 ; [SP-604]
             ldy  #$30            ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
             lda  ($FE),Y         ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
             cmp  $F0             ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            bne  set_value_L5    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-            jmp  set_value_L7    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
-; XREF: 1 ref (1 branch) from set_value_L4
-set_value_L5 clc                  ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
+            bne  char_equip_not_owned    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
+            jmp  char_equip_add_weapon    ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
+; XREF: 1 ref (1 branch) from char_equip_check_weapon
+char_equip_not_owned clc                  ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
             lda  #$30            ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             adc  $F0             ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             tay                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             lda  ($FE),Y         ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
-            beq  set_value_L6    ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
+            beq  char_equip_none_msg    ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             sed                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             sec                  ; A=$0030 X=$0010 Y=$0030 ; [SP-606]
             sbc  #$01            ; A=A-$01 X=$0010 Y=$0030 ; [SP-606]
@@ -2166,10 +2226,10 @@ set_value_L5 clc                  ; A=A-$C1 X=$0010 Y=$0030 ; [SP-606]
             lda  $D6             ; A=[$00D6] X=$0010 Y=$0030 ; [SP-606]
             sta  $D5             ; A=[$00D6] X=$0010 Y=$0030 ; [SP-606]
             lda  #$01            ; A=$0001 X=$0010 Y=$0030 ; [SP-606]
-            jsr  process         ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
-            jmp  set_value_L3    ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
-; XREF: 8 refs (3 jumps) (5 branches) from set_value_L4, $005E1B, set_value_L5, set_value_L6, set_value_L4, ...
-set_value_L6 jsr  $46BA           ; A=$0001 X=$0010 Y=$0030 ; [SP-610]
+            jsr  combat_add_bcd_field         ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
+            jmp  char_turn_done_msg    ; A=$0001 X=$0010 Y=$0030 ; [SP-608]
+; XREF: 8 refs (3 jumps) (5 branches) from char_equip_check_weapon, $005E1B, char_equip_not_owned, char_equip_none_msg, char_equip_check_weapon, ...
+char_equip_none_msg jsr  $46BA           ; A=$0001 X=$0010 Y=$0030 ; [SP-610]
             dec  $CECF           ; SLOTEXP_x6CF - Slot expansion ROM offset $6CF {Slot}
             cmp  $A1             ; A=$0001 X=$0010 Y=$0030 ; [SP-610]
             DB      $FF
@@ -2186,8 +2246,8 @@ set_value_L6 jsr  $46BA           ; A=$0001 X=$0010 Y=$0030 ; [SP-610]
             DB      $D6,$85,$D5,$A9,$01,$20,$45,$71,$4C,$60,$5E
 ; --- End data region (77 bytes) ---
 
-; XREF: 2 refs (1 jump) (1 branch) from set_value_L4, set_value_L6
-set_value_L7 jsr  $46BA           ; A=[stk] X=$0010 Y=$0030 ; [SP-619]
+; XREF: 2 refs (1 jump) (1 branch) from char_equip_check_weapon, char_equip_none_msg
+char_equip_add_weapon jsr  $46BA           ; A=[stk] X=$0010 Y=$0030 ; [SP-619]
             cmp  #$CE            ; A=[stk] X=$0010 Y=$0030 ; [SP-619]
             ldy  #$D5            ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
             DB      $D3
@@ -2199,8 +2259,8 @@ set_value_L7 jsr  $46BA           ; A=[stk] X=$0010 Y=$0030 ; [SP-619]
             DB      $03,$A9,$00,$60
 ; --- End data region (36 bytes) ---
 
-; XREF: 1 ref (1 branch) from set_value_L7
-set_value_L8 sed                  ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
+; XREF: 1 ref (1 branch) from char_equip_add_weapon
+char_equip_bcd_add sed                  ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
             clc                  ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
             iny                  ; A=[stk] X=$0010 Y=$00D6 ; [SP-619]
             lda  ($FE),Y         ; A=[stk] X=$0010 Y=$00D6 ; [SP-619]
@@ -2253,7 +2313,7 @@ set_value_L8 sed                  ; A=[stk] X=$0010 Y=$00D5 ; [SP-619]
 ; --- End data region (481 bytes) ---
 
 ; XREF: 1 ref (1 branch) from $0061CD
-set_value_L9 sed                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
+char_use_powder sed                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
             lda  ($FE),Y         ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
             sec                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
             sbc  #$01            ; A=A-$01 X=$0010 Y=$00D5 ; [SP-677]
@@ -2261,7 +2321,7 @@ set_value_L9 sed                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
             cld                  ; A=A-$01 X=$0010 Y=$00D5 ; [SP-677]
             lda  #$0A            ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
             sta  $CB             ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
-            jmp  move_data_L10   ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
+            jmp  game_loop_end_turn   ; A=$000A X=$0010 Y=$00D5 ; [SP-677]
 
 ; --- Data region (166 bytes, text data) ---
             DB      $A9,$FF,$8D,$B9,$6A,$20,$BA,$46,$CF,$F4,$E8,$E5,$F2,$A0,$E3,$EF
@@ -2276,7 +2336,7 @@ set_value_L9 sed                  ; A=$00FF X=$0010 Y=$00D5 ; [SP-677]
             DB      $D0,$03,$4C,$A8,$62,$C9,$C7,$D0,$07,$E0,$05,$D0,$03,$4C,$BA,$63
             DB      $C9,$C8,$D0,$07,$E0,$02,$D0,$03,$4C,$79,$63,$C9,$C5,$D0,$07,$E0
             DB      $03,$D0,$03,$4C,$08,$64,$C9,$D9,$D0,$07,$E0,$04,$D0,$03,$4C,$6B
-data_006287
+file_cmd_data_1
             DB      $64
 ; --- End data region (166 bytes) ---
 
@@ -2285,7 +2345,7 @@ data_006287
 ; --- Data region (119 bytes, text data) ---
             DB      $D0,$07,$E0,$01,$D0,$03,$4C,$75,$6A,$20,$BA,$46,$CE,$CF,$A0,$C5
             DB      $C6,$C6,$C5,$C3,$D4,$A1,$FF,$00,$4C,$35,$6E,$AA,$00
-data_0062A7
+file_cmd_data_2
             DB      $00,$20,$BA,$46,$C4,$C9,$D2,$AD,$00,$20,$73,$7D,$20,$FF,$46,$C9
             DB      $7C,$F0,$03,$4C,$88,$52,$20,$BA,$46
             ASC     "D, S, L, M-"
@@ -2296,36 +2356,36 @@ data_0062A7
             DB      $D0,$03,$4C,$2E,$60
 ; --- End data region (119 bytes) ---
 
-; XREF: 1 ref (1 branch) from data_0062A7
-loc_006301  ldx  $F1             ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
+; XREF: 1 ref (1 branch) from file_cmd_data_2
+file_mark_check_slot  ldx  $F1             ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
             cpx  $02             ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
-            beq  loc_006323      ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
+            beq  file_mark_check_done      ; A=$000A X=$0010 Y=$00D5 ; [SP-716]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from loc_006323
-loc_006307  jsr  multiply        ; A=$000A X=$0010 Y=$00D5 ; [SP-718]
+; XREF: 1 ref (1 branch) from file_mark_check_done
+file_mark_apply_loop  jsr  render_encrypt_records        ; A=$000A X=$0010 Y=$00D5 ; [SP-718]
             lda  #$F7            ; A=$00F7 X=$0010 Y=$00D5 ; [SP-718]
             jsr  $4705           ; Call $004705(X)
-            jsr  multiply        ; A=$00F7 X=$0010 Y=$00D5 ; [SP-722]
+            jsr  render_encrypt_records        ; A=$00F7 X=$0010 Y=$00D5 ; [SP-722]
             jsr  $46F6           ; A=$00F7 X=$0010 Y=$00D5 ; [SP-724]
             lda  #$00            ; A=$0000 X=$0010 Y=$00D5 ; [SP-724]
             ldy  #$1A            ; A=$0000 X=$0010 Y=$001A ; [SP-724]
             sta  ($FE),Y         ; A=$0000 X=$0010 Y=$001A ; [SP-724]
             lda  #$FF            ; A=$00FF X=$0010 Y=$001A ; [SP-724]
-            jsr  process_2       ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-            jmp  move_data_L10   ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-; XREF: 1 ref (1 branch) from loc_006301
-loc_006323  cpx  data_006378     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
-            bne  loc_006307      ; A=$00FF X=$0010 Y=$001A ; [SP-726]
+            jsr  combat_apply_damage       ; A=$00FF X=$0010 Y=$001A ; [SP-726]
+            jmp  game_loop_end_turn   ; A=$00FF X=$0010 Y=$001A ; [SP-726]
+; XREF: 1 ref (1 branch) from file_mark_check_slot
+file_mark_check_done  cpx  file_max_slots     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
+            bne  file_mark_apply_loop      ; A=$00FF X=$0010 Y=$001A ; [SP-726]
 ; === End of while loop ===
 
-            inc  data_006378     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
+            inc  file_max_slots     ; A=$00FF X=$0010 Y=$001A ; [SP-726]
             lda  #$04            ; A=$0004 X=$0010 Y=$001A ; [SP-726]
             sta  $D0             ; A=$0004 X=$0010 Y=$001A ; [SP-726]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from loc_00632F
-loc_00632F  jsr  $46FF           ; A=$0004 X=$0010 Y=$001A ; [SP-728]
+; XREF: 1 ref (1 branch) from file_endgame_setup_loop
+file_endgame_setup_loop  jsr  $46FF           ; A=$0004 X=$0010 Y=$001A ; [SP-728]
             lda  #$F0            ; A=$00F0 X=$0010 Y=$001A ; [SP-728]
             sta  ($FE),Y         ; A=$00F0 X=$0010 Y=$001A ; [SP-728]
             jsr  $0230           ; A=$00F0 X=$0010 Y=$001A ; [SP-730]
@@ -2338,17 +2398,17 @@ loc_00632F  jsr  $46FF           ; A=$0004 X=$0010 Y=$001A ; [SP-728]
             lda  #$F7            ; A=$00F7 X=$0010 Y=$001A ; [SP-736]
             jsr  $4705           ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
             dec  $D0             ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
-            bpl  loc_00632F      ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
+            bpl  file_endgame_setup_loop      ; A=$00F7 X=$0010 Y=$001A ; [SP-738]
             lda  #$20            ; A=$0020 X=$0010 Y=$001A ; [SP-738]
             ldy  #$00            ; A=$0020 X=$0010 Y=$0000 ; [SP-738]
             sta  ($FE),Y         ; A=$0020 X=$0010 Y=$0000 ; [SP-738]
             jsr  $0230           ; A=$0020 X=$0010 Y=$0000 ; [SP-740]
-            lda  data_006378     ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
+            lda  file_max_slots     ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
             cmp  #$22            ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-            beq  loc_006364      ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-            jmp  move_data_L10   ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
-; XREF: 1 ref (1 branch) from loc_00632F
-loc_006364  lda  #$0A            ; A=$000A X=$0010 Y=$0000 ; [SP-740]
+            beq  file_endgame_start      ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
+            jmp  game_loop_end_turn   ; A=[$6378] X=$0010 Y=$0000 ; [SP-740]
+; XREF: 1 ref (1 branch) from file_endgame_setup_loop
+file_endgame_start  lda  #$0A            ; A=$000A X=$0010 Y=$0000 ; [SP-740]
             sta  $B1             ; A=$000A X=$0010 Y=$0000 ; [SP-740]
             sta  $B0             ; A=$000A X=$0010 Y=$0000 ; [SP-740]
             jsr  $46B7           ; A=$000A X=$0010 Y=$0000 ; [SP-742]
@@ -2359,7 +2419,7 @@ loc_006364  lda  #$0A            ; A=$000A X=$0010 Y=$0000 ; [SP-740]
             ASC     " END"
             DB      $8D
             DB      $00 ; null terminator
-data_006378
+file_max_slots
             DB      $1E,$A5,$09,$C9,$7C,$F0,$03,$4C,$88,$52,$A5,$00,$29,$03,$A8,$20
             DB      $D3,$93,$85,$F0,$20,$F6,$46,$A0,$0E,$B1,$FE,$05,$F0,$91,$FE,$20
             DB      $BA,$46,$C1,$A0,$C3,$C1,$D2,$C4,$AC,$A0,$D7,$C9,$D4,$C8,$FF,$D3
@@ -2374,7 +2434,7 @@ data_006378
             DB      $46,$CE,$CF,$D4,$A0,$C5,$CE,$CF,$D5,$C7,$C8,$A0,$C7,$CF,$CC,$C4
             DB      $A1,$FF,$00,$4C,$68,$52,$F8,$38,$E9,$01,$D8,$91,$FE,$A6,$CE,$BD
             DB      $00,$4F,$C9,$48,$F0,$03,$4C,$93,$62,$BD,$40,$4F,$85,$02,$BD,$60
-data_006458
+file_overlay_data
             DB      $4F
 ; --- End data region (236 bytes) ---
 
@@ -2393,8 +2453,8 @@ data_006458
             DB      $03,$4C,$2E,$60
 ; --- End data region (110 bytes) ---
 
-; XREF: 1 ref (1 branch) from data_006458
-loc_0064CC  sed                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
+; XREF: 1 ref (1 branch) from file_overlay_data
+file_use_gem_bcd  sed                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
             lda  ($FE),Y         ; A=$000A X=$0010 Y=$0000 ; [SP-775]
             sec                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
             sbc  #$01            ; A=A-$01 X=$0010 Y=$0000 ; [SP-775]
@@ -2410,9 +2470,9 @@ loc_0064CC  sed                  ; A=$000A X=$0010 Y=$0000 ; [SP-775]
             sta  $B0             ; A=$0000 X=$0010 Y=$0000 ; [SP-776]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from loc_0064E4
-loc_0064E4  lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
-            bne  loc_0064E4      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
+; XREF: 1 ref (1 branch) from file_wait_vblank
+file_wait_vblank  lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
+            bne  file_wait_vblank      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
             jsr  $46B7           ; Call $0046B7(A)
 
 ; --- Data region (197 bytes, text data) ---
@@ -2430,9 +2490,9 @@ loc_0064E4  lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-776]
             DB      $D5,$46,$A5,$ED,$20,$D5,$46,$20,$BA,$46,$A0,$CD,$CF,$D6,$C5,$D3
             DB      $FF,$00,$20,$BA,$46,$D0,$CC,$C5,$C1,$D3,$C5,$A0,$D7,$C1,$C9,$D4
             DB      $AE,$AE,$AE,$FF,$00
-helper
+file_save_game
             DB      $AD,$F1,$03,$C9,$B7,$EA,$EA,$A5,$B0,$48,$A9,$00,$85,$B1,$85,$B0
-data_00658D
+game_loop_vblank
             DB      $A5,$B2,$D0,$FC,$20,$B7,$46,$04
             DB      $C2
             DB      $D3,$C1,$D6,$C5,$A0,$D3,$CF,$D3,$C1,$8D,$04
@@ -2447,9 +2507,9 @@ data_00658D
             sta  $B0             ; A=$0000 X=$0010 Y=$0000 ; [SP-810]
 
 ; === while loop starts here [nest:17] ===
-; XREF: 1 ref (1 branch) from move_data_L1
-move_data_L1 lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            bne  move_data_L1    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
+; XREF: 1 ref (1 branch) from game_loop_wait_vblank
+game_loop_wait_vblank lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
+            bne  game_loop_wait_vblank    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
             jsr  $46B7           ; A=[$00B2] X=$0010 Y=$0000 ; [SP-812]
 
 ; --- Data region (54 bytes, text data) ---
@@ -2466,13 +2526,13 @@ move_data_L1 lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
             DB      $03,$85,$FF,$EE,$F5,$65,$A9,$03,$A2,$A3,$A0,$33,$6B
 ; --- End data region (54 bytes) ---
 
-move_data_L2 inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
+game_loop_dispatch_entry inc  $CE00,X         ; SLOTEXP_x600 - Slot expansion ROM offset $600 {Slot}
             sbc  $65,X           ; -> $0075 ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
 
 ; === while loop starts here [nest:17] ===
-; XREF: 2 refs (2 branches) from move_data, move_data_L3
-move_data_L3 cmp  #$1A            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
-            bne  move_data_L3    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
+; XREF: 2 refs (2 branches) from game_main_loop, game_loop_check_key
+game_loop_check_key cmp  #$1A            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
+            bne  game_loop_check_key    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
             rts                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-808]
 
 ; --- Data region (413 bytes, text data) ---
@@ -2511,16 +2571,16 @@ move_data_L3 cmp  #$1A            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-810]
             DB      $20,$73,$7D,$20,$A4,$7C,$10,$6B
 ; --- End data region (413 bytes) ---
 
-move_data_L4 jsr  $46FF           ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+game_loop_setup_ptr jsr  $46FF           ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
             cmp  #$94            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-            bcs  move_data_L5    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-            jmp  loc_005288      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-; XREF: 1 ref (1 branch) from move_data_L4
-move_data_L5 cmp  #$E8            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-            bcc  move_data_L6    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-            jmp  loc_005288      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
-; XREF: 1 ref (1 branch) from move_data_L5
-move_data_L6 clc                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+            bcs  game_loop_check_encounter    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+            jmp  input_not_here_msg      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+; XREF: 1 ref (1 branch) from game_loop_setup_ptr
+game_loop_check_encounter cmp  #$E8            ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+            bcc  game_loop_no_encounter    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+            jmp  input_not_here_msg      ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
+; XREF: 1 ref (1 branch) from game_loop_check_encounter
+game_loop_no_encounter clc                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
             lda  $02             ; A=[$0002] X=$0010 Y=$0000 ; [SP-873]
             adc  $04             ; A=[$0002] X=$0010 Y=$0000 ; [SP-873]
             sta  $02             ; A=[$0002] X=$0010 Y=$0000 ; [SP-873]
@@ -2530,10 +2590,10 @@ move_data_L6 clc                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-873]
             sta  $03             ; A=[$0003] X=$0010 Y=$0000 ; [SP-873]
             jsr  $46FF           ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
             cmp  #$40            ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
-            beq  move_data_L7    ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
-            jmp  loc_005288      ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
-; XREF: 1 ref (1 branch) from move_data_L6
-move_data_L7 lda  $01             ; A=[$0001] X=$0010 Y=$0000 ; [SP-875]
+            beq  game_loop_check_y    ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
+            jmp  input_not_here_msg      ; A=[$0003] X=$0010 Y=$0000 ; [SP-875]
+; XREF: 1 ref (1 branch) from game_loop_no_encounter
+game_loop_check_y lda  $01             ; A=[$0001] X=$0010 Y=$0000 ; [SP-875]
             and  #$07            ; A=A&$07 X=$0010 Y=$0000 ; [SP-875]
             clc                  ; A=A&$07 X=$0010 Y=$0000 ; [SP-875]
             adc  #$B0            ; A=A+$B0 X=$0010 Y=$0000 ; [SP-875]
@@ -2543,9 +2603,9 @@ move_data_L7 lda  $01             ; A=[$0001] X=$0010 Y=$0000 ; [SP-875]
             sta  $B0             ; A=$0000 X=$0010 Y=$0000 ; [SP-875]
 
 ; === while loop starts here [nest:14] ===
-; XREF: 1 ref (1 branch) from move_data_L8
-move_data_L8 lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-875]
-            bne  move_data_L8    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-875]
+; XREF: 1 ref (1 branch) from game_loop_get_viewport
+game_loop_get_viewport lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-875]
+            bne  game_loop_get_viewport    ; A=[$00B2] X=$0010 Y=$0000 ; [SP-875]
             jsr  $46B7           ; A=[$00B2] X=$0010 Y=$0000 ; [SP-877]
 
 ; --- Data region (347 bytes, text data) ---
@@ -2580,7 +2640,7 @@ move_data_L8 lda  $B2             ; A=[$00B2] X=$0010 Y=$0000 ; [SP-875]
 ; --- End data region (347 bytes) ---
 
 ; XREF: 1 ref (1 branch) from $006933
-move_data_L9 sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
+game_loop_food_deduct sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
             sec                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
             sbc  #$01            ; A=A-$01 X=$0010 Y=$0000 ; [SP-915]
             sta  ($FE),Y         ; A=A-$01 X=$0010 Y=$0000 ; [SP-915]
@@ -2590,7 +2650,7 @@ move_data_L9 sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
             asl  a               ; A=[$0009] X=$0010 Y=$0000 ; [SP-917]
             sta  ($FE),Y         ; A=[$0009] X=$0010 Y=$0000 ; [SP-917]
             jsr  $0230           ; A=[$0009] X=$0010 Y=$0000 ; [SP-919]
-            jmp  move_data_L10   ; A=[$0009] X=$0010 Y=$0000 ; [SP-919]
+            jmp  game_loop_end_turn   ; A=[$0009] X=$0010 Y=$0000 ; [SP-919]
 
 ; --- Data region (1256 bytes, text data) ---
             DB      $20,$BA,$46,$D6,$EF,$EC,$F5,$ED,$E5,$A0,$00,$A5,$10,$49,$FF,$85
@@ -2727,37 +2787,37 @@ move_data_L9 sed                  ; A=[$00B2] X=$0010 Y=$0000 ; [SP-915]
 
 
 ; === while loop starts here [nest:14] ===
-; XREF: 52 refs (16 jumps) from $006AE9, set_value_L8, $006064, $005B66, $005E52, ...
-move_data_L10 jsr  $03AF           ; Call $0003AF(A)
+; XREF: 52 refs (16 jumps) from $006AE9, char_equip_bcd_add, $006064, $005B66, $005E52, ...
+game_loop_end_turn jsr  $03AF           ; Call $0003AF(A)
             lda  #$03            ; A=$0003 X=$0010 Y=$0000 ; [SP-1194]
             ldx  #$A3            ; A=$0003 X=$00A3 Y=$0000 ; [SP-1194]
             ldy  #$33            ; A=$0003 X=$00A3 Y=$0033 ; [SP-1194]
             jsr  $03A3           ; Call $0003A3(A, X, Y)
             cmp  #$1A            ; A=$0003 X=$00A3 Y=$0033 ; [SP-1196]
-            bne  move_data_L10   ; A=$0003 X=$00A3 Y=$0033 ; [SP-1196]
+            bne  game_loop_end_turn   ; A=$0003 X=$00A3 Y=$0033 ; [SP-1196]
             lda  $E2             ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1196]
-            bne  move_data_L11   ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1196]
+            bne  game_loop_check_dungeon   ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1196]
             pha                  ; A=[$00E2] X=$00A3 Y=$0033 ; [SP-1197]
-            jsr  get_value_2     ; Call $006F5D(A, 1 stack)
+            jsr  check_surface_only     ; Call $006F5D(A, 1 stack)
             pla                  ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
-; XREF: 1 ref (1 branch) from move_data_L10
-move_data_L11 cmp  #$01            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
-            bne  move_data_L12   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
+; XREF: 1 ref (1 branch) from game_loop_end_turn
+game_loop_check_dungeon cmp  #$01            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
+            bne  game_loop_check_surface   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1198]
             jsr  $1800           ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            jmp  loc_008FC2      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 1 ref (1 branch) from move_data_L11
-move_data_L12 cmp  #$80            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            bne  move_data_L13   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            jmp  loc_0085A6      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 1 ref (1 branch) from move_data_L12
-move_data_L13 cmp  #$02            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
-            bcc  move_data_L16   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+            jmp  dungeon_turn_process      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+; XREF: 1 ref (1 branch) from game_loop_check_dungeon
+game_loop_check_surface cmp  #$80            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+            bne  game_loop_check_town   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+            jmp  render_combat_loop_start      ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+; XREF: 1 ref (1 branch) from game_loop_check_surface
+game_loop_check_town cmp  #$02            ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
+            bcc  game_loop_call_terrain   ; A=[stk] X=$00A3 Y=$0033 ; [SP-1200]
             lda  $00             ; A=[$0000] X=$00A3 Y=$0033 ; [SP-1200]
-            beq  move_data_L14   ; A=[$0000] X=$00A3 Y=$0033 ; [SP-1200]
+            beq  game_loop_load_saved_x   ; A=[$0000] X=$00A3 Y=$0033 ; [SP-1200]
             lda  $01             ; A=[$0001] X=$00A3 Y=$0033 ; [SP-1200]
-            bne  move_data_L16   ; A=[$0001] X=$00A3 Y=$0033 ; [SP-1200]
-; XREF: 4 refs (3 jumps) (1 branch) from $00559A, loc_00572B, $008F5D, move_data_L13
-move_data_L14 lda  $E3             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
+            bne  game_loop_call_terrain   ; A=[$0001] X=$00A3 Y=$0033 ; [SP-1200]
+; XREF: 4 refs (3 jumps) (1 branch) from $00559A, input_dungeon_gen_pos, $008F5D, game_loop_check_town
+game_loop_load_saved_x lda  $E3             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
             sta  $00             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
             lda  $E4             ; A=[$00E4] X=$00A3 Y=$0033 ; [SP-1200]
             sta  $01             ; A=[$00E4] X=$00A3 Y=$0033 ; [SP-1200]
@@ -2769,9 +2829,9 @@ move_data_L14 lda  $E3             ; A=[$00E3] X=$00A3 Y=$0033 ; [SP-1200]
             sta  $B0             ; A=$0000 X=$00A3 Y=$0033 ; [SP-1200]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from move_data_L15
-move_data_L15 lda  $B2             ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
-            bne  move_data_L15   ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
+; XREF: 1 ref (1 branch) from game_loop_get_music
+game_loop_get_music lda  $B2             ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
+            bne  game_loop_get_music   ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
             jsr  $46BA           ; Call $0046BA(A)
             cmp  $D8             ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1202]
             cmp  #$D4            ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1202]
@@ -2790,24 +2850,24 @@ move_data_L15 lda  $B2             ; A=[$00B2] X=$00A3 Y=$0033 ; [SP-1200]
             DB      $A5,$0E,$85,$E0,$20,$7D,$65,$A9,$01,$85,$B1
 ; --- End data region (67 bytes) ---
 
-; XREF: 2 refs (2 branches) from move_data_L13, move_data_L13
-move_data_L16 jsr  helper_4        ; Call $007470(A)
-            jsr  process_3       ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1213]
+; XREF: 2 refs (2 branches) from game_loop_check_town, game_loop_check_town
+game_loop_call_terrain jsr  move_process_turn        ; Call $007470(A)
+            jsr  move_display_party_status       ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1213]
             jsr  $46FC           ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
             cmp  #$88            ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
-            bne  move_data_L17   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
-            jsr  dispatch_3      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1217]
-; XREF: 1 ref (1 branch) from move_data_L16
-move_data_L17 jsr  $46FC           ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
+            bne  game_loop_check_tile   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1215]
+            jsr  world_move_handler      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1217]
+; XREF: 1 ref (1 branch) from game_loop_call_terrain
+game_loop_check_tile jsr  $46FC           ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
             cmp  #$30            ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
-            bne  move_data_L18   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
-            jsr  dispatch_2      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1221]
-; XREF: 1 ref (1 branch) from move_data_L17
-move_data_L18 jsr  helper_2        ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-            beq  move_data_L19   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-            jmp  move_data_L23   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
-; XREF: 1 ref (1 branch) from move_data_L18
-move_data_L19 lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
+            bne  game_loop_check_location   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1219]
+            jsr  shop_handle      ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1221]
+; XREF: 1 ref (1 branch) from game_loop_check_tile
+game_loop_check_location jsr  check_location        ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
+            beq  game_loop_clear_flag   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
+            jmp  game_loop_check_special   ; A=[$00B2] X=$00A3 Y=$00D3 ; [SP-1223]
+; XREF: 1 ref (1 branch) from game_loop_check_location
+game_loop_clear_flag lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
             sta  $CB             ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
             lda  #$0B            ; A=$000B X=$00A3 Y=$00D3 ; [SP-1223]
             jsr  $46E4           ; A=$000B X=$00A3 Y=$00D3 ; [SP-1225]
@@ -2816,114 +2876,114 @@ move_data_L19 lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1223]
             jsr  $46E4           ; Call $0046E4(1 stack)
             sta  $03             ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
             cmp  #$05            ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
-            bne  move_data_L20   ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
+            bne  game_loop_combat_lookup   ; A=$000B X=$00A3 Y=$00D3 ; [SP-1227]
             lda  $02             ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
             cmp  #$05            ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
-            beq  move_data_L22   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
-; XREF: 1 ref (1 branch) from move_data_L19
-move_data_L20 jsr  lookup_add      ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
+            beq  game_loop_combat_lookup2   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1227]
+; XREF: 1 ref (1 branch) from game_loop_clear_flag
+game_loop_combat_lookup jsr  combat_tile_at_xy      ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
             cmp  #$10            ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
-            bne  move_data_L21   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
+            bne  game_loop_jmp_input   ; A=[$0002] X=$00A3 Y=$00D3 ; [SP-1229]
             lda  #$7A            ; A=$007A X=$00A3 Y=$00D3 ; [SP-1229]
             sta  ($FE),Y         ; A=$007A X=$00A3 Y=$00D3 ; [SP-1229]
             jsr  $0328           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1231]
             lda  #$F7            ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1231]
             jsr  $4705           ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1233]
             jsr  $0230           ; Call $000230(A)
-; XREF: 1 ref (1 branch) from move_data_L20
-move_data_L21 jmp  dispatch_3_L1   ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1235]
-; XREF: 1 ref (1 branch) from move_data_L19
-move_data_L22 jsr  lookup_add      ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1237]
+; XREF: 1 ref (1 branch) from game_loop_combat_lookup
+game_loop_jmp_input jmp  world_move_start   ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1235]
+; XREF: 1 ref (1 branch) from game_loop_clear_flag
+game_loop_combat_lookup2 jsr  combat_tile_at_xy      ; A=$00F7 X=$00A3 Y=$00D3 ; [SP-1237]
             lda  #$7A            ; A=$007A X=$00A3 Y=$00D3 ; [SP-1237]
             sta  ($FE),Y         ; A=$007A X=$00A3 Y=$00D3 ; [SP-1237]
             jsr  $0328           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1239]
-            jsr  set_value       ; A=$007A X=$00A3 Y=$00D3 ; [SP-1241]
+            jsr  char_combat_turn       ; A=$007A X=$00A3 Y=$00D3 ; [SP-1241]
             jsr  $0230           ; A=$007A X=$00A3 Y=$00D3 ; [SP-1243]
-; XREF: 1 ref (1 jump) from move_data_L18
-move_data_L23 lda  $6E3E           ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
+; XREF: 1 ref (1 jump) from game_loop_check_location
+game_loop_check_special lda  $6E3E           ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
             cmp  #$20            ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  get_value_2     ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
-            jmp  dispatch_3_L1   ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
+            bne  check_surface_only     ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
+            jmp  world_move_start   ; A=[$6E3E] X=$00A3 Y=$00D3 ; [SP-1243]
 
 ; ---------------------------------------------------------------------------
-; helper_2  [3 calls]
-;   Called by: move_data_L18
+; check_location  [3 calls]
+;   Called by: game_loop_check_location
 ; ---------------------------------------------------------------------------
 
 ; FUNC $006F43: register -> A:X [L]
 ; Proto: uint32_t func_006F43(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from $008428, $0080DE, move_data_L18
-helper_2    lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
+; XREF: 3 refs (3 calls) from $008428, $0080DE, game_loop_check_location
+check_location    lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
             cmp  #$80            ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  helper_2_L1     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
+            bne  check_location_compare     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1243]
             lda  $835E           ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
-; XREF: 1 ref (1 branch) from helper_2
-helper_2_L1 cmp  #$03            ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  helper_2_L2     ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
+; XREF: 1 ref (1 branch) from check_location
+check_location_compare cmp  #$03            ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
+            bne  check_location_not_found     ; A=[$835E] X=$00A3 Y=$00D3 ; [SP-1243]
             lda  $E3             ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
             cmp  $79B8           ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
-            bne  helper_2_L2     ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
+            bne  check_location_not_found     ; A=[$00E3] X=$00A3 Y=$00D3 ; [SP-1243]
             lda  #$00            ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1243]
             rts                  ; A=$0000 X=$00A3 Y=$00D3 ; [SP-1241]
-; XREF: 2 refs (2 branches) from helper_2_L1, helper_2_L1
-helper_2_L2 lda  #$FF            ; A=$00FF X=$00A3 Y=$00D3 ; [SP-1241]
+; XREF: 2 refs (2 branches) from check_location_compare, check_location_compare
+check_location_not_found lda  #$FF            ; A=$00FF X=$00A3 Y=$00D3 ; [SP-1241]
             rts                  ; A=$00FF X=$00A3 Y=$00D3 ; [SP-1239]
 
 ; ---------------------------------------------------------------------------
-; get_value_2  [2 calls, 1 branch]
-;   Called by: move_data_L10
+; check_surface_only  [2 calls, 1 branch]
+;   Called by: game_loop_end_turn
 ; ---------------------------------------------------------------------------
 
 ; FUNC $006F5D: register -> A:X []
 ; Proto: uint32_t func_006F5D(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 3 refs (2 calls) (1 branch) from $005044, move_data_L10, move_data_L23
-get_value_2 lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
-            beq  set_value_5     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
+; XREF: 3 refs (2 calls) (1 branch) from $005044, game_loop_end_turn, game_loop_check_special
+check_surface_only lda  $E2             ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
+            beq  toggle_music     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1239]
             rts                  ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
 
 ; ---------------------------------------------------------------------------
-; set_value_5  [1 call, 1 branch]
-;   Calls: helper_3
+; toggle_music  [1 call, 1 branch]
+;   Calls: advance_turn
 ; ---------------------------------------------------------------------------
-; XREF: 2 refs (1 call) (1 branch) from get_value_2, $006171
-set_value_5 dec  data_006FAE     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
-            bne  set_value_5_L1  ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
+; XREF: 2 refs (1 call) (1 branch) from check_surface_only, $006171
+toggle_music dec  turn_counter_1     ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
+            bne  toggle_music_phase2  ; A=[$00E2] X=$00A3 Y=$00D3 ; [SP-1237]
             lda  #$0C            ; A=$000C X=$00A3 Y=$00D3 ; [SP-1237]
-            sta  data_006FAE     ; A=$000C X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F69 ; [SP-1237]
+            sta  turn_counter_1     ; A=$000C X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F69 ; [SP-1237]
             lda  $6FA1           ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1237]
-            jsr  helper_3        ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
+            jsr  advance_turn        ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
             sta  $6FA1           ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239] ; WARNING: Self-modifying code -> $6FA1
-; XREF: 1 ref (1 branch) from set_value_5
-set_value_5_L1 dec  data_006FAF     ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
-            bne  set_value_5_L2  ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
+; XREF: 1 ref (1 branch) from toggle_music
+toggle_music_phase2 dec  turn_counter_2     ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
+            bne  toggle_music_update  ; A=[$6FA1] X=$00A3 Y=$00D3 ; [SP-1239]
             lda  #$04            ; A=$0004 X=$00A3 Y=$00D3 ; [SP-1239]
-            sta  data_006FAF     ; A=$0004 X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F7C ; [SP-1239]
+            sta  turn_counter_2     ; A=$0004 X=$00A3 Y=$00D3 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $006F7C ; [SP-1239]
             lda  $6FA4           ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1239]
-            jsr  helper_3        ; Call $006F8B(A)
+            jsr  advance_turn        ; Call $006F8B(A)
             sta  $6FA4           ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241] ; WARNING: Self-modifying code -> $6FA4
-; XREF: 1 ref (1 branch) from set_value_5_L1
-set_value_5_L2 jmp  helper_3_L2     ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
+; XREF: 1 ref (1 branch) from toggle_music_phase2
+toggle_music_update jmp  advance_turn_update     ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
 
 ; ---------------------------------------------------------------------------
-; helper_3  [2 calls]
-;   Called by: set_value_5_L1, set_value_5
+; advance_turn  [2 calls]
+;   Called by: toggle_music_phase2, toggle_music
 ; ---------------------------------------------------------------------------
 
 ; FUNC $006F8B: register -> A:X []
 ; Proto: uint32_t func_006F8B(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 2 refs (2 calls) from set_value_5_L1, set_value_5
-helper_3    clc                  ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
+; XREF: 2 refs (2 calls) from toggle_music_phase2, toggle_music
+advance_turn    clc                  ; A=[$6FA4] X=$00A3 Y=$00D3 ; [SP-1241]
             adc  #$01            ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
             cmp  #$B8            ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
-            bcc  helper_3_L1     ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
+            bcc  advance_turn_done     ; A=A+$01 X=$00A3 Y=$00D3 ; [SP-1241]
             lda  #$B0            ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
-; XREF: 1 ref (1 branch) from helper_3
-helper_3_L1 rts                  ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1239]
-; XREF: 1 ref (1 jump) from set_value_5_L2
-helper_3_L2 jsr  move_data_2     ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
+; XREF: 1 ref (1 branch) from advance_turn
+advance_turn_done rts                  ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1239]
+; XREF: 1 ref (1 jump) from toggle_music_update
+advance_turn_update jsr  move_save_cursor_pos     ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
             ldy  #$00            ; A=$00B0 X=$00A3 Y=$0000 ; [SP-1241]
             ldx  #$08            ; A=$00B0 X=$0008 Y=$0000 ; [SP-1241]
             jsr  $46F3           ; Call $0046F3(X, Y)
@@ -2937,9 +2997,9 @@ helper_3_L2 jsr  move_data_2     ; A=$00B0 X=$00A3 Y=$00D3 ; [SP-1241]
 
 ; --- Data region (86 bytes) ---
             DB      $B0,$6F
-data_006FAE
+turn_counter_1
             DB      $0C
-data_006FAF
+turn_counter_2
             DB      $04,$A5,$E2,$F0,$01,$60,$AD,$A1,$6F,$C9,$B0,$D0,$0F,$AD,$A4,$6F
             DB      $C9,$B0,$D0,$08,$A9,$18,$8D,$65,$1D,$4C,$D3,$6F,$A9,$0C,$8D,$65
             DB      $1D,$4C,$D3,$6F,$A2,$07,$BD,$97,$79,$85,$02,$BD,$9F,$79,$85,$03
@@ -2950,18 +3010,18 @@ data_006FAF
 
 
 ; ---------------------------------------------------------------------------
-; update  [2 calls, 2 branches]
-;   Called by: move_data_L3, move_data_L9
-;   Calls: set_value_3
+; combat_init  [2 calls, 2 branches]
+;   Called by: game_loop_check_key, game_loop_food_deduct
+;   Calls: input_wait_key
 ; ---------------------------------------------------------------------------
-; XREF: 4 refs (2 calls) (2 branches) from move_data_L3, update, update, move_data_L9
-update      jsr  set_value_3     ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
+; XREF: 4 refs (2 calls) (2 branches) from game_loop_check_key, combat_init, combat_init, game_loop_food_deduct
+combat_init      jsr  input_wait_key     ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
             cmp  #$B0            ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-            bcc  update          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
+            bcc  combat_init          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
 ; === End of while loop ===
 
             cmp  #$BA            ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
-            bcs  update          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
+            bcs  combat_init          ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
 ; === End of while loop ===
 
             pha                  ; A=$00A8 X=$0008 Y=$0000 ; [SP-1248]
@@ -2978,20 +3038,20 @@ update      jsr  set_value_3     ; A=$00A8 X=$0008 Y=$0000 ; [SP-1247]
 
 
 ; ---------------------------------------------------------------------------
-; update_2  [5 calls, 2 branches]
-;   Called by: set_value_L9, data_006458
-;   Calls: set_value_3
+; combat_setup  [5 calls, 2 branches]
+;   Called by: char_use_powder, file_overlay_data
+;   Calls: input_wait_key
 ; ---------------------------------------------------------------------------
-; XREF: 7 refs (5 calls) (2 branches) from set_value_L9, $0066D6, $008F7D, data_006458, update_2, ...
-update_2    lda  #$AA            ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
+; XREF: 7 refs (5 calls) (2 branches) from char_use_powder, $0066D6, $008F7D, file_overlay_data, combat_setup, ...
+combat_setup    lda  #$AA            ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
             sta  $62A5           ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
-            jsr  set_value_3     ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
+            jsr  input_wait_key     ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
             cmp  #$B0            ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
-            bcc  update_2        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
+            bcc  combat_setup        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
 ; === End of while loop ===
 
             cmp  #$B5            ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
-            bcs  update_2        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
+            bcs  combat_setup        ; A=$00AA X=$0008 Y=$0000 ; [SP-1251]
 ; === End of while loop ===
 
             pha                  ; A=$00AA X=$0008 Y=$0000 ; [SP-1252]
@@ -3003,43 +3063,43 @@ update_2    lda  #$AA            ; A=$00AA X=$0008 Y=$0000 ; [SP-1249]
             sec                  ; A=A&$7F X=$0008 Y=$0000 ; [SP-1256]
 
 ; ---------------------------------------------------------------------------
-; sub_007041
+; combat_parse_input
 ; ---------------------------------------------------------------------------
-sub_007041  sbc  #$B0            ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
+combat_parse_input  sbc  #$B0            ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
             sta  $D5             ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
             dec  $D5             ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
             cmp  #$00            ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1256]
             rts                  ; A=A-$B0 X=$0008 Y=$0000 ; [SP-1254]
 
 ; ---------------------------------------------------------------------------
-; utility  [16 calls, 1 branch]
+; combat_read_key  [16 calls, 1 branch]
 ; ---------------------------------------------------------------------------
 ; XREF: 17 refs (16 calls) from $006C0A, $006DBD, $006D6E, $006D52, $006D16, ...
-utility     lda  #$B7            ; A=$00B7 X=$0008 Y=$0000 ; [SP-1254]
+combat_read_key     lda  #$B7            ; A=$00B7 X=$0008 Y=$0000 ; [SP-1254]
             sta  $705C           ; A=$00B7 X=$0008 Y=$0000 ; [SP-1254] ; WARNING: Self-modifying code -> $705C
             ldx  #$50            ; A=$00B7 X=$0050 Y=$0000 ; [SP-1254]
 
 ; === while loop starts here [nest:15] ===
-; XREF: 1 ref (1 branch) from utility_L1
-utility_L1  lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bpl  utility_L1      ; A=[$C000] X=$0050 Y=$0000 ; [SP-1254]
+; XREF: 1 ref (1 branch) from combat_key_wait
+combat_key_wait  lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
+            bpl  combat_key_wait      ; A=[$C000] X=$0050 Y=$0000 ; [SP-1254]
 ; === End of while loop ===
 
             bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
             pha                  ; A=[$C000] X=$0050 Y=$0000 ; [SP-1255]
-            lda  data_00506F     ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
+            lda  boot_init_data_2     ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
             stx  $705C           ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255] ; WARNING: Self-modifying code -> $705C
             cmp  $62A5           ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
-            bne  utility_L2      ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
+            bne  combat_key_check_enter      ; A=[$506F] X=$0050 Y=$0000 ; [SP-1255]
             rts                  ; A=[$506F] X=$0050 Y=$0000 ; [SP-1253]
-; XREF: 1 ref (1 branch) from utility_L1
-utility_L2  pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
+; XREF: 1 ref (1 branch) from combat_key_wait
+combat_key_check_enter  pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
             cmp  #$8D            ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
-            bne  utility_L3      ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
+            bne  combat_key_check_esc      ; A=[stk] X=$0050 Y=$0000 ; [SP-1252]
             rts                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-; XREF: 1 ref (1 branch) from utility_L2
-utility_L3  cmp  #$9B            ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
-            bne  utility         ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+; XREF: 1 ref (1 branch) from combat_key_check_enter
+combat_key_check_esc  cmp  #$9B            ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+            bne  combat_read_key         ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
 ; === End of while loop ===
 
             pla                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1249]
@@ -3050,29 +3110,29 @@ utility_L3  cmp  #$9B            ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
             and  $6E,X           ; -> $00BE ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
 
 ; ---------------------------------------------------------------------------
-; sub_00707A  [1 call]
-;   Called by: loc_005459
+; combat_bcd_multiply  [1 call]
+;   Called by: input_spell_check_done
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00707A: register -> A:X []
 ; Proto: uint32_t func_00707A(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_005459
-sub_00707A  sed                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
+; XREF: 1 ref (1 call) from input_spell_check_done
+combat_bcd_multiply  sed                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
             sta  $F0             ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
             clc                  ; A=[stk] X=$0050 Y=$0000 ; [SP-1250]
             lda  #$00            ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
             cpx  #$00            ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
-            bne  loc_007087      ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
+            bne  combat_bcd_mul_loop      ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
             sta  $D0             ; A=$0000 X=$0050 Y=$0000 ; [SP-1250]
             rts                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
 
 ; === loop starts here (counter: X) [nest:14] ===
-; XREF: 2 refs (2 branches) from sub_00707A, loc_007087
-loc_007087  clc                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
+; XREF: 2 refs (2 branches) from combat_bcd_multiply, combat_bcd_mul_loop
+combat_bcd_mul_loop  clc                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
             adc  $F0             ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
             dex                  ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
-            bne  loc_007087      ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
+            bne  combat_bcd_mul_loop      ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
 ; === End of loop (counter: X) ===
 
             sta  $D0             ; A=$0000 X=$004F Y=$0000 ; [SP-1248]
@@ -3084,12 +3144,12 @@ loc_007087  clc                  ; A=$0000 X=$0050 Y=$0000 ; [SP-1248]
             DB      $1E,$B1,$FE,$69,$00,$91,$FE,$D8,$C9,$99,$B0,$01,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_007087
-loc_0070AE  lda  #$99            ; A=$0099 X=$004F Y=$0000 ; [SP-1246]
+; XREF: 1 ref (1 branch) from combat_bcd_mul_loop
+combat_hp_overflow  lda  #$99            ; A=$0099 X=$004F Y=$0000 ; [SP-1246]
             ldy  #$1F            ; A=$0099 X=$004F Y=$001F ; [SP-1246]
             sta  ($FE),Y         ; A=$0099 X=$004F Y=$001F ; [SP-1246]
             lda  #$98            ; A=$0098 X=$004F Y=$001F ; [SP-1246]
-loc_0070B6  ldy  #$1E            ; A=$0098 X=$004F Y=$001E ; [SP-1246]
+combat_hp_store_max  ldy  #$1E            ; A=$0098 X=$004F Y=$001E ; [SP-1246]
             sta  ($FE),Y         ; A=$0098 X=$004F Y=$001E ; [SP-1246]
             rts                  ; A=$0098 X=$004F Y=$001E ; [SP-1244]
 
@@ -3100,8 +3160,8 @@ loc_0070B6  ldy  #$1E            ; A=$0098 X=$004F Y=$001E ; [SP-1246]
             DB      $91,$FE,$D8,$B0,$01,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_0070B6
-loc_0070D6  lda  #$99            ; A=$0099 X=$004F Y=$001E ; [SP-1244]
+; XREF: 1 ref (1 branch) from combat_hp_store_max
+combat_gold_overflow  lda  #$99            ; A=$0099 X=$004F Y=$001E ; [SP-1244]
             ldy  #$24            ; A=$0099 X=$004F Y=$0024 ; [SP-1244]
             sta  ($FE),Y         ; A=$0099 X=$004F Y=$0024 ; [SP-1244]
             ldy  #$23            ; A=$0099 X=$004F Y=$0023 ; [SP-1244]
@@ -3113,8 +3173,8 @@ loc_0070D6  lda  #$99            ; A=$0099 X=$004F Y=$001E ; [SP-1244]
             DB      $1C,$B1,$FE,$69,$00,$91,$FE,$D8,$B0,$01,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_0070D6
-loc_0070FC  lda  #$99            ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
+; XREF: 1 ref (1 branch) from combat_gold_overflow
+combat_exp_overflow  lda  #$99            ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             ldy  $1D             ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             sta  ($FE),Y         ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             ldy  $1C             ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
@@ -3122,15 +3182,15 @@ loc_0070FC  lda  #$99            ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             rts                  ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
 
 ; ---------------------------------------------------------------------------
-; sub_007107  [2 calls]
-;   Called by: helper_4_L15
+; combat_add_hp  [2 calls]
+;   Called by: move_turn_add_hp
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007107: register -> A:X []
 ; Proto: uint32_t func_007107(uint16_t param_A, uint16_t param_X);
 ; Liveness: params(A,X) returns(A,X,Y) [4 dead stores]
-; XREF: 2 refs (2 calls) from helper_4_L15, $005710
-sub_007107  sta  $F0             ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
+; XREF: 2 refs (2 calls) from move_turn_add_hp, $005710
+combat_add_hp  sta  $F0             ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
             jsr  $46F6           ; Call $0046F6(A, Y)
             sed                  ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
             clc                  ; A=$0099 X=$004F Y=$0023 ; [SP-1242]
@@ -3142,7 +3202,7 @@ sub_007107  sta  $F0             ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
             lda  ($FE),Y         ; A=$0099 X=$004F Y=$001A ; [SP-1242]
             adc  #$00            ; A=A X=$004F Y=$001A ; [SP-1242]
             sta  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
-            bcs  loc_007133      ; A=A X=$004F Y=$001A ; [SP-1242]
+            bcs  combat_hp_cap_at_max      ; A=A X=$004F Y=$001A ; [SP-1242]
             sec                  ; A=A X=$004F Y=$001A ; [SP-1242]
             ldy  #$1D            ; A=A X=$004F Y=$001D ; [SP-1242]
             lda  ($FE),Y         ; A=A X=$004F Y=$001D ; [SP-1242]
@@ -3152,9 +3212,9 @@ sub_007107  sta  $F0             ; A=$0099 X=$004F Y=$0023 ; [SP-1240]
             lda  ($FE),Y         ; A=A X=$004F Y=$001C ; [SP-1242]
             ldy  #$1A            ; A=A X=$004F Y=$001A ; [SP-1242]
             sbc  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
-            bcs  loc_007143      ; A=A X=$004F Y=$001A ; [SP-1242]
-; XREF: 1 ref (1 branch) from sub_007107
-loc_007133  ldy  #$1C            ; A=A X=$004F Y=$001C ; [SP-1242]
+            bcs  combat_hp_add_done      ; A=A X=$004F Y=$001A ; [SP-1242]
+; XREF: 1 ref (1 branch) from combat_add_hp
+combat_hp_cap_at_max  ldy  #$1C            ; A=A X=$004F Y=$001C ; [SP-1242]
             lda  ($FE),Y         ; A=A X=$004F Y=$001C ; [SP-1242]
             ldy  #$1A            ; A=A X=$004F Y=$001A ; [SP-1242]
             sta  ($FE),Y         ; A=A X=$004F Y=$001A ; [SP-1242]
@@ -3162,20 +3222,20 @@ loc_007133  ldy  #$1C            ; A=A X=$004F Y=$001C ; [SP-1242]
             lda  ($FE),Y         ; A=A X=$004F Y=$001D ; [SP-1242]
             ldy  #$1B            ; A=A X=$004F Y=$001B ; [SP-1242]
             sta  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
-; XREF: 1 ref (1 branch) from sub_007107
-loc_007143  cld                  ; A=A X=$004F Y=$001B ; [SP-1242]
+; XREF: 1 ref (1 branch) from combat_add_hp
+combat_hp_add_done  cld                  ; A=A X=$004F Y=$001B ; [SP-1242]
             rts                  ; A=A X=$004F Y=$001B ; [SP-1240]
 
 ; ---------------------------------------------------------------------------
-; process  [5 calls]
-;   Called by: set_value_L6, set_value_L5
+; combat_add_bcd_field  [5 calls]
+;   Called by: char_equip_none_msg, char_equip_not_owned
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007145: register -> A:X []
 ; Proto: uint32_t func_007145(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 5 refs (5 calls) from $005F04, $005D51, $005D86, set_value_L6, set_value_L5
-process     sta  $F0             ; A=A X=$004F Y=$001B ; [SP-1240]
+; XREF: 5 refs (5 calls) from $005F04, $005D51, $005D86, char_equip_none_msg, char_equip_not_owned
+combat_add_bcd_field     sta  $F0             ; A=A X=$004F Y=$001B ; [SP-1240]
             sty  $F2             ; A=A X=$004F Y=$001B ; [SP-1240]
             jsr  $46F6           ; A=A X=$004F Y=$001B ; [SP-1242]
             ldy  $F2             ; A=A X=$004F Y=$001B ; [SP-1242]
@@ -3185,77 +3245,77 @@ process     sta  $F0             ; A=A X=$004F Y=$001B ; [SP-1240]
             adc  $F0             ; A=A X=$004F Y=$001B ; [SP-1242]
             sta  ($FE),Y         ; A=A X=$004F Y=$001B ; [SP-1242]
             cld                  ; A=A X=$004F Y=$001B ; [SP-1242]
-            bcs  process_L1      ; A=A X=$004F Y=$001B ; [SP-1242]
+            bcs  combat_bcd_overflow      ; A=A X=$004F Y=$001B ; [SP-1242]
             rts                  ; A=A X=$004F Y=$001B ; [SP-1240]
-; XREF: 1 ref (1 branch) from process
-process_L1  lda  #$99            ; A=$0099 X=$004F Y=$001B ; [SP-1240]
+; XREF: 1 ref (1 branch) from combat_add_bcd_field
+combat_bcd_overflow  lda  #$99            ; A=$0099 X=$004F Y=$001B ; [SP-1240]
             sta  ($FE),Y         ; A=$0099 X=$004F Y=$001B ; [SP-1240]
             rts                  ; A=$0099 X=$004F Y=$001B ; [SP-1238]
 
 ; ---------------------------------------------------------------------------
-; utility_2  [8 calls]
-;   Called by: loc_00559C, loc_008470, helper_4_L10, helper_4_L8, helper_4_L11, process_4_L1
+; combat_bcd_to_binary  [8 calls]
+;   Called by: input_dungeon_random_pos, render_monster_attack, move_turn_regen_mp_wis, move_turn_regen_mp_str, move_turn_regen_mp_int, magic_effect_zero
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00715F: register -> A:X [L]
 ; Proto: uint32_t func_00715F(uint16_t param_Y);
 ; Liveness: params(Y) returns(A,X,Y) [1 dead stores]
-; XREF: 8 refs (8 calls) from loc_00559C, loc_008470, $005665, helper_4_L10, helper_4_L8, ...
-utility_2   cmp  #$00            ; A=$0099 X=$004F Y=$001B ; [SP-1238]
-            beq  utility_2_L2    ; A=$0099 X=$004F Y=$001B ; [SP-1238]
+; XREF: 8 refs (8 calls) from input_dungeon_random_pos, render_monster_attack, $005665, move_turn_regen_mp_wis, move_turn_regen_mp_str, ...
+combat_bcd_to_binary   cmp  #$00            ; A=$0099 X=$004F Y=$001B ; [SP-1238]
+            beq  combat_bcd_conv_done    ; A=$0099 X=$004F Y=$001B ; [SP-1238]
             ldx  #$00            ; A=$0099 X=$0000 Y=$001B ; [SP-1238]
             sed                  ; A=$0099 X=$0000 Y=$001B ; [SP-1238]
 
 ; === while loop starts here [nest:19] ===
-; XREF: 1 ref (1 branch) from utility_2_L1
-utility_2_L1 inx                  ; A=$0099 X=$0001 Y=$001B ; [SP-1238]
+; XREF: 1 ref (1 branch) from combat_bcd_sub_loop
+combat_bcd_sub_loop inx                  ; A=$0099 X=$0001 Y=$001B ; [SP-1238]
             sec                  ; A=$0099 X=$0001 Y=$001B ; [SP-1238]
             sbc  #$01            ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
-            bne  utility_2_L1    ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
+            bne  combat_bcd_sub_loop    ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
 ; === End of while loop ===
 
             cld                  ; A=A-$01 X=$0001 Y=$001B ; [SP-1238]
             txa                  ; A=$0001 X=$0001 Y=$001B ; [SP-1238]
-; XREF: 1 ref (1 branch) from utility_2
-utility_2_L2 rts                  ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
+; XREF: 1 ref (1 branch) from combat_bcd_to_binary
+combat_bcd_conv_done rts                  ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
 
 ; ---------------------------------------------------------------------------
-; utility_3  [9 calls]
-;   Called by: loc_00572B, helper_4_L8, loc_008777, helper_4_L10, helper_4_L11, set_value_L2
+; combat_binary_to_bcd  [9 calls]
+;   Called by: input_dungeon_gen_pos, move_turn_regen_mp_str, render_combat_resolve, move_turn_regen_mp_wis, move_turn_regen_mp_int, char_turn_next
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00716F: register -> A:X [L]
 ; Proto: uint32_t func_00716F(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 9 refs (9 calls) from $008445, loc_00572B, $0056EF, helper_4_L8, loc_008777, ...
-utility_3   sta  $F3             ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
+; XREF: 9 refs (9 calls) from $008445, input_dungeon_gen_pos, $0056EF, move_turn_regen_mp_str, render_combat_resolve, ...
+combat_binary_to_bcd   sta  $F3             ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
             cmp  #$00            ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
-            beq  utility_3_L2    ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
+            beq  combat_bcd_conv_ret    ; A=$0001 X=$0001 Y=$001B ; [SP-1236]
             lda  #$00            ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
             sed                  ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
 
 ; === while loop starts here [nest:24] ===
-; XREF: 1 ref (1 branch) from utility_3_L1
-utility_3_L1 clc                  ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
+; XREF: 1 ref (1 branch) from combat_bcd_add_loop
+combat_bcd_add_loop clc                  ; A=$0000 X=$0001 Y=$001B ; [SP-1236]
             adc  #$01            ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
             dec  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-            bne  utility_3_L1    ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
+            bne  combat_bcd_add_loop    ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
 ; === End of while loop ===
 
             cld                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
-; XREF: 1 ref (1 branch) from utility_3
-utility_3_L2 rts                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
+; XREF: 1 ref (1 branch) from combat_binary_to_bcd
+combat_bcd_conv_ret rts                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
 
 ; ---------------------------------------------------------------------------
-; process_2  [12 calls]
-;   Called by: loc_008777, process_5_L5, set_value_L1, dispatch, loc_006307, helper_4_L13
+; combat_apply_damage  [12 calls]
+;   Called by: render_combat_resolve, combat_end_flag, char_turn_loop, equip_handle, file_mark_apply_loop, move_turn_poison_damage
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007181: register -> A:X []
 ; Proto: uint32_t func_007181(uint16_t param_A, uint16_t param_X);
 ; Liveness: params(A,X) returns(A,X,Y) [2 dead stores]
-; XREF: 12 refs (12 calls) from loc_008777, process_5_L5, $005C1A, set_value_L1, set_value_L1, ...
-process_2   sta  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
+; XREF: 12 refs (12 calls) from render_combat_resolve, combat_end_flag, $005C1A, char_turn_loop, char_turn_loop, ...
+combat_apply_damage   sta  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
             jsr  $46F6           ; Call $0046F6(A)
             sed                  ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
             ldy  #$1B            ; A=A+$01 X=$0001 Y=$001B ; [SP-1236]
@@ -3268,11 +3328,11 @@ process_2   sta  $F3             ; A=A+$01 X=$0001 Y=$001B ; [SP-1234]
             sbc  #$00            ; A=A X=$0001 Y=$001A ; [SP-1236]
             sta  ($FE),Y         ; A=A X=$0001 Y=$001A ; [SP-1236]
             cld                  ; A=A X=$0001 Y=$001A ; [SP-1236]
-            bcc  process_2_L1    ; A=A X=$0001 Y=$001A ; [SP-1236]
+            bcc  combat_unit_killed    ; A=A X=$0001 Y=$001A ; [SP-1236]
             lda  #$00            ; A=$0000 X=$0001 Y=$001A ; [SP-1236]
             rts                  ; A=$0000 X=$0001 Y=$001A ; [SP-1234]
-; XREF: 1 ref (1 branch) from process_2
-process_2_L1 lda  #$C4            ; A=$00C4 X=$0001 Y=$001A ; [SP-1234]
+; XREF: 1 ref (1 branch) from combat_apply_damage
+combat_unit_killed lda  #$C4            ; A=$00C4 X=$0001 Y=$001A ; [SP-1234]
             ldy  #$11            ; A=$00C4 X=$0001 Y=$0011 ; [SP-1234]
             sta  ($FE),Y         ; A=$00C4 X=$0001 Y=$0011 ; [SP-1234]
             lda  #$00            ; A=$0000 X=$0001 Y=$0011 ; [SP-1234]
@@ -3280,37 +3340,37 @@ process_2_L1 lda  #$C4            ; A=$00C4 X=$0001 Y=$001A ; [SP-1234]
             sta  ($FE),Y         ; A=$0000 X=$0001 Y=$001A ; [SP-1234]
             ldy  #$1B            ; A=$0000 X=$0001 Y=$001B ; [SP-1234]
             sta  ($FE),Y         ; A=$0000 X=$0001 Y=$001B ; [SP-1234]
-            jsr  process_5       ; Call $007200(A, Y)
+            jsr  combat_end_check       ; Call $007200(A, Y)
             lda  #$FF            ; A=$00FF X=$0001 Y=$001B ; [SP-1236]
             rts                  ; A=$00FF X=$0001 Y=$001B ; [SP-1234]
 
 ; ---------------------------------------------------------------------------
-; set_value_2  [3 calls]
-;   Called by: loc_0050B5, draw_hgr_L1
-;   Calls: process_3
+; combat_check_party_alive  [3 calls]
+;   Called by: boot_clear_floor, render_return_to_game
+;   Calls: move_display_party_status
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0071B4: register -> A:X []
 ; Proto: uint32_t func_0071B4(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-; XREF: 3 refs (3 calls) from $008808, loc_0050B5, draw_hgr_L1
-set_value_2 lda  #$03            ; A=$0003 X=$0001 Y=$001B ; [SP-1234]
+; XREF: 3 refs (3 calls) from $008808, boot_clear_floor, render_return_to_game
+combat_check_party_alive lda  #$03            ; A=$0003 X=$0001 Y=$001B ; [SP-1234]
             sta  $D5             ; A=$0003 X=$0001 Y=$001B ; [SP-1234]
 
 ; === while loop starts here [nest:28] ===
-; XREF: 1 ref (1 branch) from set_value_2_L1
-set_value_2_L1 jsr  $46F6           ; A=$0003 X=$0001 Y=$001B ; [SP-1236]
+; XREF: 1 ref (1 branch) from combat_alive_check_loop
+combat_alive_check_loop jsr  $46F6           ; A=$0003 X=$0001 Y=$001B ; [SP-1236]
             ldy  #$11            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
             lda  ($FE),Y         ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
             cmp  #$C7            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            beq  helper_8        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
+            beq  combat_checksum_xor        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
             cmp  #$D0            ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            beq  helper_8        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
+            beq  combat_checksum_xor        ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
             dec  $D5             ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
-            bpl  set_value_2_L1  ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
+            bpl  combat_alive_check_loop  ; A=$0003 X=$0001 Y=$0011 ; [SP-1236]
 ; === End of while loop ===
 
-            jsr  process_3       ; A=$0003 X=$0001 Y=$0011 ; [SP-1238]
+            jsr  move_display_party_status       ; A=$0003 X=$0001 Y=$0011 ; [SP-1238]
             jsr  $46BA           ; A=$0003 X=$0001 Y=$0011 ; [SP-1240]
             DB      $FF
             DB      $FF
@@ -3323,70 +3383,70 @@ set_value_2_L1 jsr  $46F6           ; A=$0003 X=$0001 Y=$001B ; [SP-1236]
 
 
 ; ---------------------------------------------------------------------------
-; helper_8  [1 call, 2 branches]
-;   Called by: helper_4_L16
+; combat_checksum_xor  [1 call, 2 branches]
+;   Called by: move_turn_checksum
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0071EB: register -> A:X [L]
 ; Proto: uint32_t func_0071EB(void);
 ; Liveness: returns(A,X,Y) [1 dead stores]
-; XREF: 3 refs (1 call) (2 branches) from helper_4_L16, set_value_2_L1, set_value_2_L1
-helper_8    lda  #$B5            ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240]
-            sta  helper_8_L2     ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240] ; WARNING: Self-modifying code -> helper_8_L2
+; XREF: 3 refs (1 call) (2 branches) from move_turn_checksum, combat_alive_check_loop, combat_alive_check_loop
+combat_checksum_xor    lda  #$B5            ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240]
+            sta  combat_dead_xor_addr     ; A=$00B5 X=$0001 Y=$0011 ; [SP-1240] ; WARNING: Self-modifying code -> combat_dead_xor_addr
             ldy  #$80            ; A=$00B5 X=$0001 Y=$0080 ; [SP-1240]
             lda  #$00            ; A=$0000 X=$0001 Y=$0080 ; [SP-1240]
 
 ; === while loop starts here [nest:29] ===
-; XREF: 1 ref (1 branch) from helper_8_L2
-helper_8_L1 eor  $50A8,Y         ; -> $5128 ; A=$0000 X=$0001 Y=$0080 ; [SP-1240]
+; XREF: 1 ref (1 branch) from combat_dead_xor_addr
+combat_xor_loop eor  $50A8,Y         ; -> $5128 ; A=$0000 X=$0001 Y=$0080 ; [SP-1240]
             dey                  ; A=$0000 X=$0001 Y=$007F ; [SP-1240]
-            bpl  helper_8_L1     ; A=$0000 X=$0001 Y=$007F ; [SP-1240]
+            bpl  combat_xor_loop     ; A=$0000 X=$0001 Y=$007F ; [SP-1240]
 ; === End of while loop ===
 
             ldx  #$50            ; A=$0000 X=$0050 Y=$007F ; [SP-1240]
-            stx  helper_8_L2     ; A=$0000 X=$0050 Y=$007F ; [SP-1240] ; WARNING: Self-modifying code -> helper_8_L2
+            stx  combat_dead_xor_addr     ; A=$0000 X=$0050 Y=$007F ; [SP-1240] ; WARNING: Self-modifying code -> combat_dead_xor_addr
             rts                  ; A=$0000 X=$0050 Y=$007F ; [SP-1238]
 
 ; ---------------------------------------------------------------------------
-; process_5  [1 call]
-;   Called by: process_2_L1
-;   Calls: helper, move_data
+; combat_end_check  [1 call]
+;   Called by: combat_unit_killed
+;   Calls: file_save_game, game_main_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007200: register -> A:X [I]
 ; Proto: uint32_t func_007200(uint16_t param_Y);
 ; Liveness: params(Y) returns(A,X,Y) [1 dead stores]
-; XREF: 1 ref (1 call) from process_2_L1
-process_5   ldx  #$00            ; A=$0000 X=$0000 Y=$007F ; [SP-1238]
+; XREF: 1 ref (1 call) from combat_unit_killed
+combat_end_check   ldx  #$00            ; A=$0000 X=$0000 Y=$007F ; [SP-1238]
             lda  $E2             ; A=[$00E2] X=$0000 Y=$007F ; [SP-1238]
             stx  $E2             ; A=[$00E2] X=$0000 Y=$007F ; [SP-1238]
             pha                  ; A=[$00E2] X=$0000 Y=$007F ; [SP-1239]
-            bne  process_5_L2    ; A=[$00E2] X=$0000 Y=$007F ; [SP-1239]
+            bne  combat_end_check_surface    ; A=[$00E2] X=$0000 Y=$007F ; [SP-1239]
 
 ; === while loop starts here [nest:28] ===
-; XREF: 1 ref (1 branch) from process_5_L2
-process_5_L1 lda  $00             ; A=[$0000] X=$0000 Y=$007F ; [SP-1239]
+; XREF: 1 ref (1 branch) from combat_end_check_surface
+combat_end_save_pos lda  $00             ; A=[$0000] X=$0000 Y=$007F ; [SP-1239]
             sta  $E3             ; A=[$0000] X=$0000 Y=$007F ; [SP-1239]
             lda  $01             ; A=[$0001] X=$0000 Y=$007F ; [SP-1239]
             sta  $E4             ; A=[$0001] X=$0000 Y=$007F ; [SP-1239]
             lda  $0E             ; A=[$000E] X=$0000 Y=$007F ; [SP-1239]
             sta  $E0             ; A=[$000E] X=$0000 Y=$007F ; [SP-1239]
-            jsr  helper          ; Call $00657D(A, X, 1 stack)
-            jmp  process_5_L4    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
-; XREF: 1 ref (1 branch) from process_5
-process_5_L2 cmp  #$80            ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
-            bne  process_5_L3    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
+            jsr  file_save_game          ; Call $00657D(A, X, 1 stack)
+            jmp  combat_end_restore    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
+; XREF: 1 ref (1 branch) from combat_end_check
+combat_end_check_surface cmp  #$80            ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
+            bne  combat_end_return_game    ; A=[$000E] X=$0000 Y=$007F ; [SP-1241]
             lda  $835E           ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
             cmp  #$00            ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
-            beq  process_5_L1    ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
+            beq  combat_end_save_pos    ; A=[$835E] X=$0000 Y=$007F ; [SP-1241]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from process_5_L2
-process_5_L3 jsr  move_data       ; Call $0065B0(A)
+; XREF: 1 ref (1 branch) from combat_end_check_surface
+combat_end_return_game jsr  game_main_loop       ; Call $0065B0(A)
 
 ; === while loop starts here [nest:27] ===
-; XREF: 3 refs (2 jumps) (1 branch) from process_5_L1, process_3, process_5_L4
-process_5_L4 pla                  ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
+; XREF: 3 refs (2 jumps) (1 branch) from combat_end_save_pos, move_display_party_status, combat_end_restore
+combat_end_restore pla                  ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
             sta  $E2             ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
             rts                  ; A=[stk] X=$0000 Y=$007F ; [SP-1240]
 
@@ -3400,8 +3460,8 @@ process_5_L4 pla                  ; A=[stk] X=$0000 Y=$007F ; [SP-1242]
             DB      $20,$05,$47,$A9,$00,$60
 ; --- End data region (102 bytes) ---
 
-; XREF: 5 refs (1 jump) (4 branches) from $00731A, process_5_L4, process_5_L5, process_5_L4, process_5_L4
-process_5_L5 lda  #$FF            ; A=$00FF X=$0000 Y=$007F ; [SP-1244]
+; XREF: 5 refs (1 jump) (4 branches) from $00731A, combat_end_restore, combat_end_flag, combat_end_restore, combat_end_restore
+combat_end_flag lda  #$FF            ; A=$00FF X=$0000 Y=$007F ; [SP-1244]
             rts                  ; A=$00FF X=$0000 Y=$007F ; [SP-1242]
 
 ; --- Data region (138 bytes, text data) ---
@@ -3418,41 +3478,41 @@ process_5_L5 lda  #$FF            ; A=$00FF X=$0000 Y=$007F ; [SP-1244]
 
 
 ; ---------------------------------------------------------------------------
-; move_data_2  [2 calls]
-;   Called by: process_3, helper_3_L2
+; move_save_cursor_pos  [2 calls]
+;   Called by: move_display_party_status, advance_turn_update
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007320: register -> A:X [L]
 ; Proto: uint32_t func_007320(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from process_3, helper_3_L2
-move_data_2 lda  $F9             ; A=[$00F9] X=$0000 Y=$007F ; [SP-1270]
+; XREF: 2 refs (2 calls) from move_display_party_status, advance_turn_update
+move_save_cursor_pos lda  $F9             ; A=[$00F9] X=$0000 Y=$007F ; [SP-1270]
             sta  $732B           ; A=[$00F9] X=$0000 Y=$007F ; [SP-1270]
             lda  $FA             ; A=[$00FA] X=$0000 Y=$007F ; [SP-1270]
-            sta  data_00732C     ; A=[$00FA] X=$0000 Y=$007F ; [SP-1270]
+            sta  move_saved_cursor_y     ; A=[$00FA] X=$0000 Y=$007F ; [SP-1270]
             rts                  ; A=[$00FA] X=$0000 Y=$007F ; [SP-1268]
             DB      $00
-data_00732C
+move_saved_cursor_y
             DB      $00
 
 ; === while loop starts here (counter: Y 'j') [nest:27] ===
-; XREF: 1 ref (1 jump) from process_3_L5
-loc_00732D  lda  data_00732C     ; A=[$732C] X=$0000 Y=$007F ; [SP-1271]
+; XREF: 1 ref (1 jump) from move_status_restore
+move_restore_cursor_pos  lda  move_saved_cursor_y     ; A=[$732C] X=$0000 Y=$007F ; [SP-1271]
             sta  $FA             ; A=[$732C] X=$0000 Y=$007F ; [SP-1271]
             lda  $732B           ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
             sta  $F9             ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
             rts                  ; A=[$732B] X=$0000 Y=$007F ; [SP-1269]
 
 ; ---------------------------------------------------------------------------
-; process_3  [13 calls]
-;   Called by: move_data_L16, loc_0085C9, loc_009322, helper_4_L4, loc_008FC2, helper_7_L6, set_value_L2, loc_008811
-;   Calls: move_data_2
+; move_display_party_status  [13 calls]
+;   Called by: game_loop_call_terrain, render_combat_mon_status, dungeon_chest_status, move_turn_display_status, dungeon_turn_process, render_call_turn, char_turn_next, render_combat_status_upd
+;   Calls: move_save_cursor_pos
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007338: register -> A:X []
 ; Liveness: returns(A,X,Y) [22 dead stores]
-; XREF: 13 refs (13 calls) from $0092BB, $00503E, $00922D, $00925B, move_data_L16, ...
-process_3   jsr  move_data_2     ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
+; XREF: 13 refs (13 calls) from $0092BB, $00503E, $00922D, $00925B, game_loop_call_terrain, ...
+move_display_party_status   jsr  move_save_cursor_pos     ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
             lda  #$03            ; A=$0003 X=$0000 Y=$007F ; [SP-1271]
             sta  $D5             ; A=$0003 X=$0000 Y=$007F ; [SP-1271]
             ldx  #$10            ; A=$0003 X=$0010 Y=$007F ; [SP-1271]
@@ -3461,20 +3521,20 @@ process_3   jsr  move_data_2     ; A=[$732B] X=$0000 Y=$007F ; [SP-1271]
             ldy  #$80            ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1271]
             jsr  $03A3           ; Call $0003A3(A, X, Y)
             cmp  #$D1            ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1273]
-            beq  process_3_L1    ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1273]
-            jmp  process_5_L4    ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1273]
+            beq  move_status_char_loop    ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1273]
+            jmp  combat_end_restore    ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1273]
 ; === End of while loop ===
 
 
 ; === while loop starts here (counter: Y 'j') [nest:33] ===
-; XREF: 2 refs (1 jump) (1 branch) from process_3_L4, process_3
-process_3_L1 jsr  $46F6           ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1275]
+; XREF: 2 refs (1 jump) (1 branch) from move_status_next_char, move_display_party_status
+move_status_char_loop jsr  $46F6           ; A=A+$B3 X=$0010 Y=$0080 ; [SP-1275]
             ldy  #$00            ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
             lda  ($FE),Y         ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
-            bne  process_3_L2    ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
-            jmp  process_3_L3    ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
-; XREF: 1 ref (1 branch) from process_3_L1
-process_3_L2 jsr  $46F9           ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1277]
+            bne  move_status_print_name    ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
+            jmp  move_status_end    ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1275]
+; XREF: 1 ref (1 branch) from move_status_char_loop
+move_status_print_name jsr  $46F9           ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1277]
             lda  #$26            ; A=$0026 X=$0010 Y=$0000 ; [SP-1277]
             sta  $F9             ; A=$0026 X=$0010 Y=$0000 ; [SP-1277]
             jsr  $46F6           ; Call $0046F6(A)
@@ -3536,23 +3596,23 @@ process_3_L2 jsr  $46F9           ; A=A+$B3 X=$0010 Y=$0000 ; [SP-1277]
             DB      $46
 ; --- End data region (49 bytes) ---
 
-; XREF: 1 ref (1 jump) from process_3_L1
-process_3_L3 lda  #$B7            ; A=$00B7 X=$0010 Y=$001F ; [SP-1327]
+; XREF: 1 ref (1 jump) from move_status_char_loop
+move_status_end lda  #$B7            ; A=$00B7 X=$0010 Y=$001F ; [SP-1327]
             sta  $FF             ; A=$00B7 X=$0010 Y=$001F ; [SP-1327]
             lda  #$6C            ; A=$006C X=$0010 Y=$001F ; [SP-1327]
             sta  $FE             ; A=$006C X=$0010 Y=$001F ; [SP-1327]
             ldy  #$00            ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
             lda  ($FE),Y         ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
             cmp  #$AA            ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
-            beq  process_3_L4    ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
+            beq  move_status_next_char    ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
             dec  $D5             ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
-            bmi  process_3_L5    ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
-; XREF: 1 ref (1 branch) from process_3_L3
-process_3_L4 jmp  process_3_L1    ; " vF "
+            bmi  move_status_restore    ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
+; XREF: 1 ref (1 branch) from move_status_end
+move_status_next_char jmp  move_status_char_loop    ; " vF "
 ; === End of while loop (counter: Y) ===
 
-; XREF: 1 ref (1 branch) from process_3_L3
-process_3_L5 jmp  loc_00732D      ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
+; XREF: 1 ref (1 branch) from move_status_end
+move_status_restore jmp  move_restore_cursor_pos      ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
 
 ; ---
             DB      $85,$F0,$20,$F6,$46,$F8,$18,$A0,$21,$B1,$FE,$65,$F0,$91,$FE,$A0
@@ -3561,8 +3621,8 @@ process_3_L5 jmp  loc_00732D      ; A=$006C X=$0010 Y=$0000 ; [SP-1327]
             DB      $91,$FE,$D8,$B0,$01,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from process_3_L5
-process_3_L6 lda  #$99            ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
+; XREF: 1 ref (1 branch) from move_status_restore
+move_status_gold_overflow lda  #$99            ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
             ldy  $21             ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
             sta  ($FE),Y         ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
             ldy  $20             ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
@@ -3570,238 +3630,238 @@ process_3_L6 lda  #$99            ; A=$0099 X=$0010 Y=$0000 ; [SP-1327]
             rts                  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325]
 
 ; ---------------------------------------------------------------------------
-; set_value_3  [4 calls]
-;   Called by: get_value_4_L3, update_2, update
+; input_wait_key  [4 calls]
+;   Called by: render_combat_wait_key, combat_setup, combat_init
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007446: register -> A:X []
 ; Proto: uint32_t func_007446(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 4 refs (4 calls) from get_value_4_L3, update_2, update, $005449
-set_value_3 stx  set_value_3_L3  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> set_value_3_L3
-            sty  set_value_3_L4  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> set_value_3_L4
+; XREF: 4 refs (4 calls) from render_combat_wait_key, combat_setup, combat_init, $005449
+input_wait_key stx  input_wait_selfmod  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> input_wait_selfmod
+            sty  input_wait_restore_y  ; A=$0099 X=$0010 Y=$0000 ; [SP-1325] ; WARNING: Self-modifying code -> input_wait_restore_y
 
 ; === while loop starts here [nest:32] ===
-; XREF: 1 ref (1 branch) from set_value_3_L2
-set_value_3_L1 lda  $E2             ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
+; XREF: 1 ref (1 branch) from input_wait_poll
+input_wait_animate lda  $E2             ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
             cmp  #$01            ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
-            beq  set_value_3_L2  ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
+            beq  input_wait_poll  ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1325]
             jsr  $46ED           ; Call $0046ED(A)
             jsr  $46F0           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1329]
             jsr  $470E           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1331]
             jsr  $0328           ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1333]
-; XREF: 1 ref (1 branch) from set_value_3_L1
-set_value_3_L2 lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
-            bpl  set_value_3_L1  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
+; XREF: 1 ref (1 branch) from input_wait_animate
+input_wait_poll lda  $C000           ; KBD - Keyboard data / 80STORE off {Keyboard} <keyboard_read>
+            bpl  input_wait_animate  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
 ; === End of while loop ===
 
             bit  $C010           ; KBDSTRB - Clear keyboard strobe {Keyboard} <keyboard_strobe>
-            ldx  set_value_3_L3  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
-            ldy  set_value_3_L4  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
+            ldx  input_wait_selfmod  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
+            ldy  input_wait_restore_y  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1333]
             rts                  ; A=[$C000] X=$0010 Y=$0000 ; [SP-1331]
 
 ; === while loop starts here [nest:32] ===
-; XREF: 2 refs from set_value_3_L2, set_value_3
-; *** MODIFIED AT RUNTIME by set_value_3 ($7446) ***
-set_value_3_L3 brk  #$00            ; A=[$C000] X=$0010 Y=$0000 ; [SP-1334]
+; XREF: 2 refs from input_wait_poll, input_wait_key
+; *** MODIFIED AT RUNTIME by input_wait_key ($7446) ***
+input_wait_selfmod brk  #$00            ; A=[$C000] X=$0010 Y=$0000 ; [SP-1334]
             DB      $20
 
 ; ---------------------------------------------------------------------------
-; helper_4  [3 calls]
-;   Called by: loc_008FC2, move_data_L16, helper_7_L6
+; move_process_turn  [3 calls]
+;   Called by: dungeon_turn_process, game_loop_call_terrain, render_call_turn
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007470: register -> A:X []
 ; Proto: uint32_t func_007470(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
-; XREF: 3 refs (3 calls) from loc_008FC2, move_data_L16, helper_7_L6
-helper_4    lda  $B769           ; A=[$B769] X=$0010 Y=$0000 ; [SP-1336]
+; XREF: 3 refs (3 calls) from dungeon_turn_process, game_loop_call_terrain, render_call_turn
+move_process_turn    lda  $B769           ; A=[$B769] X=$0010 Y=$0000 ; [SP-1336]
             ora  #$55            ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
             cmp  #$FF            ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
-            beq  set_value_3_L3  ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
+            beq  input_wait_selfmod  ; A=A|$55 X=$0010 Y=$0000 ; [SP-1336]
 ; === End of while loop ===
 
             lda  $E2             ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            beq  helper_4_L2     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            dec  data_0075AC     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
-            beq  helper_4_L1     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
+            beq  move_turn_party_loop     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
+            dec  move_encounter_counter     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
+            beq  move_turn_encounter_roll     ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
             rts                  ; A=[$00E2] X=$0010 Y=$0000 ; [SP-1336]
 
 ; === while loop starts here [nest:34] ===
-; XREF: 1 ref (1 branch) from helper_4_L1
-helper_4_L1 lda  #$04            ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
-            sta  data_0075AC     ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
+; XREF: 1 ref (1 branch) from move_turn_encounter_roll
+move_turn_encounter_roll lda  #$04            ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
+            sta  move_encounter_counter     ; A=$0004 X=$0010 Y=$0000 ; [SP-1336]
             ldx  #$31            ; A=$0004 X=$0031 Y=$0000 ; [SP-1336]
             clc                  ; A=$0004 X=$0031 Y=$0000 ; [SP-1336]
             adc  #$B3            ; A=A+$B3 X=$0031 Y=$0000 ; [SP-1336]
             ldy  #$1B            ; A=A+$B3 X=$0031 Y=$001B ; [SP-1336]
             jsr  $03A3           ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
             cmp  #$32            ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
-            bne  helper_4_L1     ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
+            bne  move_turn_encounter_roll     ; A=A+$B3 X=$0031 Y=$001B ; [SP-1338]
 ; === End of while loop ===
 
-helper_4_L2 lda  #$04            ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
+move_turn_party_loop lda  #$04            ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
             sta  $D5             ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            dec  data_0075AD     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
-            bpl  helper_4_L3     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
+            dec  move_regen_counter     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
+            bpl  move_turn_check_next     ; A=$0004 X=$0031 Y=$001B ; [SP-1338]
             lda  #$09            ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
-            sta  data_0075AD     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
+            sta  move_regen_counter     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
 
 ; === while loop starts here [nest:22] ===
-; XREF: 2 refs (1 jump) (1 branch) from helper_4_L2, helper_4_L16
-helper_4_L3 dec  $D5             ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
-            bpl  helper_4_L5     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
+; XREF: 2 refs (1 jump) (1 branch) from move_turn_party_loop, move_turn_checksum
+move_turn_check_next dec  $D5             ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
+            bpl  move_turn_check_class     ; A=$0009 X=$0031 Y=$001B ; [SP-1338]
             lda  $B769           ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
             cmp  #$AA            ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
-            bne  helper_4_L4     ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
+            bne  move_turn_display_status     ; A=[$B769] X=$0031 Y=$001B ; [SP-1338]
             pla                  ; A=[stk] X=$0031 Y=$001B ; [SP-1337]
-; XREF: 1 ref (1 branch) from helper_4_L3
-helper_4_L4 jsr  process_3       ; A=[stk] X=$0031 Y=$001B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0074B0 followed by RTS ; [SP-1339]
+; XREF: 1 ref (1 branch) from move_turn_check_next
+move_turn_display_status jsr  move_display_party_status       ; A=[stk] X=$0031 Y=$001B ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $0074B0 followed by RTS ; [SP-1339]
             rts                  ; A=[stk] X=$0031 Y=$001B ; [SP-1337]
-; XREF: 1 ref (1 branch) from helper_4_L3
-helper_4_L5 jsr  $46F6           ; A=[stk] X=$0031 Y=$001B ; [SP-1339]
+; XREF: 1 ref (1 branch) from move_turn_check_next
+move_turn_check_class jsr  $46F6           ; A=[stk] X=$0031 Y=$001B ; [SP-1339]
             ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
             cmp  #$D7            ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
-            bne  helper_4_L6     ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
+            bne  move_turn_check_cleric     ; A=[stk] X=$0031 Y=$0017 ; [SP-1339]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1339]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1339]
             ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
-            bcs  helper_4_L6     ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
-            jsr  utility_4       ; A=[stk] X=$0031 Y=$0014 ; [SP-1341]
-; XREF: 2 refs (2 branches) from helper_4_L5, helper_4_L5
-helper_4_L6 ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
+            bcs  move_turn_check_cleric     ; A=[stk] X=$0031 Y=$0014 ; [SP-1339]
+            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0014 ; [SP-1341]
+; XREF: 2 refs (2 branches) from move_turn_check_class, move_turn_check_class
+move_turn_check_cleric ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
             cmp  #$C3            ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
-            bne  helper_4_L7     ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
+            bne  move_turn_check_lark     ; A=[stk] X=$0031 Y=$0017 ; [SP-1341]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1341]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1341]
             ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
-            bcs  helper_4_L7     ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
-            jsr  utility_4       ; A=[stk] X=$0031 Y=$0015 ; [SP-1343]
-; XREF: 2 refs (2 branches) from helper_4_L6, helper_4_L6
-helper_4_L7 ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+            bcs  move_turn_check_lark     ; A=[stk] X=$0031 Y=$0015 ; [SP-1341]
+            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0015 ; [SP-1343]
+; XREF: 2 refs (2 branches) from move_turn_check_cleric, move_turn_check_cleric
+move_turn_check_lark ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
             cmp  #$CC            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  helper_4_L8     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
             cmp  #$C4            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  helper_4_L8     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
             cmp  #$C1            ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            beq  helper_4_L8     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-            jmp  helper_4_L9     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
-; XREF: 3 refs (3 branches) from helper_4_L7, helper_4_L7, helper_4_L7
-helper_4_L8 ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1343]
+            beq  move_turn_regen_mp_str     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+            jmp  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0017 ; [SP-1343]
+; XREF: 3 refs (3 branches) from move_turn_check_lark, move_turn_check_lark, move_turn_check_lark
+move_turn_regen_mp_str ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1343]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1343]
-            jsr  utility_2       ; A=[stk] X=$0031 Y=$0014 ; [SP-1345]
+            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0014 ; [SP-1345]
             lsr  a               ; A=[stk] X=$0031 Y=$0014 ; [SP-1345]
-            jsr  utility_3       ; A=[stk] X=$0031 Y=$0014 ; [SP-1347]
+            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0014 ; [SP-1347]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            bcc  helper_4_L9     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            beq  helper_4_L9     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
-            jsr  utility_4       ; A=[stk] X=$0031 Y=$0019 ; [SP-1349]
-; XREF: 3 refs (1 jump) (2 branches) from helper_4_L7, helper_4_L8, helper_4_L8
-helper_4_L9 ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+            bcc  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
+            beq  move_turn_check_wizard     ; A=[stk] X=$0031 Y=$0019 ; [SP-1347]
+            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1349]
+; XREF: 3 refs (1 jump) (2 branches) from move_turn_check_lark, move_turn_regen_mp_str, move_turn_regen_mp_str
+move_turn_check_wizard ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
             cmp  #$D0            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  helper_4_L10    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
             cmp  #$C9            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  helper_4_L10    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
             cmp  #$C4            ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            beq  helper_4_L10    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-            jmp  helper_4_L11    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
-; XREF: 3 refs (3 branches) from helper_4_L9, helper_4_L9, helper_4_L9
-helper_4_L10 ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1349]
+            beq  move_turn_regen_mp_wis    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+            jmp  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0017 ; [SP-1349]
+; XREF: 3 refs (3 branches) from move_turn_check_wizard, move_turn_check_wizard, move_turn_check_wizard
+move_turn_regen_mp_wis ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1349]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1349]
-            jsr  utility_2       ; A=[stk] X=$0031 Y=$0015 ; [SP-1351]
+            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0015 ; [SP-1351]
             lsr  a               ; A=[stk] X=$0031 Y=$0015 ; [SP-1351]
-            jsr  utility_3       ; A=[stk] X=$0031 Y=$0015 ; [SP-1353]
+            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0015 ; [SP-1353]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            bcc  helper_4_L11    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            beq  helper_4_L11    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
-            jsr  utility_4       ; A=[stk] X=$0031 Y=$0019 ; [SP-1355]
-; XREF: 3 refs (1 jump) (2 branches) from helper_4_L10, helper_4_L9, helper_4_L10
-helper_4_L11 ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
+            bcc  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
+            beq  move_turn_regen_mp_int    ; A=[stk] X=$0031 Y=$0019 ; [SP-1353]
+            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1355]
+; XREF: 3 refs (1 jump) (2 branches) from move_turn_regen_mp_wis, move_turn_check_wizard, move_turn_regen_mp_wis
+move_turn_regen_mp_int ldy  #$17            ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
             cmp  #$D2            ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
-            bne  helper_4_L13    ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
+            bne  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0017 ; [SP-1355]
             ldy  #$15            ; A=[stk] X=$0031 Y=$0015 ; [SP-1355]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0015 ; [SP-1355]
-            jsr  utility_2       ; A=[stk] X=$0031 Y=$0015 ; [SP-1357]
+            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0015 ; [SP-1357]
             lsr  a               ; A=[stk] X=$0031 Y=$0015 ; [SP-1357]
-            jsr  utility_3       ; A=[stk] X=$0031 Y=$0015 ; [SP-1359]
+            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0015 ; [SP-1359]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            bcc  helper_4_L13    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
-            beq  helper_4_L13    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
+            bcc  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
+            beq  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1359]
             ldy  #$14            ; A=[stk] X=$0031 Y=$0014 ; [SP-1359]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0014 ; [SP-1359]
-            jsr  utility_2       ; A=[stk] X=$0031 Y=$0014 ; [SP-1361]
+            jsr  combat_bcd_to_binary       ; A=[stk] X=$0031 Y=$0014 ; [SP-1361]
             lsr  a               ; A=[stk] X=$0031 Y=$0014 ; [SP-1361]
-            jsr  utility_3       ; A=[stk] X=$0031 Y=$0014 ; [SP-1363]
+            jsr  combat_binary_to_bcd       ; A=[stk] X=$0031 Y=$0014 ; [SP-1363]
             ldy  #$19            ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
             cmp  ($FE),Y         ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
 
 ; === while loop starts here [nest:25] ===
-; XREF: 1 ref (1 branch) from helper_4_L14
-helper_4_L12 bcc  helper_4_L13    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
-            beq  helper_4_L13    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
-            jsr  utility_4       ; A=[stk] X=$0031 Y=$0019 ; [SP-1365]
-; XREF: 5 refs (5 branches) from helper_4_L12, helper_4_L11, helper_4_L12, helper_4_L11, helper_4_L11
-helper_4_L13 ldy  #$11            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
+; XREF: 1 ref (1 branch) from move_turn_add_exp
+move_turn_poison_check bcc  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
+            beq  move_turn_poison_damage    ; A=[stk] X=$0031 Y=$0019 ; [SP-1363]
+            jsr  magic_cast_spell       ; A=[stk] X=$0031 Y=$0019 ; [SP-1365]
+; XREF: 5 refs (5 branches) from move_turn_poison_check, move_turn_regen_mp_int, move_turn_poison_check, move_turn_regen_mp_int, move_turn_regen_mp_int
+move_turn_poison_damage ldy  #$11            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
             lda  ($FE),Y         ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
             cmp  #$C4            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  helper_4_L16    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
+            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
             cmp  #$C1            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  helper_4_L16    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
+            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
             cmp  #$00            ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
-            beq  helper_4_L16    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
+            beq  move_turn_checksum    ; A=[stk] X=$0031 Y=$0011 ; [SP-1365]
             lda  #$10            ; A=$0010 X=$0031 Y=$0011 ; [SP-1365]
-            jsr  helper_10       ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
+            jsr  magic_check_mp       ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
             ldy  #$11            ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
             lda  ($FE),Y         ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
             cmp  #$D0            ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
-            bne  helper_4_L15    ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
+            bne  move_turn_add_hp    ; A=$0010 X=$0031 Y=$0011 ; [SP-1367]
             lda  #$01            ; A=$0001 X=$0031 Y=$0011 ; [SP-1367]
-            jsr  process_2       ; A=$0001 X=$0031 Y=$0011 ; [SP-1369]
+            jsr  combat_apply_damage       ; A=$0001 X=$0031 Y=$0011 ; [SP-1369]
 
 ; === while loop starts here [nest:23] ===
-; XREF: 1 ref (1 branch) from helper_4_L16
-helper_4_L14 jsr  multiply        ; A=$0001 X=$0031 Y=$0011 ; [SP-1371]
+; XREF: 1 ref (1 branch) from move_turn_checksum
+move_turn_add_exp jsr  render_encrypt_records        ; A=$0001 X=$0031 Y=$0011 ; [SP-1371]
             jsr  $46BA           ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
-            bne  helper_4_L12    ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
+            bne  move_turn_poison_check    ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
             cmp  #$D3            ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
             DB      $CF
             dec  $FFA1           ; A=$0001 X=$0031 Y=$0011 ; [SP-1373]
             DB      $00,$20,$E4,$88
-; XREF: 1 ref (1 branch) from helper_4_L13
-helper_4_L15 lda  data_0075AD     ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
-            bne  helper_4_L16    ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
+; XREF: 1 ref (1 branch) from move_turn_poison_damage
+move_turn_add_hp lda  move_regen_counter     ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
+            bne  move_turn_checksum    ; A=[$75AD] X=$0031 Y=$0011 ; [SP-1376]
             lda  #$01            ; A=$0001 X=$0031 Y=$0011 ; [SP-1376]
-            jsr  sub_007107      ; A=$0001 X=$0031 Y=$0011 ; [SP-1378]
-; XREF: 4 refs (4 branches) from helper_4_L13, helper_4_L15, helper_4_L13, helper_4_L13
-helper_4_L16 jsr  helper_8        ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
+            jsr  combat_add_hp      ; A=$0001 X=$0031 Y=$0011 ; [SP-1378]
+; XREF: 4 refs (4 branches) from move_turn_poison_damage, move_turn_add_hp, move_turn_poison_damage, move_turn_poison_damage
+move_turn_checksum jsr  combat_checksum_xor        ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
             cmp  #$0F            ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            bne  helper_4_L14    ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-            jmp  helper_4_L3     ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
-data_0075AC
+            bne  move_turn_add_exp    ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
+            jmp  move_turn_check_next     ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
+move_encounter_counter
             DB      $0A
-data_0075AD
+move_regen_counter
             DB      $09
 
 ; ---------------------------------------------------------------------------
-; utility_4  [5 calls]
-;   Called by: helper_4_L5, helper_4_L12, helper_4_L8, helper_4_L6, helper_4_L10
+; magic_cast_spell  [5 calls]
+;   Called by: move_turn_check_class, move_turn_poison_check, move_turn_regen_mp_str, move_turn_check_cleric, move_turn_regen_mp_wis
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0075AE: register -> A:X [L]
 ; Proto: uint32_t func_0075AE(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [1 dead stores]
-; XREF: 5 refs (5 calls) from helper_4_L5, helper_4_L12, helper_4_L8, helper_4_L6, helper_4_L10
-utility_4   sed                  ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
+; XREF: 5 refs (5 calls) from move_turn_check_class, move_turn_poison_check, move_turn_regen_mp_str, move_turn_check_cleric, move_turn_regen_mp_wis
+magic_cast_spell   sed                  ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
             ldy  #$19            ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
             lda  ($FE),Y         ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
             clc                  ; A=$0001 X=$0031 Y=$0019 ; [SP-1380]
@@ -3811,25 +3871,25 @@ utility_4   sed                  ; A=$0001 X=$0031 Y=$0011 ; [SP-1380]
             rts                  ; A=A+$01 X=$0031 Y=$0019 ; [SP-1378]
 
 ; ---------------------------------------------------------------------------
-; process_4  [11 calls]
-;   Called by: helper_7_L7, set_value_L1, set_value_L2, set_value_L9, loc_00917A, process_5_L5, loc_0092DA
+; magic_resolve_effect  [11 calls]
+;   Called by: render_party_status_disp, char_turn_loop, char_turn_next, char_use_powder, loc_00917A, combat_end_flag, dungeon_lava
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0075BA: register -> A:X [I]
 ; Proto: uint32_t func_0075BA(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [1 dead stores]
-; XREF: 11 refs (11 calls) from helper_7_L7, set_value_L1, set_value_L2, set_value_L9, loc_00917A, ...
-process_4   jsr  $46F6           ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
+; XREF: 11 refs (11 calls) from render_party_status_disp, char_turn_loop, char_turn_next, char_use_powder, loc_00917A, ...
+magic_resolve_effect   jsr  $46F6           ; A=A+$01 X=$0031 Y=$0019 ; [SP-1380]
             ldy  #$11            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
             lda  ($FE),Y         ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
             cmp  #$C7            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            beq  process_4_L1    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
+            beq  magic_effect_zero    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
             cmp  #$D0            ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
-            beq  process_4_L1    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
+            beq  magic_effect_zero    ; A=A+$01 X=$0031 Y=$0011 ; [SP-1380]
             lda  #$FF            ; A=$00FF X=$0031 Y=$0011 ; [SP-1380]
             rts                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
-; XREF: 2 refs (2 branches) from process_4, process_4
-process_4_L1 lda  #$00            ; A=$0000 X=$0031 Y=$0011 ; [SP-1378]
+; XREF: 2 refs (2 branches) from magic_resolve_effect, magic_resolve_effect
+magic_effect_zero lda  #$00            ; A=$0000 X=$0031 Y=$0011 ; [SP-1378]
             rts                  ; A=$0000 X=$0031 Y=$0011 ; [SP-1376]
 
 ; --- Data region (75 bytes, text data) ---
@@ -3840,20 +3900,20 @@ process_4_L1 lda  #$00            ; A=$0000 X=$0031 Y=$0011 ; [SP-1378]
             DB      $8C,$0E,$76,$CD,$A5,$62,$F0,$F5,$A9,$00,$60
 ; --- End data region (75 bytes) ---
 
-; XREF: 1 ref (1 branch) from process_4_L1
-process_4_L2 lda  #$FF            ; A=$00FF X=$0031 Y=$0011 ; [SP-1380]
+; XREF: 1 ref (1 branch) from magic_effect_zero
+magic_effect_miss lda  #$FF            ; A=$00FF X=$0031 Y=$0011 ; [SP-1380]
             rts                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
 
 ; ---------------------------------------------------------------------------
-; helper_10  [1 call]
-;   Called by: helper_4_L13
+; magic_check_mp  [1 call]
+;   Called by: move_turn_poison_damage
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00761D: register -> A:X []
 ; Proto: uint32_t func_00761D(uint16_t param_A, uint16_t param_X);
 ; Liveness: params(A,X) returns(A,X,Y) [3 dead stores]
-; XREF: 1 ref (1 call) from helper_4_L13
-helper_10   sta  $D0             ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
+; XREF: 1 ref (1 call) from move_turn_poison_damage
+magic_check_mp   sta  $D0             ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
             sed                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
             sec                  ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
             ldy  #$22            ; A=$00FF X=$0031 Y=$0022 ; [SP-1378]
@@ -3869,19 +3929,19 @@ helper_10   sta  $D0             ; A=$00FF X=$0031 Y=$0011 ; [SP-1378]
             sbc  #$00            ; A=A X=$0031 Y=$0020 ; [SP-1378]
             sta  ($FE),Y         ; A=A X=$0031 Y=$0020 ; [SP-1378]
             cld                  ; A=A X=$0031 Y=$0020 ; [SP-1378]
-            bcc  dispatch        ; A=A X=$0031 Y=$0020 ; [SP-1378]
+            bcc  equip_handle        ; A=A X=$0031 Y=$0020 ; [SP-1378]
             rts                  ; A=A X=$0031 Y=$0020 ; [SP-1376]
 
 ; ---------------------------------------------------------------------------
-; dispatch  [1 call, 2 branches]
-;   Called by: loc_0092F0
+; equip_handle  [1 call, 2 branches]
+;   Called by: dungeon_trap_setup
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00763B: register -> A:X []
 ; Proto: uint32_t func_00763B(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [1 dead stores]
-; XREF: 3 refs (1 call) (2 branches) from helper_10, dispatch_L3, loc_0092F0
-dispatch    lda  #$00            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
+; XREF: 3 refs (1 call) (2 branches) from magic_check_mp, equip_load_state, dungeon_trap_setup
+equip_handle    lda  #$00            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
             ldy  #$20            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
             sta  ($FE),Y         ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
             ldy  #$21            ; A=$0000 X=$0031 Y=$0021 ; [SP-1376]
@@ -3891,24 +3951,24 @@ dispatch    lda  #$00            ; A=$0000 X=$0031 Y=$0020 ; [SP-1376]
             ASC     "STARVING!"
             DB      $FF,$00,$20,$E4,$88,$A9,$F7,$20,$05,$47,$20,$E4,$88,$A9,$05,$20
             DB      $81,$71,$60
-dispatch_L1 lda  $E2             ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1382]
-            beq  dispatch_L2     ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1382]
+equip_check_location lda  $E2             ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1382]
+            beq  equip_food_deduct     ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1382]
             rts                  ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1380]
-; XREF: 1 ref (1 branch) from dispatch_L1
-dispatch_L2 dec  $772C           ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1380]
-            beq  dispatch_L3     ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1380]
+; XREF: 1 ref (1 branch) from equip_check_location
+equip_food_deduct dec  $772C           ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1380]
+            beq  equip_load_state     ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1380]
             rts                  ; A=[$00E2] X=$0031 Y=$0021 ; [SP-1378]
-; XREF: 1 ref (1 branch) from dispatch_L2
-dispatch_L3 lda  $62A5           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
+; XREF: 1 ref (1 branch) from equip_food_deduct
+equip_load_state lda  $62A5           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
             cmp  $B76F           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
-            beq  dispatch        ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
+            beq  equip_handle        ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
 ; === End of while loop ===
 
             lda  #$04            ; A=$0004 X=$0031 Y=$0021 ; [SP-1378]
             sta  $772C           ; A=$0004 X=$0031 Y=$0021 ; [SP-1378]
             lda  #$08            ; A=$0008 X=$0031 Y=$0021 ; [SP-1378]
             jsr  $46E4           ; A=$0008 X=$0031 Y=$0021 ; [SP-1380]
-            beq  dispatch_L4     ; A=$0008 X=$0031 Y=$0021 ; [SP-1380]
+            beq  equip_setup_monster     ; A=$0008 X=$0031 Y=$0021 ; [SP-1380]
             clc                  ; A=$0008 X=$0031 Y=$0021 ; [SP-1380]
             lda  $4FFC           ; A=[$4FFC] X=$0031 Y=$0021 ; [SP-1380]
             adc  $4FFE           ; A=[$4FFC] X=$0031 Y=$0021 ; [SP-1380]
@@ -3920,9 +3980,9 @@ dispatch_L3 lda  $62A5           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
             and  #$3F            ; A=A&$3F X=$0031 Y=$0021 ; [SP-1380]
             sta  $03             ; A=A&$3F X=$0031 Y=$0021 ; [SP-1380]
             jsr  $46FF           ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
-            beq  dispatch_L5     ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
+            beq  equip_write_tile     ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
             cmp  #$2C            ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
-            bne  dispatch_L4     ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
+            bne  equip_setup_monster     ; A=A&$3F X=$0031 Y=$0021 ; [SP-1382]
             lda  #$30            ; A=$0030 X=$0031 Y=$0021 ; [SP-1382]
             sta  ($FE),Y         ; A=$0030 X=$0031 Y=$0021 ; [SP-1382]
             ldx  $4FFC           ; A=$0030 X=$0031 Y=$0021 ; [SP-1382]
@@ -3937,7 +3997,7 @@ dispatch_L3 lda  $62A5           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
             lda  #$00            ; A=$0000 X=$0031 Y=$0021 ; [SP-1384]
             sta  ($FE),Y         ; A=$0000 X=$0031 Y=$0021 ; [SP-1384]
             jsr  $0230           ; A=$0000 X=$0031 Y=$0021 ; [SP-1386]
-            jsr  helper_5        ; A=$0000 X=$0031 Y=$0021 ; [SP-1388]
+            jsr  equip_check_class        ; A=$0000 X=$0031 Y=$0021 ; [SP-1388]
             jsr  $46BA           ; A=$0000 X=$0031 Y=$0021 ; [SP-1390]
             cmp  ($A0,X)         ; A=$0000 X=$0031 Y=$0021 ; [SP-1390]
             DB      $D3
@@ -3948,17 +4008,17 @@ dispatch_L3 lda  $62A5           ; A=[$62A5] X=$0031 Y=$0021 ; [SP-1378]
             DB      $A1,$FF,$1D,$00,$4C,$2B,$77
 ; ---
 
-; XREF: 2 refs (2 branches) from dispatch_L3, dispatch_L3
-dispatch_L4 lda  #$08            ; A=$0008 X=$0031 Y=$0022 ; [SP-1391]
+; XREF: 2 refs (2 branches) from equip_load_state, equip_load_state
+equip_setup_monster lda  #$08            ; A=$0008 X=$0031 Y=$0022 ; [SP-1391]
             jsr  $46E4           ; A=$0008 X=$0031 Y=$0022 ; [SP-1394]
             tax                  ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
             lda  $79A7,X         ; -> $79AF ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
             sta  $4FFE           ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
             lda  $79AF,X         ; -> $79B7 ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
             sta  $4FFF           ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
-            jmp  dispatch_L6     ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
-; XREF: 1 ref (1 branch) from dispatch_L3
-dispatch_L5 lda  #$30            ; A=$0030 X=$0008 Y=$0022 ; [SP-1394]
+            jmp  equip_ship_pos     ; A=$0008 X=$0008 Y=$0022 ; [SP-1394]
+; XREF: 1 ref (1 branch) from equip_load_state
+equip_write_tile lda  #$30            ; A=$0030 X=$0008 Y=$0022 ; [SP-1394]
             sta  ($FE),Y         ; A=$0030 X=$0008 Y=$0022 ; [SP-1394]
             ldx  $4FFC           ; A=$0030 X=$0008 Y=$0022 ; [SP-1394]
             lda  $02             ; A=[$0002] X=$0008 Y=$0022 ; [SP-1394]
@@ -3971,28 +4031,28 @@ dispatch_L5 lda  #$30            ; A=$0030 X=$0008 Y=$0022 ; [SP-1394]
             jsr  $46FF           ; A=[$0003] X=$0008 Y=$0022 ; [SP-1396]
             lda  #$00            ; A=$0000 X=$0008 Y=$0022 ; [SP-1396]
             sta  ($FE),Y         ; A=$0000 X=$0008 Y=$0022 ; [SP-1396]
-; XREF: 1 ref (1 jump) from dispatch_L4
-dispatch_L6 lda  $4FFC           ; A=[$4FFC] X=$0008 Y=$0022 ; [SP-1396]
+; XREF: 1 ref (1 jump) from equip_setup_monster
+equip_ship_pos lda  $4FFC           ; A=[$4FFC] X=$0008 Y=$0022 ; [SP-1396]
             cmp  $00             ; A=[$4FFC] X=$0008 Y=$0022 ; [SP-1396]
-            bne  dispatch_L7     ; A=[$4FFC] X=$0008 Y=$0022 ; [SP-1396]
+            bne  equip_done     ; A=[$4FFC] X=$0008 Y=$0022 ; [SP-1396]
             lda  $4FFD           ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
             cmp  $01             ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
-            bne  dispatch_L7     ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
-            jsr  dispatch_2      ; A=[$4FFD] X=$0008 Y=$0022 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $007728 followed by RTS ; [SP-1398]
-; XREF: 2 refs (2 branches) from dispatch_L6, dispatch_L6
-dispatch_L7 rts                  ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
+            bne  equip_done     ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
+            jsr  shop_handle      ; A=[$4FFD] X=$0008 Y=$0022 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $007728 followed by RTS ; [SP-1398]
+; XREF: 2 refs (2 branches) from equip_ship_pos, equip_ship_pos
+equip_done rts                  ; A=[$4FFD] X=$0008 Y=$0022 ; [SP-1396]
             DB      $00
 
 ; ---------------------------------------------------------------------------
-; dispatch_2  [2 calls]
-;   Called by: dispatch_L6, move_data_L17
+; shop_handle  [2 calls]
+;   Called by: equip_ship_pos, game_loop_check_tile
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00772D: register -> A:X []
 ; Proto: uint32_t func_00772D(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [8 dead stores]
-; XREF: 2 refs (2 calls) from dispatch_L6, move_data_L17
-dispatch_2  lda  #$18            ; A=$0018 X=$0008 Y=$0022 ; [SP-1399]
+; XREF: 2 refs (2 calls) from equip_ship_pos, game_loop_check_tile
+shop_handle  lda  #$18            ; A=$0018 X=$0008 Y=$0022 ; [SP-1399]
             sta  $0E             ; A=$0018 X=$0008 Y=$0022 ; [SP-1399]
             jsr  $0230           ; A=$0018 X=$0008 Y=$0022 ; [SP-1401]
             jsr  $46BA           ; Call $0046BA(A)
@@ -4018,46 +4078,46 @@ dispatch_2  lda  #$18            ; A=$0018 X=$0008 Y=$0022 ; [SP-1399]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; helper_5  [2 calls]
-;   Called by: dispatch_2, dispatch_L3
+; equip_check_class  [2 calls]
+;   Called by: shop_handle, equip_load_state
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0077A2: register -> A:X [I]
 ; Proto: uint32_t func_0077A2(void);
 ; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 2 refs (2 calls) from dispatch_2, dispatch_L3
-helper_5    lda  $10             ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
-            bmi  helper_5_L4     ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
+; XREF: 2 refs (2 calls) from shop_handle, equip_load_state
+equip_check_class    lda  $10             ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
+            bmi  equip_class_done     ; A=[$0010] X=$0008 Y=$0023 ; [SP-1411]
             lda  #$40            ; A=$0040 X=$0008 Y=$0023 ; [SP-1411]
             sta  $F3             ; A=$0040 X=$0008 Y=$0023 ; [SP-1411]
 
 ; === while loop starts here [nest:25] ===
-; XREF: 1 ref (1 branch) from helper_5_L3
-helper_5_L1 ldy  #$14            ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
+; XREF: 1 ref (1 branch) from equip_class_push_state
+equip_class_check_offset ldy  #$14            ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
 
 ; === loop starts here (counter: Y, range: 20..0, iters: 20) [nest:26] ===
-; XREF: 1 ref (1 branch) from helper_5_L3
-helper_5_L2 ldx  $F3             ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
+; XREF: 1 ref (1 branch) from equip_class_push_state
+equip_class_load_ptr ldx  $F3             ; A=$0040 X=$0008 Y=$0014 ; [SP-1411]
 
 ; === loop starts here (counter: X) [nest:27] ===
-; XREF: 1 ref (1 branch) from helper_5_L3
-helper_5_L3 pha                  ; A=$0040 X=$0008 Y=$0014 ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $0077AE ; [SP-1412]
+; XREF: 1 ref (1 branch) from equip_class_push_state
+equip_class_push_state pha                  ; A=$0040 X=$0008 Y=$0014 ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $0077AE ; [SP-1412]
             pla                  ; A=[stk] X=$0008 Y=$0014 ; [SP-1411]
             dex                  ; A=[stk] X=$0007 Y=$0014 ; [SP-1411]
-            bne  helper_5_L3     ; A=[stk] X=$0007 Y=$0014 ; [SP-1411]
+            bne  equip_class_push_state     ; A=[stk] X=$0007 Y=$0014 ; [SP-1411]
 ; === End of loop (counter: X) ===
 
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dey                  ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
-            bne  helper_5_L2     ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
+            bne  equip_class_load_ptr     ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
 ; === End of loop (counter: Y) ===
 
             inc  $F3             ; A=[stk] X=$0007 Y=$0013 ; [SP-1411]
             lda  $F3             ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
             cmp  #$C0            ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
-            bcc  helper_5_L1     ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
-; XREF: 1 ref (1 branch) from helper_5
-helper_5_L4 rts                  ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1409]
+            bcc  equip_class_check_offset     ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1411]
+; XREF: 1 ref (1 branch) from equip_check_class
+equip_class_done rts                  ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1409]
 
 ; --- Data region (415 bytes, text data) ---
             DB      $A5,$E2,$F0,$1B,$10,$03,$4C,$E6,$78,$A9,$40,$20,$E4,$46,$85,$00
@@ -4099,21 +4159,21 @@ helper_5_L4 rts                  ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1409]
 
 
 ; ---------------------------------------------------------------------------
-; dispatch_3  [1 call]
-;   Called by: move_data_L16
-;   Calls: get_value
+; world_move_handler  [1 call]
+;   Called by: game_loop_call_terrain
+;   Calls: char_decrypt_records
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007961: register -> A:X []
 ; Liveness: returns(A,X,Y) [5 dead stores]
-; XREF: 1 ref (1 call) from move_data_L16
-dispatch_3  jsr  $0230           ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1455]
-            jsr  get_value       ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1457]
+; XREF: 1 ref (1 call) from game_loop_call_terrain
+world_move_handler  jsr  $0230           ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1455]
+            jsr  char_decrypt_records       ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1457]
             lda  #$FD            ; A=$00FD X=$0007 Y=$0013 ; [SP-1457]
             ldx  #$C0            ; A=$00FD X=$00C0 Y=$0013 ; [SP-1457]
             ldy  #$20            ; A=$00FD X=$00C0 Y=$0020 ; [SP-1457]
             jsr  $4705           ; A=$00FD X=$00C0 Y=$0020 ; [SP-1459]
-            jsr  get_value       ; A=$00FD X=$00C0 Y=$0020 ; [SP-1461]
+            jsr  char_decrypt_records       ; A=$00FD X=$00C0 Y=$0020 ; [SP-1461]
             lda  $6FA4           ; A=[$6FA4] X=$00C0 Y=$0020 ; [SP-1461]
             sec                  ; A=[$6FA4] X=$00C0 Y=$0020 ; [SP-1461]
             sbc  #$B0            ; A=A-$B0 X=$00C0 Y=$0020 ; [SP-1461]
@@ -4123,12 +4183,12 @@ dispatch_3  jsr  $0230           ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1455]
             lda  $799F,X         ; A=A-$B0 X=A Y=$0020 ; [SP-1461]
             sta  $01             ; A=A-$B0 X=A Y=$0020 ; [SP-1461]
             jsr  $0230           ; Call $000230(Y)
-            jsr  get_value       ; A=A-$B0 X=A Y=$0020 ; [SP-1465]
+            jsr  char_decrypt_records       ; A=A-$B0 X=A Y=$0020 ; [SP-1465]
             lda  #$FD            ; A=$00FD X=A Y=$0020 ; [SP-1465]
             ldx  #$C0            ; A=$00FD X=$00C0 Y=$0020 ; [SP-1465]
             ldy  #$20            ; A=$00FD X=$00C0 Y=$0020 ; [SP-1465]
             jsr  $4705           ; A=$00FD X=$00C0 Y=$0020 ; [SP-1467]
-            jsr  get_value       ; A=$00FD X=$00C0 Y=$0020 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $007993 followed by RTS ; [SP-1469]
+            jsr  char_decrypt_records       ; A=$00FD X=$00C0 Y=$0020 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $007993 followed by RTS ; [SP-1469]
             rts                  ; A=$00FD X=$00C0 Y=$0020 ; [SP-1467]
 
 ; --- Data region (70 bytes) ---
@@ -4139,65 +4199,65 @@ dispatch_3  jsr  $0230           ; A=[$00F3] X=$0007 Y=$0013 ; [SP-1455]
             DB      $22,$1E,$2C,$06,$1C,$07
 ; --- End data region (70 bytes) ---
 
-; XREF: 2 refs (2 jumps) from move_data_L21, move_data_L23
-dispatch_3_L1 lda  #$18            ; A=$0018 X=$00C0 Y=$0020 ; [SP-1472]
+; XREF: 2 refs (2 jumps) from game_loop_jmp_input, game_loop_check_special
+world_move_start lda  #$18            ; A=$0018 X=$00C0 Y=$0020 ; [SP-1472]
             sta  $F9             ; A=$0018 X=$00C0 Y=$0020 ; [SP-1472]
             lda  #$17            ; A=$0017 X=$00C0 Y=$0020 ; [SP-1472]
             sta  $FA             ; A=$0017 X=$00C0 Y=$0020 ; [SP-1472]
             lda  $0E             ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
             cmp  #$14            ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
-            bcc  dispatch_3_L2   ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
+            bcc  world_move_check_torch   ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
             cmp  #$18            ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
-            bcs  dispatch_3_L2   ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
+            bcs  world_move_check_torch   ; A=[$000E] X=$00C0 Y=$0020 ; [SP-1472]
             lda  $CD             ; A=[$00CD] X=$00C0 Y=$0020 ; [SP-1472]
             eor  #$FF            ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
             sta  $CD             ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
-            bmi  dispatch_3_L2   ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
-            jmp  loc_0050A7      ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
+            bmi  world_move_check_torch   ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
+            jmp  boot_check_quit      ; A=A^$FF X=$00C0 Y=$0020 ; [SP-1472]
 ; === End of while loop (counter: Y) ===
 
-; XREF: 3 refs (3 branches) from dispatch_3_L1, dispatch_3_L1, dispatch_3_L1
-dispatch_3_L2 lda  $CB             ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
-            beq  dispatch_3_L3   ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
+; XREF: 3 refs (3 branches) from world_move_start, world_move_start, world_move_start
+world_move_check_torch lda  $CB             ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
+            beq  world_move_dungeon   ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
             dec  $CB             ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
-            jmp  loc_0050A7      ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
+            jmp  boot_check_quit      ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1472]
 ; === End of while loop (counter: Y) ===
 
-; XREF: 1 ref (1 branch) from dispatch_3_L2
-dispatch_3_L3 jsr  get_value_3     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1474]
-            jsr  set_value_4     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
-            jmp  loc_0050A7      ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
+; XREF: 1 ref (1 branch) from world_move_check_torch
+world_move_dungeon jsr  dungeon_handle     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1474]
+            jsr  tile_update     ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
+            jmp  boot_check_quit      ; A=[$00CB] X=$00C0 Y=$0020 ; [SP-1476]
 
 ; ---------------------------------------------------------------------------
-; get_value_3  [1 call]
-;   Called by: dispatch_3_L3
+; dungeon_handle  [1 call]
+;   Called by: world_move_dungeon
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007A0C: register -> A:X [I]
 ; Proto: uint32_t func_007A0C(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from dispatch_3_L3
-get_value_3 lda  $E2             ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
-            beq  get_value_3_L1  ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
+; XREF: 1 ref (1 call) from world_move_dungeon
+dungeon_handle lda  $E2             ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
+            beq  dungeon_check_light  ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1476]
             rts                  ; A=[$00E2] X=$00C0 Y=$0020 ; [SP-1474]
-; XREF: 1 ref (1 branch) from get_value_3
-get_value_3_L1 lda  #$86            ; A=$0086 X=$00C0 Y=$0020 ; [SP-1474]
+; XREF: 1 ref (1 branch) from dungeon_handle
+dungeon_check_light lda  #$86            ; A=$0086 X=$00C0 Y=$0020 ; [SP-1474]
             jsr  $46E4           ; A=$0086 X=$00C0 Y=$0020 ; [SP-1476]
-            bmi  get_value_3_L2  ; A=$0086 X=$00C0 Y=$0020 ; [SP-1476]
+            bmi  dungeon_set_floor  ; A=$0086 X=$00C0 Y=$0020 ; [SP-1476]
             rts                  ; A=$0086 X=$00C0 Y=$0020 ; [SP-1474]
-; XREF: 1 ref (1 branch) from get_value_3_L1
-get_value_3_L2 lda  #$20            ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
+; XREF: 1 ref (1 branch) from dungeon_check_light
+dungeon_set_floor lda  #$20            ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
             sta  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
 
 ; === while loop starts here [nest:18] ===
-; XREF: 2 refs (1 jump) (1 branch) from get_value_3_L5, get_value_3_L4
-get_value_3_L3 dec  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
-            bpl  get_value_3_L4  ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
+; XREF: 2 refs (1 jump) (1 branch) from dungeon_init_vars, dungeon_load_counter
+dungeon_dec_counter dec  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
+            bpl  dungeon_load_counter  ; A=$0020 X=$00C0 Y=$0020 ; [SP-1474]
             rts                  ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
-; XREF: 1 ref (1 branch) from get_value_3_L3
-get_value_3_L4 ldx  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
+; XREF: 1 ref (1 branch) from dungeon_dec_counter
+dungeon_load_counter ldx  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
             lda  $4F00,X         ; -> $4FC0 ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
-            bne  get_value_3_L3  ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
+            bne  dungeon_dec_counter  ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
 ; === End of while loop ===
 
             lda  #$0D            ; A=$000D X=$00C0 Y=$0020 ; [SP-1472]
@@ -4208,7 +4268,7 @@ get_value_3_L4 ldx  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
             and  $FB             ; A=$000D X=$00C0 Y=$0020 ; [SP-1476]
             tay                  ; A=$000D X=$00C0 Y=$000D ; [SP-1476]
             lda  $7BAC,Y         ; -> $7BB9 ; A=$000D X=$00C0 Y=$000D ; [SP-1476]
-            asl  a               ; A=$000D X=$00C0 Y=$000D ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1476]
+            asl  a               ; A=$000D X=$00C0 Y=$000D ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1476]
             asl  a               ; A=$000D X=$00C0 Y=$000D ; [SP-1476]
             sta  $4F00,X         ; -> $4FC0 ; A=$000D X=$00C0 Y=$000D ; [SP-1476]
             lda  $7BB9,Y         ; -> $7BC6 ; A=$000D X=$00C0 Y=$000D ; [SP-1476]
@@ -4216,16 +4276,16 @@ get_value_3_L4 ldx  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
             lda  #$40            ; A=$0040 X=$00C0 Y=$000D ; [SP-1476]
             jsr  $46E4           ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
             cmp  $00             ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
-            beq  get_value_3_L5  ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
+            beq  dungeon_init_vars  ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
             sta  $02             ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
             lda  #$40            ; A=$0040 X=$00C0 Y=$000D ; [SP-1478]
             jsr  $46E4           ; A=$0040 X=$00C0 Y=$000D ; [SP-1480]
             cmp  $01             ; A=$0040 X=$00C0 Y=$000D ; [SP-1480]
-            beq  get_value_3_L5  ; A=$0040 X=$00C0 Y=$000D ; [SP-1480]
+            beq  dungeon_init_vars  ; A=$0040 X=$00C0 Y=$000D ; [SP-1480]
             sta  $03             ; A=$0040 X=$00C0 Y=$000D ; [SP-1480]
             jsr  $46FF           ; A=$0040 X=$00C0 Y=$000D ; [SP-1482]
             cmp  $4F20,X         ; -> $4FE0 ; A=$0040 X=$00C0 Y=$000D ; [SP-1482]
-            bne  get_value_3_L5  ; A=$0040 X=$00C0 Y=$000D ; [SP-1482]
+            bne  dungeon_init_vars  ; A=$0040 X=$00C0 Y=$000D ; [SP-1482]
             lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1482]
             sta  $4F40,X         ; -> $5000 ; A=[$0002] X=$00C0 Y=$000D ; [SP-1482]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1482]
@@ -4235,63 +4295,63 @@ get_value_3_L4 ldx  $D0             ; A=$0020 X=$00C0 Y=$0020 ; [SP-1472]
             lda  $4F00,X         ; -> $4FC0 ; A=$00C0 X=$00C0 Y=$000D ; [SP-1482]
             sta  ($FE),Y         ; A=$00C0 X=$00C0 Y=$000D ; [SP-1482]
             rts                  ; A=$00C0 X=$00C0 Y=$000D ; [SP-1480]
-; XREF: 3 refs (3 branches) from get_value_3_L4, get_value_3_L4, get_value_3_L4
-get_value_3_L5 lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
+; XREF: 3 refs (3 branches) from dungeon_load_counter, dungeon_load_counter, dungeon_load_counter
+dungeon_init_vars lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
             sta  $4F00,X         ; -> $4FC0 ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
-            jmp  get_value_3_L3  ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
+            jmp  dungeon_dec_counter  ; A=$0000 X=$00C0 Y=$000D ; [SP-1480]
 ; === End of while loop ===
 
 
 ; ---------------------------------------------------------------------------
-; set_value_4  [1 call]
-;   Called by: dispatch_3_L3
+; tile_update  [1 call]
+;   Called by: world_move_dungeon
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007A81: register -> A:X [I]
 ; Proto: uint32_t func_007A81(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from dispatch_3_L3
-set_value_4 lda  #$20            ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
+; XREF: 1 ref (1 call) from world_move_dungeon
+tile_update lda  #$20            ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
             sta  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
 
 ; === while loop starts here [nest:18] ===
-; XREF: 8 refs (7 jumps) (1 branch) from set_value_4_L11, set_value_4_L10, set_value_4_L7, set_value_4_L12, set_value_4_L2, ...
-set_value_4_L1 dec  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
-            bpl  set_value_4_L2  ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
+; XREF: 8 refs (7 jumps) (1 branch) from tile_update_dec_range, tile_update_restart, tile_update_load_pos2, tile_update_read_type, tile_update_load_counter, ...
+tile_update_dec_counter dec  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
+            bpl  tile_update_load_counter  ; A=$0020 X=$00C0 Y=$000D ; [SP-1480]
             rts                  ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
-; XREF: 1 ref (1 branch) from set_value_4_L1
-set_value_4_L2 ldx  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
+; XREF: 1 ref (1 branch) from tile_update_dec_counter
+tile_update_load_counter ldx  $D0             ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
             lda  $4F00,X         ; -> $4FC0 ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
-            beq  set_value_4_L1  ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
+            beq  tile_update_dec_counter  ; A=$0020 X=$00C0 Y=$000D ; [SP-1478]
 ; === End of while loop ===
 
             lda  $E2             ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1478]
-            beq  set_value_4_L3  ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1478]
-            jmp  set_value_4_L12 ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1478]
+            beq  tile_update_check_special  ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1478]
+            jmp  tile_update_read_type ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1478]
 
 ; === while loop starts here [nest:17] ===
-; XREF: 2 refs (1 jump) (1 branch) from set_value_4_L2, set_value_4_L13
-set_value_4_L3 jsr  set_value_6     ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1480]
+; XREF: 2 refs (1 jump) (1 branch) from tile_update_load_counter, tile_update_check_type
+tile_update_check_special jsr  tile_check_special     ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1480]
             lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1480]
             cmp  $00             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1480]
-            bne  set_value_4_L4  ; A=[$0002] X=$00C0 Y=$000D ; [SP-1480]
+            bne  tile_update_char_ptr  ; A=[$0002] X=$00C0 Y=$000D ; [SP-1480]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
             cmp  $01             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
-            bne  set_value_4_L4  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
-            jmp  loc_0052B3      ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
+            bne  tile_update_char_ptr  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
+            jmp  input_combat_render_unit      ; A=[$0003] X=$00C0 Y=$000D ; [SP-1480]
 ; === End of while loop (counter: Y) ===
 
 
 ; === while loop starts here [nest:16] ===
-; XREF: 4 refs (2 jumps) (2 branches) from set_value_4_L3, set_value_4_L16, set_value_4_L17, set_value_4_L3
-set_value_4_L4 jsr  $46FF           ; A=[$0003] X=$00C0 Y=$000D ; [SP-1482]
-            jsr  check_value     ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
-            beq  set_value_4_L6  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
+; XREF: 4 refs (2 jumps) (2 branches) from tile_update_check_special, tile_update_wait_anim3, tile_update_find_target, tile_update_check_special
+tile_update_char_ptr jsr  $46FF           ; A=[$0003] X=$00C0 Y=$000D ; [SP-1482]
+            jsr  tile_check_passable     ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
+            beq  tile_update_load_pos  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
             lda  $4F40,X         ; -> $5000 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
             sta  $02             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1484]
             jsr  $46FF           ; A=[$0003] X=$00C0 Y=$000D ; [SP-1486]
-            jsr  check_value     ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
-            beq  set_value_4_L6  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
+            jsr  tile_check_passable     ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
+            beq  tile_update_load_pos  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
             lda  $4F40,X         ; -> $5000 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
             clc                  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
             adc  $04             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1488]
@@ -4300,26 +4360,26 @@ set_value_4_L4 jsr  $46FF           ; A=[$0003] X=$00C0 Y=$000D ; [SP-1482]
             lda  $4F60,X         ; -> $5020 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1488]
             sta  $03             ; A=A&$3F X=$00C0 Y=$000D ; [SP-1488]
             jsr  $46FF           ; A=A&$3F X=$00C0 Y=$000D ; [SP-1490]
-            jsr  check_value     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-            beq  set_value_4_L6  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+            jsr  tile_check_passable     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+            beq  tile_update_load_pos  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
             lda  $4F00,X         ; -> $4FC0 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
             cmp  #$3C            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-            beq  set_value_4_L5  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+            beq  tile_update_jump_display  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
             cmp  #$74            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-            beq  set_value_4_L5  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-            jmp  set_value_4_L1  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-; XREF: 2 refs (2 branches) from set_value_4_L4, set_value_4_L4
-set_value_4_L5 jmp  set_value_4_L8  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
-; XREF: 3 refs (3 branches) from set_value_4_L4, set_value_4_L4, set_value_4_L4
-set_value_4_L6 lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
+            beq  tile_update_jump_display  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+            jmp  tile_update_dec_counter  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+; XREF: 2 refs (2 branches) from tile_update_char_ptr, tile_update_char_ptr
+tile_update_jump_display jmp  tile_update_wait_anim  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1492]
+; XREF: 3 refs (3 branches) from tile_update_char_ptr, tile_update_char_ptr, tile_update_char_ptr
+tile_update_load_pos lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
             cmp  $00             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
-            bne  set_value_4_L7  ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
+            bne  tile_update_load_pos2  ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
             cmp  $01             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
-            bne  set_value_4_L7  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
-            jmp  set_value_4_L1  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
-; XREF: 2 refs (2 branches) from set_value_4_L6, set_value_4_L6
-set_value_4_L7 lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
+            bne  tile_update_load_pos2  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
+            jmp  tile_update_dec_counter  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
+; XREF: 2 refs (2 branches) from tile_update_load_pos, tile_update_load_pos
+tile_update_load_pos2 lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
             sta  $F1             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
             sta  $F2             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1492]
@@ -4342,26 +4402,26 @@ set_value_4_L7 lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1492]
             lda  $4F00,X         ; -> $4FC0 ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
             sta  ($FE),Y         ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
             cmp  #$3C            ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
-            beq  set_value_4_L8  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
+            beq  tile_update_wait_anim  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
             cmp  #$74            ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
-            beq  set_value_4_L8  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
-            jmp  set_value_4_L1  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
-; XREF: 3 refs (1 jump) (2 branches) from set_value_4_L7, set_value_4_L7, set_value_4_L5
-set_value_4_L8 jsr  $46E7           ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1498]
-            bmi  set_value_4_L10 ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1498]
-            jsr  set_value_6     ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1500]
+            beq  tile_update_wait_anim  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
+            jmp  tile_update_dec_counter  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1496]
+; XREF: 3 refs (1 jump) (2 branches) from tile_update_load_pos2, tile_update_load_pos2, tile_update_jump_display
+tile_update_wait_anim jsr  $46E7           ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1498]
+            bmi  tile_update_restart ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1498]
+            jsr  tile_check_special     ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1500]
             sec                  ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1500]
             lda  #$05            ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             sbc  $F5             ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             sta  $02             ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             cmp  #$0B            ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
-            bcs  set_value_4_L10 ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
+            bcs  tile_update_restart ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             sec                  ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             lda  #$05            ; A=$0005 X=$00C0 Y=$000D ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $007B3F ; [SP-1500]
             sbc  $F6             ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             sta  $03             ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             cmp  #$0B            ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
-            bcs  set_value_4_L10 ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
+            bcs  tile_update_restart ; A=$0005 X=$00C0 Y=$000D ; [SP-1500]
             jsr  $0230           ; A=$0005 X=$00C0 Y=$000D ; [SP-1502]
             lda  #$FB            ; A=$00FB X=$00C0 Y=$000D ; [SP-1502]
             jsr  $4705           ; A=$00FB X=$00C0 Y=$000D ; [SP-1504]
@@ -4369,93 +4429,93 @@ set_value_4_L8 jsr  $46E7           ; A=[$00F2] X=$00C0 Y=$000D ; [SP-1498]
             sta  $FB             ; A=$0003 X=$00C0 Y=$000D ; [SP-1504]
 
 ; === while loop starts here [nest:22] ===
-; XREF: 1 ref (1 branch) from set_value_4_L11
-set_value_4_L9 clc                  ; A=$0003 X=$00C0 Y=$000D ; [SP-1504]
+; XREF: 1 ref (1 branch) from tile_update_dec_range
+tile_update_bcd_food clc                  ; A=$0003 X=$00C0 Y=$000D ; [SP-1504]
             lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
             adc  $04             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
             sta  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
             cmp  #$0B            ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
-            bcs  set_value_4_L10 ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
+            bcs  tile_update_restart ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
             clc                  ; A=[$0002] X=$00C0 Y=$000D ; [SP-1504]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
             adc  $05             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
             sta  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
             cmp  #$0B            ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
-            bcs  set_value_4_L10 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
-            jsr  lookup_add      ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
+            bcs  tile_update_restart ; A=[$0003] X=$00C0 Y=$000D ; [SP-1504]
+            jsr  combat_tile_at_xy      ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
             cmp  #$08            ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
-            beq  set_value_4_L10 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
+            beq  tile_update_restart ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
             cmp  #$46            ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
-            beq  set_value_4_L10 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
+            beq  tile_update_restart ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
             cmp  #$48            ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
-            beq  set_value_4_L10 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
+            beq  tile_update_restart ; A=[$0003] X=$00C0 Y=$000D ; [SP-1506]
             pha                  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1507]
             lda  #$7A            ; A=$007A X=$00C0 Y=$000D ; [SP-1507]
             sta  ($FE),Y         ; A=$007A X=$00C0 Y=$000D ; [SP-1507]
             jsr  $0328           ; A=$007A X=$00C0 Y=$000D ; [SP-1509]
-            jsr  lookup_add      ; A=$007A X=$00C0 Y=$000D ; [SP-1511]
+            jsr  combat_tile_at_xy      ; A=$007A X=$00C0 Y=$000D ; [SP-1511]
             pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1510]
             sta  ($FE),Y         ; A=[stk] X=$00C0 Y=$000D ; [SP-1510]
             lda  $02             ; A=[$0002] X=$00C0 Y=$000D ; [SP-1510]
             cmp  #$05            ; A=[$0002] X=$00C0 Y=$000D ; [SP-1510]
-            bne  set_value_4_L11 ; A=[$0002] X=$00C0 Y=$000D ; [SP-1510]
+            bne  tile_update_dec_range ; A=[$0002] X=$00C0 Y=$000D ; [SP-1510]
             lda  $03             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1510]
             cmp  #$05            ; A=[$0003] X=$00C0 Y=$000D ; [SP-1510]
-            bne  set_value_4_L11 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1510]
-            jsr  set_value       ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
-; XREF: 8 refs (8 branches) from set_value_4_L8, set_value_4_L8, set_value_4_L8, set_value_4_L9, set_value_4_L9, ...
-set_value_4_L10 jmp  set_value_4_L1  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
-; XREF: 2 refs (2 branches) from set_value_4_L9, set_value_4_L9
-set_value_4_L11 dec  $FB             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
-            bne  set_value_4_L9  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
-            jmp  set_value_4_L1  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
+            bne  tile_update_dec_range ; A=[$0003] X=$00C0 Y=$000D ; [SP-1510]
+            jsr  char_combat_turn       ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
+; XREF: 8 refs (8 branches) from tile_update_wait_anim, tile_update_wait_anim, tile_update_wait_anim, tile_update_bcd_food, tile_update_bcd_food, ...
+tile_update_restart jmp  tile_update_dec_counter  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
+; XREF: 2 refs (2 branches) from tile_update_bcd_food, tile_update_bcd_food
+tile_update_dec_range dec  $FB             ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
+            bne  tile_update_bcd_food  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
+            jmp  tile_update_dec_counter  ; A=[$0003] X=$00C0 Y=$000D ; [SP-1512]
 
 ; ---
             DB      $18,$17,$19,$14,$1A,$1B,$0D,$1C,$16,$0E,$0F,$1D,$1E,$04,$04,$04
             DB      $04,$04,$04,$00,$04,$04,$00,$00,$04,$04
 ; ---
 
-; XREF: 1 ref (1 jump) from set_value_4_L2
-set_value_4_L12 lda  $4F80,X         ; -> $5040 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1518]
+; XREF: 1 ref (1 jump) from tile_update_load_counter
+tile_update_read_type lda  $4F80,X         ; -> $5040 ; A=[$0003] X=$00C0 Y=$000D ; [SP-1518]
             and  #$C0            ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-            bne  set_value_4_L13 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-            jmp  set_value_4_L1  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-; XREF: 1 ref (1 branch) from set_value_4_L12
-set_value_4_L13 cmp  #$40            ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-            beq  set_value_4_L14 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+            bne  tile_update_check_type ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+            jmp  tile_update_dec_counter  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+; XREF: 1 ref (1 branch) from tile_update_read_type
+tile_update_check_type cmp  #$40            ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+            beq  tile_update_wait_anim2 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
             cmp  #$80            ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-            beq  set_value_4_L17 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-            jmp  set_value_4_L3  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
-; XREF: 1 ref (1 branch) from set_value_4_L13
-set_value_4_L14 jsr  $46E7           ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
-            bmi  set_value_4_L16 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
+            beq  tile_update_find_target ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+            jmp  tile_update_check_special  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1518]
+; XREF: 1 ref (1 branch) from tile_update_check_type
+tile_update_wait_anim2 jsr  $46E7           ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
+            bmi  tile_update_wait_anim3 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
 
 ; === while loop starts here [nest:18] ===
-; XREF: 2 refs (2 branches) from set_value_4_L16, set_value_4_L16
-set_value_4_L15 jmp  set_value_4_L1  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
-; XREF: 1 ref (1 branch) from set_value_4_L14
-set_value_4_L16 jsr  $46E7           ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1522]
-            jsr  utility_5       ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1524]
+; XREF: 2 refs (2 branches) from tile_update_wait_anim3, tile_update_wait_anim3
+tile_update_restart2 jmp  tile_update_dec_counter  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1520]
+; XREF: 1 ref (1 branch) from tile_update_wait_anim2
+tile_update_wait_anim3 jsr  $46E7           ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1522]
+            jsr  render_sign_extend       ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1524]
             clc                  ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1524]
             adc  $4F40,X         ; -> $5000 ; A=A&$C0 X=$00C0 Y=$000D ; [SP-1524]
             and  #$3F            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1524]
             sta  $02             ; A=A&$3F X=$00C0 Y=$000D ; [SP-1524]
-            beq  set_value_4_L15 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1524]
+            beq  tile_update_restart2 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1524]
             jsr  $46E7           ; A=A&$3F X=$00C0 Y=$000D ; [SP-1526]
-            jsr  utility_5       ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
+            jsr  render_sign_extend       ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
             clc                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
             adc  $4F60,X         ; -> $5020 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
             and  #$3F            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
             sta  $03             ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
-            beq  set_value_4_L15 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
-            jmp  set_value_4_L4  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
-; XREF: 1 ref (1 branch) from set_value_4_L13
-set_value_4_L17 jsr  set_value_6     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
-            jmp  set_value_4_L4  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
+            beq  tile_update_restart2 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
+            jmp  tile_update_char_ptr  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1528]
+; XREF: 1 ref (1 branch) from tile_update_check_type
+tile_update_find_target jsr  tile_check_special     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
+            jmp  tile_update_char_ptr  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
 
 ; ---------------------------------------------------------------------------
-; check_value  [3 calls]
-;   Called by: set_value_4_L4
+; tile_check_passable  [3 calls]
+;   Called by: tile_update_char_ptr
 ;   Preserves: A
 ; ---------------------------------------------------------------------------
 
@@ -4463,51 +4523,51 @@ set_value_4_L17 jsr  set_value_6     ; A=A&$3F X=$00C0 Y=$000D ; [SP-1530]
 ; Proto: uint32_t func_007C0C(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Frame: push_only [saves: A]
 ; Liveness: params(A,X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from set_value_4_L4, set_value_4_L4, set_value_4_L4
-check_value pha                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
+; XREF: 3 refs (3 calls) from tile_update_char_ptr, tile_update_char_ptr, tile_update_char_ptr
+tile_check_passable pha                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
             lda  $4F00,X         ; -> $4FC0 ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
             cmp  #$40            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            bcs  check_value_L1  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
+            bcs  tile_passable_check_type  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
             cmp  #$2C            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
-            bcc  check_value_L1  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
+            bcc  tile_passable_check_type  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1531]
             pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
             cmp  #$00            ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-            bne  check_value_L2  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-            jmp  check_value_L3  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
-; XREF: 2 refs (2 branches) from check_value, check_value
-check_value_L1 pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
+            bne  tile_not_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
+            jmp  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1530]
+; XREF: 2 refs (2 branches) from tile_check_passable, tile_check_passable
+tile_passable_check_type pla                  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
             cmp  #$04            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  check_value_L3  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
+            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
             cmp  #$08            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  check_value_L3  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
+            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
             cmp  #$0C            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  check_value_L3  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
+            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
             cmp  #$20            ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-            beq  check_value_L3  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
-; XREF: 1 ref (1 branch) from check_value
-check_value_L2 lda  #$FF            ; A=$00FF X=$00C0 Y=$000D ; [SP-1529]
+            beq  tile_is_passable  ; A=[stk] X=$00C0 Y=$000D ; [SP-1529]
+; XREF: 1 ref (1 branch) from tile_check_passable
+tile_not_passable lda  #$FF            ; A=$00FF X=$00C0 Y=$000D ; [SP-1529]
             rts                  ; A=$00FF X=$00C0 Y=$000D ; [SP-1527]
-; XREF: 5 refs (1 jump) (4 branches) from check_value_L1, check_value_L1, check_value, check_value_L1, check_value_L1
-check_value_L3 lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1527]
+; XREF: 5 refs (1 jump) (4 branches) from tile_passable_check_type, tile_passable_check_type, tile_check_passable, tile_passable_check_type, tile_passable_check_type
+tile_is_passable lda  #$00            ; A=$0000 X=$00C0 Y=$000D ; [SP-1527]
             rts                  ; A=$0000 X=$00C0 Y=$000D ; [SP-1525]
 
 ; ---------------------------------------------------------------------------
-; set_value_6  [3 calls]
-;   Called by: set_value_4_L17, set_value_4_L3, set_value_4_L8
-;   Calls: utility_5, shift_bits, helper_6
+; tile_check_special  [3 calls]
+;   Called by: tile_update_find_target, tile_update_check_special, tile_update_wait_anim
+;   Calls: render_sign_extend, render_tile_scale, render_abs_value
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007C37: register -> A:X [I]
 ; Proto: uint32_t func_007C37(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [10 dead stores]
-; XREF: 3 refs (3 calls) from set_value_4_L17, set_value_4_L3, set_value_4_L8
-set_value_6 lda  $E2             ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
-            beq  set_value_6_L1  ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
+; XREF: 3 refs (3 calls) from tile_update_find_target, tile_update_check_special, tile_update_wait_anim
+tile_check_special lda  $E2             ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
+            beq  tile_special_surface  ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
             sec                  ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
             lda  $00             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1525]
             sbc  $4F40,X         ; -> $5000 ; A=[$0000] X=$00C0 Y=$000D ; [SP-1525]
             sta  $F5             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1525]
-            jsr  utility_5       ; A=[$0000] X=$00C0 Y=$000D ; [SP-1527]
+            jsr  render_sign_extend       ; A=[$0000] X=$00C0 Y=$000D ; [SP-1527]
             sta  $04             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1527]
             clc                  ; A=[$0000] X=$00C0 Y=$000D ; [SP-1527]
             adc  $4F40,X         ; -> $5000 ; A=[$0000] X=$00C0 Y=$000D ; [SP-1527]
@@ -4517,19 +4577,19 @@ set_value_6 lda  $E2             ; A=[$00E2] X=$00C0 Y=$000D ; [SP-1525]
             lda  $01             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1527]
             sbc  $4F60,X         ; -> $5020 ; A=[$0001] X=$00C0 Y=$000D ; [SP-1527]
             sta  $F6             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1527]
-            jsr  utility_5       ; A=[$0001] X=$00C0 Y=$000D ; [SP-1529]
+            jsr  render_sign_extend       ; A=[$0001] X=$00C0 Y=$000D ; [SP-1529]
             sta  $05             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1529]
             clc                  ; A=[$0001] X=$00C0 Y=$000D ; [SP-1529]
             adc  $4F60,X         ; -> $5020 ; A=[$0001] X=$00C0 Y=$000D ; [SP-1529]
             and  #$3F            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
             sta  $03             ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
-            jmp  set_value_6_L2  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
-; XREF: 1 ref (1 branch) from set_value_6
-set_value_6_L1 sec                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
+            jmp  tile_special_calc_dist  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
+; XREF: 1 ref (1 branch) from tile_check_special
+tile_special_surface sec                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
             lda  $00             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1529]
             sbc  $4F40,X         ; -> $5000 ; A=[$0000] X=$00C0 Y=$000D ; [SP-1529]
             sta  $F5             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1529]
-            jsr  shift_bits      ; A=[$0000] X=$00C0 Y=$000D ; [SP-1531]
+            jsr  render_tile_scale      ; A=[$0000] X=$00C0 Y=$000D ; [SP-1531]
             sta  $04             ; A=[$0000] X=$00C0 Y=$000D ; [SP-1531]
             clc                  ; A=[$0000] X=$00C0 Y=$000D ; [SP-1531]
             adc  $4F40,X         ; -> $5000 ; A=[$0000] X=$00C0 Y=$000D ; [SP-1531]
@@ -4539,18 +4599,18 @@ set_value_6_L1 sec                  ; A=A&$3F X=$00C0 Y=$000D ; [SP-1529]
             lda  $01             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1531]
             sbc  $4F60,X         ; -> $5020 ; A=[$0001] X=$00C0 Y=$000D ; [SP-1531]
             sta  $F6             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1531]
-            jsr  shift_bits      ; A=[$0001] X=$00C0 Y=$000D ; [SP-1533]
+            jsr  render_tile_scale      ; A=[$0001] X=$00C0 Y=$000D ; [SP-1533]
             sta  $05             ; A=[$0001] X=$00C0 Y=$000D ; [SP-1533]
             clc                  ; A=[$0001] X=$00C0 Y=$000D ; [SP-1533]
             adc  $4F60,X         ; -> $5020 ; A=[$0001] X=$00C0 Y=$000D ; [SP-1533]
             and  #$3F            ; A=A&$3F X=$00C0 Y=$000D ; [SP-1533]
             sta  $03             ; A=A&$3F X=$00C0 Y=$000D ; [SP-1533]
-; XREF: 1 ref (1 jump) from set_value_6
-set_value_6_L2 lda  $F5             ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1533]
-            jsr  helper_6        ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1535]
+; XREF: 1 ref (1 jump) from tile_check_special
+tile_special_calc_dist lda  $F5             ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1533]
+            jsr  render_abs_value        ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1535]
             sta  $FB             ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1535]
             lda  $F6             ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1535]
-            jsr  helper_6        ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1537]
+            jsr  render_abs_value        ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1537]
             clc                  ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1537]
             adc  $FB             ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1537]
             sta  $FB             ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1537]
@@ -4558,37 +4618,37 @@ set_value_6_L2 lda  $F5             ; A=[$00F5] X=$00C0 Y=$000D ; [SP-1533]
             DB      $A9,$20,$85,$D0
 
 ; === while loop starts here [nest:16] ===
-; XREF: 3 refs (3 branches) from set_value_6_L4, set_value_6_L4, set_value_6_L4
-set_value_6_L3 dec  $D0             ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1535]
-            bpl  set_value_6_L4  ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1535]
+; XREF: 3 refs (3 branches) from tile_special_check_pos, tile_special_check_pos, tile_special_check_pos
+tile_special_find_loop dec  $D0             ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1535]
+            bpl  tile_special_check_pos  ; A=[$00F6] X=$00C0 Y=$000D ; [SP-1535]
             lda  #$FF            ; A=$00FF X=$00C0 Y=$000D ; [SP-1535]
             rts                  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
-; XREF: 1 ref (1 branch) from set_value_6_L3
-set_value_6_L4 ldx  $D0             ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
+; XREF: 1 ref (1 branch) from tile_special_find_loop
+tile_special_check_pos ldx  $D0             ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
             lda  $4F00,X         ; -> $4FC0 ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
-            beq  set_value_6_L3  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
+            beq  tile_special_find_loop  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
 ; === End of while loop ===
 
             lda  $4F40,X         ; -> $5000 ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
             cmp  $02             ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
-            bne  set_value_6_L3  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
+            bne  tile_special_find_loop  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
 ; === End of while loop ===
 
             lda  $4F60,X         ; -> $5020 ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
             cmp  $03             ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
-            bne  set_value_6_L3  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
+            bne  tile_special_find_loop  ; A=$00FF X=$00C0 Y=$000D ; [SP-1533]
             txa                  ; A=$00C0 X=$00C0 Y=$000D ; [SP-1533]
             rts                  ; A=$00C0 X=$00C0 Y=$000D ; [SP-1531]
 
 ; ---------------------------------------------------------------------------
-; draw_hgr_2  [1 call]
-;   Called by: draw_hgr_L1
+; tile_read_map  [1 call]
+;   Called by: render_return_to_game
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007CC6: register -> A:X []
 ; Liveness: returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from draw_hgr_L1
-draw_hgr_2  ldy  #$00            ; A=$00C0 X=$00C0 Y=$0000 ; [SP-1531]
+; XREF: 1 ref (1 call) from render_return_to_game
+tile_read_map  ldy  #$00            ; A=$00C0 X=$00C0 Y=$0000 ; [SP-1531]
             ldx  #$08            ; A=$00C0 X=$0008 Y=$0000 ; [SP-1531]
             lda  $13             ; A=[$0013] X=$0008 Y=$0000 ; [SP-1531]
             clc                  ; A=[$0013] X=$0008 Y=$0000 ; [SP-1531]
@@ -4598,24 +4658,24 @@ draw_hgr_2  ldy  #$00            ; A=$00C0 X=$00C0 Y=$0000 ; [SP-1531]
             ora  $D6CC,X         ; -> $D6D4 ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1533]
             cpy  $B0BA           ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1533]
 ; *** MODIFIED AT RUNTIME by $7CCF ***
-            bcs  data_007CFC     ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1533]
+            bcs  tile_lookup_data     ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1533]
             brk  #$A0            ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1536]
 
 ; ---
             DB      $17,$A2,$06,$20,$F3,$46,$1D,$C8,$C5,$C1,$C4,$AD,$00,$A5,$14,$F0
             DB      $13,$C9,$01,$F0,$1A,$C9,$02,$F0,$21,$20,$BA,$46,$AD
-data_007CFC
+tile_lookup_data
             DB      $D7
 ; ---
 
             cmp  $D3             ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1538]
             DB      $D4,$1F,$00,$60
-loc_007D03  jsr  $46BA           ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1538]
+render_print_dir_north  jsr  $46BA           ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1538]
             dec  $D2CF           ; A=A+$B1 X=$0008 Y=$0000 ; [SP-1538]
             DB      $D4
             iny                  ; A=A+$B1 X=$0008 Y=$0001 ; [SP-1538]
             DB      $1F,$00,$60
-loc_007D0E  jsr  $46BA           ; A=A+$B1 X=$0008 Y=$0001 ; [SP-1538]
+render_print_dir_east  jsr  $46BA           ; A=A+$B1 X=$0008 Y=$0001 ; [SP-1538]
             lda  $C1C5           ; S1_xC5 - Slot 1 ROM offset $C5 {Slot}
 
 ; ---
@@ -4624,8 +4684,8 @@ loc_007D0E  jsr  $46BA           ; A=A+$B1 X=$0008 Y=$0001 ; [SP-1538]
             DB      $1F,$00,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from draw_hgr_2
-loc_007D19  jsr  $46BA           ; A=[$C1C5] X=$0008 Y=$0001 ; [SP-1538]
+; XREF: 1 ref (1 branch) from tile_read_map
+render_print_dir_south  jsr  $46BA           ; A=[$C1C5] X=$0008 Y=$0001 ; [SP-1538]
 
 ; ---
             ASC     "SOUTH"
@@ -4634,32 +4694,32 @@ loc_007D19  jsr  $46BA           ; A=[$C1C5] X=$0008 Y=$0001 ; [SP-1538]
 
 
 ; ---------------------------------------------------------------------------
-; get_value_4  [2 calls]
-;   Called by: get_value_4_L2
+; render_combat_map  [2 calls]
+;   Called by: render_combat_check_mon
 ; ---------------------------------------------------------------------------
 ; Loop counter: X=#$08
-; XREF: 2 refs (2 calls) from get_value_4_L2, $0083EE
-get_value_4 ldx  #$08            ; A=[$C1C5] X=$0008 Y=$0001 ; [SP-1538]
+; XREF: 2 refs (2 calls) from render_combat_check_mon, $0083EE
+render_combat_map ldx  #$08            ; A=[$C1C5] X=$0008 Y=$0001 ; [SP-1538]
 
 ; === while loop starts here [nest:17] ===
-; XREF: 3 refs (3 branches) from get_value_4_L2, get_value_4_L2, get_value_4_L2
-get_value_4_L1 dex                  ; A=[$C1C5] X=$0007 Y=$0001 ; [SP-1539]
-            bpl  get_value_4_L2  ; A=[$C1C5] X=$0007 Y=$0001 ; [SP-1539]
+; XREF: 3 refs (3 branches) from render_combat_check_mon, render_combat_check_mon, render_combat_check_mon
+render_combat_next_mon dex                  ; A=[$C1C5] X=$0007 Y=$0001 ; [SP-1539]
+            bpl  render_combat_check_mon  ; A=[$C1C5] X=$0007 Y=$0001 ; [SP-1539]
             lda  #$FF            ; A=$00FF X=$0007 Y=$0001 ; [SP-1539]
             rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
-; XREF: 1 ref (1 branch) from get_value_4_L1
-get_value_4_L2 lda  $9998,X         ; -> $999F ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
-            beq  get_value_4_L1  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
+; XREF: 1 ref (1 branch) from render_combat_next_mon
+render_combat_check_mon lda  $9998,X         ; -> $999F ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
+            beq  render_combat_next_mon  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
 ; === End of while loop ===
 
             lda  $9980,X         ; -> $9987 ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
             cmp  $02             ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
-            bne  get_value_4_L1  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
+            bne  render_combat_next_mon  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
 ; === End of while loop ===
 
             lda  $9988,X         ; -> $998F ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
             cmp  $03             ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
-            bne  get_value_4_L1  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
+            bne  render_combat_next_mon  ; A=$00FF X=$0007 Y=$0001 ; [SP-1537]
             txa                  ; A=$0007 X=$0007 Y=$0001 ; [SP-1537]
             rts                  ; A=$0007 X=$0007 Y=$0001 ; [SP-1535]
 
@@ -4669,8 +4729,8 @@ get_value_4_L2 lda  $9998,X         ; -> $999F ; A=$00FF X=$0007 Y=$0001 ; [SP-1
             DB      $03,$A0,$00,$68,$91,$FE,$20,$24,$7D,$30,$D5,$60
 ; --- End data region (44 bytes) ---
 
-; XREF: 2 refs (2 branches) from get_value_4_L2, get_value_4_L2
-get_value_4_L3 jsr  $0328           ; A=$0007 X=$0007 Y=$0001 ; [SP-1541]
+; XREF: 2 refs (2 branches) from render_combat_check_mon, render_combat_check_mon
+render_combat_wait_key jsr  $0328           ; A=$0007 X=$0007 Y=$0001 ; [SP-1541]
             lda  #$FF            ; A=$00FF X=$0007 Y=$0001 ; [SP-1541]
             rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1539]
 
@@ -4692,70 +4752,70 @@ get_value_4_L3 jsr  $0328           ; A=$0007 X=$0007 Y=$0001 ; [SP-1541]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; utility_5  [6 calls, 1 jump]
-;   Called by: store_values_L3, set_value_6, set_value_4_L16
+; render_sign_extend  [6 calls, 1 jump]
+;   Called by: render_target_calc_dist, tile_check_special, tile_update_wait_anim3
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007DFC: register -> A:X [L]
 ; Proto: uint32_t func_007DFC(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 7 refs (6 calls) (1 jump) from store_values_L3, set_value_6, set_value_4_L16, set_value_6, shift_bits, ...
-utility_5   cmp  #$00            ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
-            beq  utility_5_L1    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
-            bmi  utility_5_L2    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
+; XREF: 7 refs (6 calls) (1 jump) from render_target_calc_dist, tile_check_special, tile_update_wait_anim3, tile_check_special, render_tile_scale, ...
+render_sign_extend   cmp  #$00            ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
+            beq  render_sign_done    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
+            bmi  render_sign_negative    ; A=$00FF X=$0007 Y=$0001 ; [SP-1555]
             lda  #$01            ; A=$0001 X=$0007 Y=$0001 ; [SP-1555]
-; XREF: 1 ref (1 branch) from utility_5
-utility_5_L1 rts                  ; A=$0001 X=$0007 Y=$0001 ; [SP-1553]
-; XREF: 1 ref (1 branch) from utility_5
-utility_5_L2 lda  #$FF            ; A=$00FF X=$0007 Y=$0001 ; [SP-1553]
+; XREF: 1 ref (1 branch) from render_sign_extend
+render_sign_done rts                  ; A=$0001 X=$0007 Y=$0001 ; [SP-1553]
+; XREF: 1 ref (1 branch) from render_sign_extend
+render_sign_negative lda  #$FF            ; A=$00FF X=$0007 Y=$0001 ; [SP-1553]
             rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
 
 ; ---------------------------------------------------------------------------
-; shift_bits  [2 calls]
-;   Called by: set_value_6_L1
+; render_tile_scale  [2 calls]
+;   Called by: tile_special_surface
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007E08: register -> A:X []
 ; Proto: uint32_t func_007E08(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from set_value_6_L1, set_value_6_L1
-shift_bits  asl  a               ; A=$00FF X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1551]
+; XREF: 2 refs (2 calls) from tile_special_surface, tile_special_surface
+render_tile_scale  asl  a               ; A=$00FF X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1551]
             asl  a               ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-            jmp  utility_5       ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
+            jmp  render_sign_extend       ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
 ; === End of while loop ===
 
 
 ; ---------------------------------------------------------------------------
-; helper_6  [4 calls]
-;   Called by: store_values_L2, set_value_6_L2
+; render_abs_value  [4 calls]
+;   Called by: render_target_check_alive, tile_special_calc_dist
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007E0D: register -> A:X [L]
 ; Proto: uint32_t func_007E0D(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 4 refs (4 calls) from store_values_L2, store_values_L2, set_value_6_L2, set_value_6_L2
-helper_6    cmp  #$80            ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
-            bcs  helper_6_L1     ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
+; XREF: 4 refs (4 calls) from render_target_check_alive, render_target_check_alive, tile_special_calc_dist, tile_special_calc_dist
+render_abs_value    cmp  #$80            ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
+            bcs  render_negate     ; A=$00FF X=$0007 Y=$0001 ; [SP-1551]
             rts                  ; A=$00FF X=$0007 Y=$0001 ; [SP-1549]
-; XREF: 1 ref (1 branch) from helper_6
-helper_6_L1 eor  #$FF            ; A=A^$FF X=$0007 Y=$0001 ; [SP-1549]
+; XREF: 1 ref (1 branch) from render_abs_value
+render_negate eor  #$FF            ; A=A^$FF X=$0007 Y=$0001 ; [SP-1549]
             clc                  ; A=A^$FF X=$0007 Y=$0001 ; [SP-1549]
             adc  #$01            ; A=A+$01 X=$0007 Y=$0001 ; [SP-1549]
             rts                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
 
 ; ---------------------------------------------------------------------------
-; lookup_add  [25 calls]
-;   Called by: set_value_4_L9, move_data_L20, loc_0086E1, loc_008777, store_values_L3, helper_7_L8, get_value_4_L2, loc_008672
+; combat_tile_at_xy  [25 calls]
+;   Called by: tile_update_bcd_food, game_loop_combat_lookup, render_combat_dec_range, render_combat_resolve, render_target_calc_dist, render_party_final, render_combat_check_mon, render_combat_mon_special
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007E18: register -> A:X [L]
 ; Proto: uint32_t func_007E18(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [4 dead stores]
-; XREF: 25 refs (16 calls) from set_value_4_L9, move_data_L20, $00812F, loc_0086E1, loc_008777, ...
-lookup_add  clc                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
+; XREF: 25 refs (16 calls) from tile_update_bcd_food, game_loop_combat_lookup, $00812F, render_combat_dec_range, render_combat_resolve, ...
+combat_tile_at_xy  clc                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
             lda  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
-            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1547]
-            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1547]
+            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1547]
+            asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1547]
             asl  a               ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
             adc  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
             adc  $03             ; A=[$0003] X=$0007 Y=$0001 ; [SP-1547]
@@ -4769,8 +4829,8 @@ lookup_add  clc                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
             rts                  ; A=$0099 X=$0007 Y=$0000 ; [SP-1545]
 
 ; ---------------------------------------------------------------------------
-; check_value_2  [3 calls]
-;   Called by: store_values_L3
+; render_check_solid  [3 calls]
+;   Called by: render_target_calc_dist
 ;   Preserves: A
 ; ---------------------------------------------------------------------------
 
@@ -4778,62 +4838,62 @@ lookup_add  clc                  ; A=A+$01 X=$0007 Y=$0001 ; [SP-1547]
 ; Proto: uint32_t func_007E31(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Frame: push_only, 2 bytes params [saves: A]
 ; Liveness: params(A,X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from store_values_L3, store_values_L3, store_values_L3
-check_value_2 pha                  ; A=$0099 X=$0007 Y=$0000 ; [SP-1546]
+; XREF: 3 refs (3 calls) from render_target_calc_dist, render_target_calc_dist, render_target_calc_dist
+render_check_solid pha                  ; A=$0099 X=$0007 Y=$0000 ; [SP-1546]
             lda  $CE             ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
             cmp  #$20            ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
-            bcs  check_value_2_L1 ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
+            bcs  render_solid_check_type ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
             cmp  #$16            ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
-            bcc  check_value_2_L1 ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
+            bcc  render_solid_check_type ; A=[$00CE] X=$0007 Y=$0000 ; [SP-1546]
             pla                  ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
             cmp  #$00            ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
-            bne  check_value_2_L2 ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
-            jmp  check_value_2_L3 ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
-; XREF: 2 refs (2 branches) from check_value_2, check_value_2
-check_value_2_L1 pla                  ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
+            bne  render_is_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
+            jmp  render_not_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1545]
+; XREF: 2 refs (2 branches) from render_check_solid, render_check_solid
+render_solid_check_type pla                  ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
             cmp  #$02            ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
-            beq  check_value_2_L3 ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
+            beq  render_not_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
             cmp  #$04            ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
-            beq  check_value_2_L3 ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
+            beq  render_not_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
             cmp  #$06            ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
-            beq  check_value_2_L3 ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
+            beq  render_not_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
             cmp  #$10            ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
-            beq  check_value_2_L3 ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
-; XREF: 1 ref (1 branch) from check_value_2
-check_value_2_L2 lda  #$FF            ; A=$00FF X=$0007 Y=$0000 ; [SP-1544]
+            beq  render_not_solid ; A=[stk] X=$0007 Y=$0000 ; [SP-1544]
+; XREF: 1 ref (1 branch) from render_check_solid
+render_is_solid lda  #$FF            ; A=$00FF X=$0007 Y=$0000 ; [SP-1544]
             rts                  ; A=$00FF X=$0007 Y=$0000 ; [SP-1542]
-; XREF: 5 refs (1 jump) (4 branches) from check_value_2_L1, check_value_2_L1, check_value_2_L1, check_value_2_L1, check_value_2
-check_value_2_L3 lda  #$00            ; A=$0000 X=$0007 Y=$0000 ; [SP-1542]
+; XREF: 5 refs (1 jump) (4 branches) from render_solid_check_type, render_solid_check_type, render_solid_check_type, render_solid_check_type, render_check_solid
+render_not_solid lda  #$00            ; A=$0000 X=$0007 Y=$0000 ; [SP-1542]
             rts                  ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
 
 ; ---------------------------------------------------------------------------
-; check_value_3  [1 call]
+; render_viewport_flash  [1 call]
 ; ---------------------------------------------------------------------------
 ; XREF: 1 ref (1 call) from $0082B2
-check_value_3 cmp  #$02            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  check_value_3_L1 ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
+render_viewport_flash cmp  #$02            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
+            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
             cmp  #$04            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  check_value_3_L1 ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
+            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
             cmp  #$06            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  check_value_3_L1 ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
+            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
             cmp  #$10            ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
-            beq  check_value_3_L1 ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
+            beq  render_flash_activate ; A=$0000 X=$0007 Y=$0000 ; [SP-1540]
             lda  #$FF            ; A=$00FF X=$0007 Y=$0000 ; [SP-1540]
             rts                  ; A=$00FF X=$0007 Y=$0000 ; [SP-1538]
-; XREF: 4 refs (4 branches) from check_value_3, check_value_3, check_value_3, check_value_3
-check_value_3_L1 lda  #$F6            ; A=$00F6 X=$0007 Y=$0000 ; [SP-1538]
+; XREF: 4 refs (4 branches) from render_viewport_flash, render_viewport_flash, render_viewport_flash, render_viewport_flash
+render_flash_activate lda  #$F6            ; A=$00F6 X=$0007 Y=$0000 ; [SP-1538]
             jsr  $4705           ; Call $004705(A, 1 stack)
             ldx  #$FF            ; A=$00F6 X=$00FF Y=$0000 ; [SP-1540]
             ldy  #$20            ; A=$00F6 X=$00FF Y=$0020 ; [SP-1540]
 
 ; === loop starts here (counter: X) [nest:31] ===
-; XREF: 2 refs (2 branches) from check_value_3_L2, check_value_3_L2
-check_value_3_L2 dex                  ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
-            bne  check_value_3_L2 ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
+; XREF: 2 refs (2 branches) from render_flash_delay_loop, render_flash_delay_loop
+render_flash_delay_loop dex                  ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
+            bne  render_flash_delay_loop ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
 ; === End of loop (counter: X) ===
 
             dey                  ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
-            bne  check_value_3_L2 ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
+            bne  render_flash_delay_loop ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
 ; === End of loop (counter: Y) ===
 
             lda  #$F6            ; A=$00F6 X=$00FE Y=$001F ; [SP-1540]
@@ -4842,37 +4902,37 @@ check_value_3_L2 dex                  ; A=$00F6 X=$00FE Y=$0020 ; [SP-1540]
             rts                  ; A=$0000 X=$00FE Y=$001F ; [SP-1540]
 
 ; ---------------------------------------------------------------------------
-; store_values  [1 call]
-;   Called by: loc_0085F9
-;   Calls: helper_6, utility_5, lookup_add, check_value_2
+; render_find_target  [1 call]
+;   Called by: render_combat_mon_check
+;   Calls: render_abs_value, render_sign_extend, combat_tile_at_xy, render_check_solid
 ; ---------------------------------------------------------------------------
 
 ; FUNC $007E85: register -> A:X [I]
 ; Proto: uint32_t func_007E85(void);
 ; Liveness: returns(A,X,Y) [9 dead stores]
-; XREF: 1 ref (1 call) from loc_0085F9
-store_values lda  #$FF            ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
+; XREF: 1 ref (1 call) from render_combat_mon_check
+render_find_target lda  #$FF            ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
             sta  $D6             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
             sta  $D5             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
             sta  $D0             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
 
 ; === while loop starts here [nest:32] ===
-; XREF: 6 refs (3 jumps) (3 branches) from store_values_L2, store_values_L3, store_values_L2, store_values_L4, store_values_L5, ...
-store_values_L1 inc  $D5             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
+; XREF: 6 refs (3 jumps) (3 branches) from render_target_check_alive, render_target_calc_dist, render_target_check_alive, render_target_update_best, render_target_adjacent, ...
+render_target_next inc  $D5             ; A=$00FF X=$00FE Y=$001F ; [SP-1540]
             lda  $D5             ; A=[$00D5] X=$00FE Y=$001F ; [SP-1540]
             cmp  $E1             ; A=[$00D5] X=$00FE Y=$001F ; [SP-1540]
-            bcc  store_values_L2 ; A=[$00D5] X=$00FE Y=$001F ; [SP-1540]
-            jmp  store_values_L6 ; "&M$V"
-; XREF: 1 ref (1 branch) from store_values_L1
-store_values_L2 jsr  $46F6           ; A=[$00D5] X=$00FE Y=$001F ; [SP-1542]
+            bcc  render_target_check_alive ; A=[$00D5] X=$00FE Y=$001F ; [SP-1540]
+            jmp  render_target_selected ; "&M$V"
+; XREF: 1 ref (1 branch) from render_target_next
+render_target_check_alive jsr  $46F6           ; A=[$00D5] X=$00FE Y=$001F ; [SP-1542]
             ldy  #$11            ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
             lda  ($FE),Y         ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
             cmp  #$C4            ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
-            beq  store_values_L1 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
+            beq  render_target_next ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
 ; === End of while loop ===
 
             cmp  #$C1            ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
-            beq  store_values_L1 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
+            beq  render_target_next ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
 ; === End of while loop ===
 
             ldx  $CD             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
@@ -4881,61 +4941,61 @@ store_values_L2 jsr  $46F6           ; A=[$00D5] X=$00FE Y=$001F ; [SP-1542]
             lda  $99A0,Y         ; -> $99B1 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
             sbc  $9980,X         ; -> $9A7E ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
             sta  $04             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1542]
-            jsr  helper_6        ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
+            jsr  render_abs_value        ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
             sta  $D1             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
             sec                  ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
             lda  $99A4,Y         ; -> $99B5 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
             sbc  $9988,X         ; -> $9A86 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
             sta  $05             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1544]
-            jsr  helper_6        ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
+            jsr  render_abs_value        ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
             sta  $D2             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
             ora  $D1             ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
             cmp  #$02            ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
-            bcc  store_values_L5 ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
+            bcc  render_target_adjacent ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
             clc                  ; A=[$00D5] X=$00FE Y=$0011 ; [SP-1546]
             lda  $D1             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
             adc  $D2             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
             cmp  $D0             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
-            beq  store_values_L3 ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
-            bcs  store_values_L1 ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
-; XREF: 1 ref (1 branch) from store_values_L2
-store_values_L3 sta  $D1             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
+            beq  render_target_calc_dist ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
+            bcs  render_target_next ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
+; XREF: 1 ref (1 branch) from render_target_check_alive
+render_target_calc_dist sta  $D1             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1546]
             lda  $04             ; A=[$0004] X=$00FE Y=$0011 ; [SP-1546]
-            jsr  utility_5       ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
+            jsr  render_sign_extend       ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
             sta  $04             ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
             clc                  ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
             adc  $9980,X         ; -> $9A7E ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
             sta  $02             ; A=[$0004] X=$00FE Y=$0011 ; [SP-1548]
             lda  $05             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1548]
-            jsr  utility_5       ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
+            jsr  render_sign_extend       ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
             sta  $05             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
             clc                  ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
             adc  $9988,X         ; -> $9A86 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
             sta  $03             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1550]
-            jsr  lookup_add      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1552]
-            jsr  check_value_2   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
-            bpl  store_values_L4 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
+            jsr  combat_tile_at_xy      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1552]
+            jsr  render_check_solid   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
+            bpl  render_target_update_best ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             clc                  ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             lda  $9988,X         ; -> $9A86 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             adc  $05             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             sta  $03             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             lda  $9980,X         ; -> $9A7E ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
             sta  $02             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1554]
-            jsr  lookup_add      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1556]
-            jsr  check_value_2   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
-            bpl  store_values_L4 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
+            jsr  combat_tile_at_xy      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1556]
+            jsr  render_check_solid   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
+            bpl  render_target_update_best ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             clc                  ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             lda  $9980,X         ; -> $9A7E ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             adc  $04             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             sta  $02             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             lda  $9988,X         ; -> $9A86 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
             sta  $03             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1558]
-            jsr  lookup_add      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1560]
-            jsr  check_value_2   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
-            bpl  store_values_L4 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
-            jmp  store_values_L1 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
-; XREF: 3 refs (3 branches) from store_values_L3, store_values_L3, store_values_L3
-store_values_L4 ldy  $D5             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
+            jsr  combat_tile_at_xy      ; A=[$0005] X=$00FE Y=$0011 ; [SP-1560]
+            jsr  render_check_solid   ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
+            bpl  render_target_update_best ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
+            jmp  render_target_next ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
+; XREF: 3 refs (3 branches) from render_target_calc_dist, render_target_calc_dist, render_target_calc_dist
+render_target_update_best ldy  $D5             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
             sty  $D6             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
             lda  $D1             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             sta  $D0             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
@@ -4947,19 +5007,19 @@ store_values_L4 ldy  $D5             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
             sta  $F5             ; A=[$0004] X=$00FE Y=$0011 ; [SP-1562]
             lda  $05             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
             sta  $F6             ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
-            jmp  store_values_L1 ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
-; XREF: 1 ref (1 branch) from store_values_L2
-store_values_L5 lda  #$00            ; A=$0000 X=$00FE Y=$0011 ; [SP-1562]
+            jmp  render_target_next ; A=[$0005] X=$00FE Y=$0011 ; [SP-1562]
+; XREF: 1 ref (1 branch) from render_target_check_alive
+render_target_adjacent lda  #$00            ; A=$0000 X=$00FE Y=$0011 ; [SP-1562]
             sta  $D0             ; A=$0000 X=$00FE Y=$0011 ; [SP-1562]
             sty  $D6             ; A=$0000 X=$00FE Y=$0011 ; [SP-1562]
             clc                  ; A=$0000 X=$00FE Y=$0011 ; [SP-1562]
             lda  $D1             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             adc  $D2             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             cmp  #$02            ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
-            bcc  store_values_L6 ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
-            jmp  store_values_L1 ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
-; XREF: 2 refs (1 jump) (1 branch) from store_values_L1, store_values_L5
-store_values_L6 ldx  $CD             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
+            bcc  render_target_selected ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
+            jmp  render_target_next ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
+; XREF: 2 refs (1 jump) (1 branch) from render_target_next, render_target_adjacent
+render_target_selected ldx  $CD             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             ldy  $D6             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             sty  $D5             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             rts                  ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1560]
@@ -4971,20 +5031,20 @@ store_values_L6 ldx  $CD             ; A=[$00D1] X=$00FE Y=$0011 ; [SP-1562]
             DB      $7E,$60
 ; --- End data region (50 bytes) ---
 
-; XREF: 3 refs (3 branches) from store_values_L6, store_values_L6, store_values_L6
-store_values_L7 lda  #$28            ; A=$0028 X=$00FE Y=$0011 ; [SP-1560]
+; XREF: 3 refs (3 branches) from render_target_selected, render_target_selected, render_target_selected
+render_appearance_melee lda  #$28            ; A=$0028 X=$00FE Y=$0011 ; [SP-1560]
             rts                  ; A=$0028 X=$00FE Y=$0011 ; [SP-1558]
-; XREF: 2 refs (2 branches) from store_values_L6, store_values_L6
-get_value_5 lda  #$2A            ; A=$002A X=$00FE Y=$0011 ; [SP-1558]
+; XREF: 2 refs (2 branches) from render_target_selected, render_target_selected
+render_show_weapon lda  #$2A            ; A=$002A X=$00FE Y=$0011 ; [SP-1558]
             rts                  ; A=$002A X=$00FE Y=$0011 ; [SP-1556]
-; XREF: 3 refs (3 branches) from store_values_L6, store_values_L6, store_values_L6
-store_values_L8 lda  #$2C            ; A=$002C X=$00FE Y=$0011 ; [SP-1556]
+; XREF: 3 refs (3 branches) from render_target_selected, render_target_selected, render_target_selected
+render_appearance_ranged lda  #$2C            ; A=$002C X=$00FE Y=$0011 ; [SP-1556]
             rts                  ; A=$002C X=$00FE Y=$0011 ; [SP-1554]
-; XREF: 1 ref (1 branch) from store_values_L6
-get_value_6 lda  #$2E            ; A=$002E X=$00FE Y=$0011 ; [SP-1554]
+; XREF: 1 ref (1 branch) from render_target_selected
+render_show_armor lda  #$2E            ; A=$002E X=$00FE Y=$0011 ; [SP-1554]
             rts                  ; A=$002E X=$00FE Y=$0011 ; [SP-1552]
-; XREF: 1 ref (1 branch) from store_values_L6
-store_values_L9 lda  #$22            ; A=$0022 X=$00FE Y=$0011 ; [SP-1552]
+; XREF: 1 ref (1 branch) from render_target_selected
+render_appearance_wizard lda  #$22            ; A=$0022 X=$00FE Y=$0011 ; [SP-1552]
             rts                  ; A=$0022 X=$00FE Y=$0011 ; [SP-1550]
 
 ; ===========================================================================
@@ -4992,10 +5052,10 @@ store_values_L9 lda  #$22            ; A=$0022 X=$00FE Y=$0011 ; [SP-1552]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; helper_7  [3 calls]
+; render_monster_sprite  [3 calls]
 ; ---------------------------------------------------------------------------
 ; XREF: 3 refs (3 calls) from $008140, $008143, $00814F
-helper_7    lda  #$FD            ; A=$00FD X=$00FE Y=$0011 ; [SP-1550]
+render_monster_sprite    lda  #$FD            ; A=$00FD X=$00FE Y=$0011 ; [SP-1550]
             ldx  #$F0            ; A=$00FD X=$00F0 Y=$0011 ; [SP-1550]
             ldy  #$10            ; A=$00FD X=$00F0 Y=$0010 ; [SP-1550]
             jmp  $4705           ; A=$00FD X=$00F0 Y=$0010 ; [SP-1550]
@@ -5005,8 +5065,8 @@ helper_7    lda  #$FD            ; A=$00FD X=$00FE Y=$0011 ; [SP-1550]
             jmp  $4705           ; A=$00FD X=$0080 Y=$0010 ; [SP-1550]
 
 ; === while loop starts here (counter: Y 'j') [nest:2] ===
-; XREF: 2 refs (2 jumps) from loc_0052F0, loc_009004
-helper_7_L1 lda  $B0             ; A=[$00B0] X=$0080 Y=$0010 ; [SP-1550]
+; XREF: 2 refs (2 jumps) from input_jump_render, dungeon_set_encounter
+render_combat_update lda  $B0             ; A=[$00B0] X=$0080 Y=$0010 ; [SP-1550]
             sta  $835F           ; A=[$00B0] X=$0080 Y=$0010 ; [SP-1550]
             lda  #$00            ; A=$0000 X=$0080 Y=$0010 ; [SP-1550]
             sta  $5521           ; A=$0000 X=$0080 Y=$0010 ; [SP-1550]
@@ -5015,31 +5075,31 @@ helper_7_L1 lda  $B0             ; A=[$00B0] X=$0080 Y=$0010 ; [SP-1550]
             sta  $B0             ; A=$0000 X=$0080 Y=$0010 ; [SP-1550]
 
 ; === while loop starts here [nest:23] ===
-; XREF: 1 ref (1 branch) from helper_7_L2
-helper_7_L2 lda  $B2             ; A=[$00B2] X=$0080 Y=$0010 ; [SP-1550]
-            bne  helper_7_L2     ; A=[$00B2] X=$0080 Y=$0010 ; [SP-1550]
+; XREF: 1 ref (1 branch) from render_check_music
+render_check_music lda  $B2             ; A=[$00B2] X=$0080 Y=$0010 ; [SP-1550]
+            bne  render_check_music     ; A=[$00B2] X=$0080 Y=$0010 ; [SP-1550]
 ; === End of while loop ===
 
 ; Loop counter: X=#$20
             ldx  #$20            ; A=[$00B2] X=$0020 Y=$0010 ; [SP-1550]
 
 ; === while loop starts here [nest:23] ===
-; XREF: 2 refs (1 jump) (1 branch) from helper_7_L3, helper_7_L4
-helper_7_L3 dex                  ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
-            bmi  helper_7_L5     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
+; XREF: 2 refs (1 jump) (1 branch) from render_dec_cursor, render_set_window
+render_dec_cursor dex                  ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
+            bmi  render_print_status_hdr     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
             lda  $4F00,X         ; -> $4F1F ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
             cmp  #$4C            ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
-            beq  helper_7_L4     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
+            beq  render_set_window     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
             cmp  #$48            ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
-            bne  helper_7_L3     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
+            bne  render_dec_cursor     ; A=[$00B2] X=$001F Y=$0010 ; [SP-1550]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from helper_7_L3
-helper_7_L4 lda  #$C0            ; A=$00C0 X=$001F Y=$0010 ; [SP-1550]
+; XREF: 1 ref (1 branch) from render_dec_cursor
+render_set_window lda  #$C0            ; A=$00C0 X=$001F Y=$0010 ; [SP-1550]
             sta  $4F80,X         ; -> $4F9F ; A=$00C0 X=$001F Y=$0010 ; [SP-1550]
-            jmp  helper_7_L3     ; A=$00C0 X=$001F Y=$0010 ; [SP-1550]
-; XREF: 1 ref (1 branch) from helper_7_L3
-helper_7_L5 jsr  $46BA           ; A=$00C0 X=$001F Y=$0010 ; [SP-1552]
+            jmp  render_dec_cursor     ; A=$00C0 X=$001F Y=$0010 ; [SP-1550]
+; XREF: 1 ref (1 branch) from render_dec_cursor
+render_print_status_hdr jsr  $46BA           ; A=$00C0 X=$001F Y=$0010 ; [SP-1552]
             DB      $FF
             lda  $ADAD           ; A=[$ADAD] X=$001F Y=$0010 ; [SP-1552]
 
@@ -5074,22 +5134,22 @@ helper_7_L5 jsr  $46BA           ; A=$00C0 X=$001F Y=$0010 ; [SP-1552]
 
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:18] ===
-; XREF: 2 refs (2 jumps) from loc_0085EE, loc_0085E1
-helper_7_L6 jsr  helper_4        ; A=[$ADAD] X=$001F Y=$0010 ; [SP-1591]
-            jsr  process_3       ; A=[$ADAD] X=$001F Y=$0010 ; [SP-1593]
+; XREF: 2 refs (2 jumps) from render_combat_monster_ai, render_combat_check_cb
+render_call_turn jsr  move_process_turn        ; A=[$ADAD] X=$001F Y=$0010 ; [SP-1591]
+            jsr  move_display_party_status       ; A=[$ADAD] X=$001F Y=$0010 ; [SP-1593]
             ldx  #$00            ; A=[$ADAD] X=$0000 Y=$0010 ; [SP-1593]
             stx  $835D           ; A=[$ADAD] X=$0000 Y=$0010 ; [SP-1593]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:20] ===
-; XREF: 1 ref (1 jump) from loc_0085C9
-helper_7_L7 lda  $835D           ; A=[$835D] X=$0000 Y=$0010 ; [SP-1593]
+; XREF: 1 ref (1 jump) from render_combat_mon_status
+render_party_status_disp lda  $835D           ; A=[$835D] X=$0000 Y=$0010 ; [SP-1593]
             sta  $D5             ; A=[$835D] X=$0000 Y=$0010 ; [SP-1593]
-            jsr  get_value_7     ; A=[$835D] X=$0000 Y=$0010 ; [SP-1595]
-            jsr  process_4       ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
-            beq  helper_7_L8     ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
-            jmp  loc_0085A6      ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
-; XREF: 1 ref (1 branch) from helper_7_L7
-helper_7_L8 lda  #$2F            ; A=$002F X=$0000 Y=$0010 ; [SP-1597]
+            jsr  render_calc_offset     ; A=[$835D] X=$0000 Y=$0010 ; [SP-1595]
+            jsr  magic_resolve_effect       ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
+            beq  render_party_final     ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
+            jmp  render_combat_loop_start      ; A=[$835D] X=$0000 Y=$0010 ; [SP-1597]
+; XREF: 1 ref (1 branch) from render_party_status_disp
+render_party_final lda  #$2F            ; A=$002F X=$0000 Y=$0010 ; [SP-1597]
             sta  $12             ; A=$002F X=$0000 Y=$0010 ; [SP-1597]
             jsr  $46BA           ; Call $0046BA(A, X)
             lda  $ADAD           ; A=[$ADAD] X=$0000 Y=$0010 ; [SP-1599]
@@ -5128,7 +5188,7 @@ helper_7_L8 lda  #$2F            ; A=$002F X=$0000 Y=$0010 ; [SP-1597]
             DB      $FE,$A5,$F1,$85,$02,$9D,$A0,$99,$A5,$F2,$85,$03,$9D,$A4,$99,$20
             DB      $18,$7E,$9D,$A8,$99,$BD,$AC,$99,$91,$FE,$4C,$A6,$85,$C9,$C1,$D0
             DB      $03,$4C,$60
-data_0082ED
+render_combat_cmd_data
             DB      $83
 ; --- End data region (340 bytes) ---
 
@@ -5162,11 +5222,11 @@ data_0082ED
 ; --- End data region (384 bytes) ---
 
 ; XREF: 2 refs (2 branches) from $00845A, $008461
-loc_008470  lda  $CE             ; A=[$00CE] X=$0000 Y=$0010 ; [SP-1715]
+render_monster_attack  lda  $CE             ; A=[$00CE] X=$0000 Y=$0010 ; [SP-1715]
             lsr  a               ; A=[$00CE] X=$0000 Y=$0010 ; [SP-1715]
             clc                  ; A=[$00CE] X=$0000 Y=$0010 ; [SP-1715]
             adc  #$01            ; A=A+$01 X=$0000 Y=$0010 ; [SP-1715]
-            jsr  move_data_3     ; A=A+$01 X=$0000 Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $008476 followed by RTS ; [SP-1717]
+            jsr  render_draw_text_row     ; A=A+$01 X=$0000 Y=$0010 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $008476 followed by RTS ; [SP-1717]
             rts                  ; A=A+$01 X=$0000 Y=$0010 ; [SP-1715]
 
 ; --- Data region (171 bytes) ---
@@ -5185,7 +5245,7 @@ loc_008470  lda  $CE             ; A=[$00CE] X=$0000 Y=$0010 ; [SP-1715]
             DB      $9D,$98,$99,$20,$28,$03,$60
 ; --- End data region (171 bytes) ---
 
-loc_008525  ora  ($02,X)         ; A=A+$01 X=$0000 Y=$0010 ; [SP-1742]
+render_exp_table  ora  ($02,X)         ; A=A+$01 X=$0000 Y=$0010 ; [SP-1742]
             ora  $20,X           ; A=A+$01 X=$0000 Y=$0010 ; [SP-1742]
             php                  ; A=A+$01 X=$0000 Y=$0010 ; [SP-1743]
             asl  $10             ; A=A+$01 X=$0000 Y=$0010 ; [SP-1743]
@@ -5195,16 +5255,16 @@ loc_008525  ora  ($02,X)         ; A=A+$01 X=$0000 Y=$0010 ; [SP-1742]
             DB      $10,$15,$20,$05
 
 ; === while loop starts here [nest:22] ===
-; XREF: 1 ref (1 jump) from loc_0085BE
-loc_008535  lda  #$00            ; A=$0000 X=$0000 Y=$0010 ; [SP-1746]
+; XREF: 1 ref (1 jump) from render_combat_find_mon
+render_victory  lda  #$00            ; A=$0000 X=$0000 Y=$0010 ; [SP-1746]
             sta  $CB             ; A=$0000 X=$0000 Y=$0010 ; [SP-1749]
             sta  $B1             ; A=$0000 X=$0000 Y=$0010 ; [SP-1749]
             sta  $B0             ; A=$0000 X=$0000 Y=$0010 ; [SP-1749]
 
 ; === while loop starts here [nest:24] ===
-; XREF: 1 ref (1 branch) from loc_00853D
-loc_00853D  lda  $B2             ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1749]
-            bne  loc_00853D      ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1749]
+; XREF: 1 ref (1 branch) from render_victory_wait_vbl
+render_victory_wait_vbl  lda  $B2             ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1749]
+            bne  render_victory_wait_vbl      ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1749]
             jsr  $46BA           ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1751]
             DB      $FF
             tax                  ; A=[$00B2] X=[$00B2] Y=$0010 ; [SP-1751]
@@ -5217,7 +5277,7 @@ loc_00853D  lda  $B2             ; A=[$00B2] X=$0000 Y=$0010 ; [SP-1749]
             DB      $FD,$A2,$60
 ; --- End data region (35 bytes) ---
 
-loc_00856B  ldy  #$40            ; A=[$00B2] X=[$00B2] Y=$0040 ; [SP-1757]
+render_victory_music  ldy  #$40            ; A=[$00B2] X=[$00B2] Y=$0040 ; [SP-1757]
             jsr  $4705           ; A=[$00B2] X=[$00B2] Y=$0040 ; [SP-1759]
             lda  $835F           ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1759]
             sta  $B1             ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1759]
@@ -5225,40 +5285,40 @@ loc_00856B  ldy  #$40            ; A=[$00B2] X=[$00B2] Y=$0040 ; [SP-1757]
             lda  $835E           ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1759]
             sta  $E2             ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1759]
             cmp  #$01            ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1759]
-            bne  loc_008586      ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1759]
+            bne  render_victory_cleanup      ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1759]
             jsr  $1800           ; Call $001800(A)
-            jmp  draw_hgr_L1     ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1761]
-; XREF: 1 ref (1 branch) from loc_00856B
-loc_008586  jsr  $0230           ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1763]
-            jmp  move_data_L10   ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1763]
+            jmp  render_return_to_game     ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1761]
+; XREF: 1 ref (1 branch) from render_victory_music
+render_victory_cleanup  jsr  $0230           ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1763]
+            jmp  game_loop_end_turn   ; A=[$835E] X=[$00B2] Y=$0040 ; [SP-1763]
 
 ; ---
             DB      $A9,$78,$85,$1F,$20,$BA,$46,$C3,$C1,$D3,$D4,$A0,$D3,$D0,$C5,$CC
             DB      $CC,$A1,$FF,$00,$20,$F6,$46,$4C,$AA,$53
 ; ---
 
-; XREF: 6 refs (6 jumps) from $00828A, helper_7_L7, $008396, $0082E4, loc_008470, ...
-loc_0085A6  lda  $835F           ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1765]
+; XREF: 6 refs (6 jumps) from $00828A, render_party_status_disp, $008396, $0082E4, render_monster_attack, ...
+render_combat_loop_start  lda  $835F           ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1765]
             cmp  #$07            ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1765]
-            bne  loc_0085B1      ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1765]
+            bne  render_combat_load_turn      ; A=[$835F] X=[$00B2] Y=$0040 ; [SP-1765]
             lda  #$00            ; A=$0000 X=[$00B2] Y=$0040 ; [SP-1765]
             sta  $CB             ; A=$0000 X=[$00B2] Y=$0040 ; [SP-1765]
-; XREF: 1 ref (1 branch) from loc_0085A6
-loc_0085B1  lda  $835D           ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1765]
+; XREF: 1 ref (1 branch) from render_combat_loop_start
+render_combat_load_turn  lda  $835D           ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1765]
             sta  $D5             ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1765]
             jsr  $0328           ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1767]
-            jsr  get_value_7     ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1769]
+            jsr  render_calc_offset     ; A=[$835D] X=[$00B2] Y=$0040 ; [SP-1769]
             ldx  #$07            ; A=[$835D] X=$0007 Y=$0040 ; [SP-1769]
 
 ; === while loop starts here [nest:23] ===
-; XREF: 1 ref (1 branch) from loc_0085BE
-loc_0085BE  lda  $9998,X         ; -> $999F ; A=[$835D] X=$0007 Y=$0040 ; [SP-1769]
-            bne  loc_0085C9      ; A=[$835D] X=$0007 Y=$0040 ; [SP-1769]
+; XREF: 1 ref (1 branch) from render_combat_find_mon
+render_combat_find_mon  lda  $9998,X         ; -> $999F ; A=[$835D] X=$0007 Y=$0040 ; [SP-1769]
+            bne  render_combat_mon_status      ; A=[$835D] X=$0007 Y=$0040 ; [SP-1769]
             dex                  ; A=[$835D] X=$0006 Y=$0040 ; [SP-1769]
-            bpl  loc_0085BE      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1769]
-            jmp  loc_008535      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1769]
-; XREF: 1 ref (1 branch) from loc_0085BE
-loc_0085C9  jsr  process_3       ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
+            bpl  render_combat_find_mon      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1769]
+            jmp  render_victory      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1769]
+; XREF: 1 ref (1 branch) from render_combat_find_mon
+render_combat_mon_status  jsr  move_display_party_status       ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
             lda  #$17            ; A=$0017 X=$0006 Y=$0040 ; [SP-1771]
             sta  $FA             ; A=$0017 X=$0006 Y=$0040 ; [SP-1771]
             lda  #$18            ; A=$0018 X=$0006 Y=$0040 ; [SP-1771]
@@ -5266,91 +5326,91 @@ loc_0085C9  jsr  process_3       ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
             inc  $835D           ; A=$0018 X=$0006 Y=$0040 ; [SP-1771]
             lda  $835D           ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
             cmp  $E1             ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
-            bcs  loc_0085E1      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
-            jmp  helper_7_L7     ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
-; XREF: 1 ref (1 branch) from loc_0085C9
-loc_0085E1  lda  $CB             ; A=[$00CB] X=$0006 Y=$0040 ; [SP-1771]
-            beq  loc_0085EA      ; A=[$00CB] X=$0006 Y=$0040 ; [SP-1771]
+            bcs  render_combat_check_cb      ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
+            jmp  render_party_status_disp     ; A=[$835D] X=$0006 Y=$0040 ; [SP-1771]
+; XREF: 1 ref (1 branch) from render_combat_mon_status
+render_combat_check_cb  lda  $CB             ; A=[$00CB] X=$0006 Y=$0040 ; [SP-1771]
+            beq  render_combat_init_cd      ; A=[$00CB] X=$0006 Y=$0040 ; [SP-1771]
             dec  $CB             ; A=[$00CB] X=$0006 Y=$0040 ; [SP-1771]
-            jmp  helper_7_L6     ; " pt 8s\x22"
-; XREF: 1 ref (1 branch) from loc_0085E1
-loc_0085EA  ldx  #$FF            ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
+            jmp  render_call_turn     ; " pt 8s\x22"
+; XREF: 1 ref (1 branch) from render_combat_check_cb
+render_combat_init_cd  ldx  #$FF            ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
             stx  $CD             ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
 
 ; === while loop starts here [nest:18] ===
-; XREF: 5 refs (4 jumps) (1 branch) from loc_0085F9, loc_0086F7, loc_008672, loc_008811, loc_008643
-loc_0085EE  inc  $CD             ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
+; XREF: 5 refs (4 jumps) (1 branch) from render_combat_mon_check, render_combat_draw_2, render_combat_mon_special, render_combat_status_upd, render_combat_mon_action
+render_combat_monster_ai  inc  $CD             ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
             ldx  $CD             ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
             cpx  #$08            ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
-            bcc  loc_0085F9      ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
-            jmp  helper_7_L6     ; " pt 8s\x22"
-; XREF: 1 ref (1 branch) from loc_0085EE
-loc_0085F9  lda  $9998,X         ; -> $9A97 ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
-            beq  loc_0085EE      ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
-            jsr  store_values    ; Call $007E85(A, X)
+            bcc  render_combat_mon_check      ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
+            jmp  render_call_turn     ; " pt 8s\x22"
+; XREF: 1 ref (1 branch) from render_combat_monster_ai
+render_combat_mon_check  lda  $9998,X         ; -> $9A97 ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
+            beq  render_combat_monster_ai      ; A=[$00CB] X=$00FF Y=$0040 ; [SP-1771]
+            jsr  render_find_target    ; Call $007E85(A, X)
             lda  #$7A            ; A=$007A X=$00FF Y=$0040 ; [SP-1773]
             sta  $1F             ; A=$007A X=$00FF Y=$0040 ; [SP-1773]
             lda  $D0             ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1773]
-            bne  loc_00860C      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1773]
-            jmp  loc_0086FD      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1773]
-; XREF: 1 ref (1 branch) from loc_0085F9
-loc_00860C  lda  $D5             ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1773]
-            bmi  loc_00861E      ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1773]
+            bne  render_combat_mon_target      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1773]
+            jmp  render_combat_get_tile      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1773]
+; XREF: 1 ref (1 branch) from render_combat_mon_check
+render_combat_mon_target  lda  $D5             ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1773]
+            bmi  render_combat_mon_move      ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1773]
             jsr  $46E7           ; Call $0046E7(A)
-            bmi  loc_00861E      ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1775]
+            bmi  render_combat_mon_move      ; A=[$00D5] X=$00FF Y=$0040 ; [SP-1775]
             lda  $CE             ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
             cmp  #$3A            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
-            bne  loc_00861E      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
-            jmp  loc_0086A4      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
-; XREF: 3 refs (3 branches) from loc_00860C, loc_00860C, loc_00860C
-loc_00861E  lda  #$C0            ; A=$00C0 X=$00FF Y=$0040 ; [SP-1775]
+            bne  render_combat_mon_move      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
+            jmp  render_combat_mon_flag      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1775]
+; XREF: 3 refs (3 branches) from render_combat_mon_target, render_combat_mon_target, render_combat_mon_target
+render_combat_mon_move  lda  #$C0            ; A=$00C0 X=$00FF Y=$0040 ; [SP-1775]
             jsr  $46E4           ; Call $0046E4(A, Y)
-            bpl  loc_008643      ; A=$00C0 X=$00FF Y=$0040 ; [SP-1777]
+            bpl  render_combat_mon_action      ; A=$00C0 X=$00FF Y=$0040 ; [SP-1777]
             lda  $CE             ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$1A            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$1C            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$2C            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$36            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$3A            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$3C            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_00864A      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_wait      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
             cmp  #$26            ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
-            beq  loc_008672      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
+            beq  render_combat_mon_special      ; A=[$00CE] X=$00FF Y=$0040 ; [SP-1777]
 
 ; === while loop starts here [nest:20] ===
-; XREF: 2 refs (2 branches) from loc_00861E, loc_00864A
-loc_008643  lda  $D0             ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
-            bpl  loc_008672      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
-            jmp  loc_0085EE      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
-; XREF: 6 refs (6 branches) from loc_00861E, loc_00861E, loc_00861E, loc_00861E, loc_00861E, ...
-loc_00864A  jsr  $46E7           ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1779]
+; XREF: 2 refs (2 branches) from render_combat_mon_move, render_combat_mon_wait
+render_combat_mon_action  lda  $D0             ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
+            bpl  render_combat_mon_special      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
+            jmp  render_combat_monster_ai      ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1777]
+; XREF: 6 refs (6 branches) from render_combat_mon_move, render_combat_mon_move, render_combat_mon_move, render_combat_mon_move, render_combat_mon_move, ...
+render_combat_mon_wait  jsr  $46E7           ; A=[$00D0] X=$00FF Y=$0040 ; [SP-1779]
             and  #$03            ; A=A&$03 X=$00FF Y=$0040 ; [SP-1779]
             sta  $D5             ; A=A&$03 X=$00FF Y=$0040 ; [SP-1779]
             jsr  $46F6           ; A=A&$03 X=$00FF Y=$0040 ; [SP-1781]
             ldy  #$11            ; A=A&$03 X=$00FF Y=$0011 ; [SP-1781]
             lda  ($FE),Y         ; A=A&$03 X=$00FF Y=$0011 ; [SP-1781]
             cmp  #$C7            ; A=A&$03 X=$00FF Y=$0011 ; [SP-1781]
-            bne  loc_008643      ; A=A&$03 X=$00FF Y=$0011 ; [SP-1781]
-            jsr  get_value       ; Call $0058E9(Y)
+            bne  render_combat_mon_action      ; A=A&$03 X=$00FF Y=$0011 ; [SP-1781]
+            jsr  char_decrypt_records       ; Call $0058E9(Y)
             lda  #$FD            ; A=$00FD X=$00FF Y=$0011 ; [SP-1783]
             ldx  #$40            ; A=$00FD X=$0040 Y=$0011 ; [SP-1783]
             ldy  #$40            ; A=$00FD X=$0040 Y=$0040 ; [SP-1783]
             jsr  $4705           ; A=$00FD X=$0040 Y=$0040 ; [SP-1785]
-            jsr  get_value       ; A=$00FD X=$0040 Y=$0040 ; [SP-1787]
+            jsr  char_decrypt_records       ; A=$00FD X=$0040 Y=$0040 ; [SP-1787]
             lda  #$78            ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
             sta  $1F             ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
-            jmp  loc_0086FD      ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
-; XREF: 2 refs (2 branches) from loc_008643, loc_00861E
-loc_008672  lda  $9980,X         ; -> $99C0 ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
+            jmp  render_combat_get_tile      ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
+; XREF: 2 refs (2 branches) from render_combat_mon_action, render_combat_mon_move
+render_combat_mon_special  lda  $9980,X         ; -> $99C0 ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
             sta  $02             ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
             lda  $9988,X         ; -> $99C8 ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
             sta  $03             ; A=$0078 X=$0040 Y=$0040 ; [SP-1787]
-            jsr  lookup_add      ; A=$0078 X=$0040 Y=$0040 ; [SP-1789]
+            jsr  combat_tile_at_xy      ; A=$0078 X=$0040 Y=$0040 ; [SP-1789]
             lda  $9990,X         ; -> $99D0 ; A=$0078 X=$0040 Y=$0040 ; [SP-1789]
             sta  ($FE),Y         ; A=$0078 X=$0040 Y=$0040 ; [SP-1789]
             lda  $F7             ; A=[$00F7] X=$0040 Y=$0040 ; [SP-1789]
@@ -5359,15 +5419,15 @@ loc_008672  lda  $9980,X         ; -> $99C0 ; A=$0078 X=$0040 Y=$0040 ; [SP-1787
             lda  $F8             ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1789]
             sta  $03             ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1789]
             sta  $9988,X         ; -> $99C8 ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1789]
-            jsr  lookup_add      ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1791]
+            jsr  combat_tile_at_xy      ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1791]
             lda  ($FE),Y         ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1791]
             sta  $9990,X         ; -> $99D0 ; A=[$00F8] X=$0040 Y=$0040 ; [SP-1791]
             lda  $CE             ; A=[$00CE] X=$0040 Y=$0040 ; [SP-1791]
             sta  ($FE),Y         ; A=[$00CE] X=$0040 Y=$0040 ; [SP-1791]
             jsr  $0328           ; Call $000328(A)
-            jmp  loc_0085EE      ; A=[$00CE] X=$0040 Y=$0040 ; [SP-1793]
-; XREF: 1 ref (1 jump) from loc_00860C
-loc_0086A4  lda  #$FB            ; A=$00FB X=$0040 Y=$0040 ; [SP-1793]
+            jmp  render_combat_monster_ai      ; A=[$00CE] X=$0040 Y=$0040 ; [SP-1793]
+; XREF: 1 ref (1 jump) from render_combat_mon_target
+render_combat_mon_flag  lda  #$FB            ; A=$00FB X=$0040 Y=$0040 ; [SP-1793]
             jsr  $4705           ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
             ldx  $CD             ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
             lda  $9980,X         ; -> $99C0 ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
@@ -5376,69 +5436,69 @@ loc_0086A4  lda  #$FB            ; A=$00FB X=$0040 Y=$0040 ; [SP-1793]
             sta  $03             ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
 
 ; === while loop starts here [nest:14] ===
-; XREF: 1 ref (1 jump) from loc_0086EC
-loc_0086B5  clc                  ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
+; XREF: 1 ref (1 jump) from render_combat_draw_1
+render_combat_mon_step  clc                  ; A=$00FB X=$0040 Y=$0040 ; [SP-1795]
             lda  $02             ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
             adc  $F5             ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
             sta  $02             ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
             cmp  #$0B            ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
-            bcs  loc_0086F7      ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
+            bcs  render_combat_draw_2      ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
             clc                  ; A=[$0002] X=$0040 Y=$0040 ; [SP-1795]
             lda  $03             ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
             adc  $F6             ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
             sta  $03             ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
             cmp  #$0B            ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
-            bcs  loc_0086F7      ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
+            bcs  render_combat_draw_2      ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
             ldy  $E1             ; A=[$0003] X=$0040 Y=$0040 ; [SP-1795]
             dey                  ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
 
 ; === while loop starts here [nest:16] ===
-; XREF: 1 ref (1 branch) from loc_0086E1
-loc_0086CE  lda  $02             ; A=[$0002] X=$0040 Y=$003F ; [SP-1795]
+; XREF: 1 ref (1 branch) from render_combat_dec_range
+render_combat_load_dest  lda  $02             ; A=[$0002] X=$0040 Y=$003F ; [SP-1795]
             cmp  $99A0,Y         ; -> $99DF ; A=[$0002] X=$0040 Y=$003F ; [SP-1795]
-            bne  loc_0086E1      ; A=[$0002] X=$0040 Y=$003F ; [SP-1795]
+            bne  render_combat_dec_range      ; A=[$0002] X=$0040 Y=$003F ; [SP-1795]
             lda  $03             ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
             cmp  $99A4,Y         ; -> $99E3 ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
-            bne  loc_0086E1      ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
+            bne  render_combat_dec_range      ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
             sty  $D5             ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
-            jmp  loc_008777      ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
-; XREF: 2 refs (2 branches) from loc_0086CE, loc_0086CE
-loc_0086E1  dey                  ; A=[$0003] X=$0040 Y=$003E ; [SP-1795]
-            bpl  loc_0086CE      ; A=[$0003] X=$0040 Y=$003E ; [SP-1795]
-            jsr  lookup_add      ; A=[$0003] X=$0040 Y=$003E ; [SP-1797]
+            jmp  render_combat_resolve      ; A=[$0003] X=$0040 Y=$003F ; [SP-1795]
+; XREF: 2 refs (2 branches) from render_combat_load_dest, render_combat_load_dest
+render_combat_dec_range  dey                  ; A=[$0003] X=$0040 Y=$003E ; [SP-1795]
+            bpl  render_combat_load_dest      ; A=[$0003] X=$0040 Y=$003E ; [SP-1795]
+            jsr  combat_tile_at_xy      ; A=[$0003] X=$0040 Y=$003E ; [SP-1797]
             pha                  ; A=[$0003] X=$0040 Y=$003E ; [SP-1798]
             lda  #$7A            ; A=$007A X=$0040 Y=$003E ; [SP-1798]
             sta  ($FE),Y         ; A=$007A X=$0040 Y=$003E ; [SP-1798]
 
 ; === while loop starts here [nest:13] ===
-; XREF: 1 ref (1 branch) from loc_00871B
-loc_0086EC  jsr  $0328           ; A=$007A X=$0040 Y=$003E ; [SP-1800]
+; XREF: 1 ref (1 branch) from render_combat_print_hit
+render_combat_draw_1  jsr  $0328           ; A=$007A X=$0040 Y=$003E ; [SP-1800]
             pla                  ; A=[stk] X=$0040 Y=$003E ; [SP-1799]
             ldy  #$00            ; A=[stk] X=$0040 Y=$0000 ; [SP-1799]
             sta  ($FE),Y         ; A=[stk] X=$0040 Y=$0000 ; [SP-1799]
-            jmp  loc_0086B5      ; A=[stk] X=$0040 Y=$0000 ; [SP-1799]
-; XREF: 2 refs (2 branches) from loc_0086B5, loc_0086B5
-loc_0086F7  jsr  $0328           ; A=[stk] X=$0040 Y=$0000 ; [SP-1801]
-            jmp  loc_0085EE      ; A=[stk] X=$0040 Y=$0000 ; [SP-1801]
-; XREF: 2 refs (2 jumps) from loc_0085F9, loc_00864A
-loc_0086FD  lda  $CE             ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
+            jmp  render_combat_mon_step      ; A=[stk] X=$0040 Y=$0000 ; [SP-1799]
+; XREF: 2 refs (2 branches) from render_combat_mon_step, render_combat_mon_step
+render_combat_draw_2  jsr  $0328           ; A=[stk] X=$0040 Y=$0000 ; [SP-1801]
+            jmp  render_combat_monster_ai      ; A=[stk] X=$0040 Y=$0000 ; [SP-1801]
+; XREF: 2 refs (2 jumps) from render_combat_mon_check, render_combat_mon_wait
+render_combat_get_tile  lda  $CE             ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
             cmp  #$1C            ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
-            beq  loc_00870E      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
+            beq  render_combat_tile_check      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
             cmp  #$3C            ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
-            beq  loc_00870E      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
+            beq  render_combat_tile_check      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
             cmp  #$38            ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
-            beq  loc_00870E      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
-            jmp  loc_008714      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
-; XREF: 3 refs (3 branches) from loc_0086FD, loc_0086FD, loc_0086FD
-loc_00870E  jsr  helper_9        ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
-            jmp  loc_00871B      ; " :FPLR-"
-; XREF: 1 ref (1 jump) from loc_0086FD
-loc_008714  cmp  #$2E            ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
-            bne  loc_00871B      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
-            jsr  dispatch_4      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1805]
-; XREF: 2 refs (1 jump) (1 branch) from loc_00870E, loc_008714
-loc_00871B  jsr  $46BA           ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1807]
-            bne  loc_0086EC      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1807]
+            beq  render_combat_tile_check      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
+            jmp  render_combat_tile_drop      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1801]
+; XREF: 3 refs (3 branches) from render_combat_get_tile, render_combat_get_tile, render_combat_get_tile
+render_combat_tile_check  jsr  render_get_tile_char        ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
+            jmp  render_combat_print_hit      ; " :FPLR-"
+; XREF: 1 ref (1 jump) from render_combat_get_tile
+render_combat_tile_drop  cmp  #$2E            ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
+            bne  render_combat_print_hit      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1803]
+            jsr  render_party_member      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1805]
+; XREF: 2 refs (1 jump) (1 branch) from render_combat_tile_check, render_combat_tile_drop
+render_combat_print_hit  jsr  $46BA           ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1807]
+            bne  render_combat_draw_1      ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1807]
             DB      $D2
             lda  $A500           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1807]
 
@@ -5451,8 +5511,8 @@ loc_00871B  jsr  $46BA           ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1807]
             DB      $A1,$FF,$00
 ; --- End data region (83 bytes) ---
 
-; XREF: 1 ref (1 jump) from loc_0086CE
-loc_008777  jsr  $46F6           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1828]
+; XREF: 1 ref (1 jump) from render_combat_load_dest
+render_combat_resolve  jsr  $46F6           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1828]
             lda  $CE             ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1828]
             lsr  a               ; A=[$00CE] X=$0040 Y=$0000 ; [SP-1828]
             and  #$0F            ; A=A&$0F X=$0040 Y=$0000 ; [SP-1828]
@@ -5466,22 +5526,22 @@ loc_008777  jsr  $46F6           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1828]
             ora  #$01            ; A=A|$01 X=A Y=$001C ; [SP-1828]
             jsr  $46E4           ; Call $0046E4(A, Y)
             adc  #$01            ; A=A+$01 X=A Y=$001C ; [SP-1830]
-            jsr  utility_3       ; A=A+$01 X=A Y=$001C ; [SP-1832]
-            jsr  process_2       ; A=A+$01 X=A Y=$001C ; [SP-1834]
+            jsr  combat_binary_to_bcd       ; A=A+$01 X=A Y=$001C ; [SP-1832]
+            jsr  combat_apply_damage       ; A=A+$01 X=A Y=$001C ; [SP-1834]
             lda  $835E           ; A=[$835E] X=A Y=$001C ; [SP-1834]
             and  #$03            ; A=A&$03 X=A Y=$001C ; [SP-1834]
-            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1834]
-            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1834]
-            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1834]
+            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1834]
+            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1834]
+            asl  a               ; A=A&$03 X=A Y=$001C ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1834]
             asl  a               ; A=A&$03 X=A Y=$001C ; [SP-1834]
-            jsr  process_2       ; A=A&$03 X=A Y=$001C ; [SP-1836]
-            jsr  multiply        ; A=A&$03 X=A Y=$001C ; [SP-1838]
+            jsr  combat_apply_damage       ; A=A&$03 X=A Y=$001C ; [SP-1836]
+            jsr  render_encrypt_records        ; A=A&$03 X=A Y=$001C ; [SP-1838]
             ldy  $D5             ; A=A&$03 X=A Y=$001C ; [SP-1838]
             lda  $99A0,Y         ; -> $99BC ; A=A&$03 X=A Y=$001C ; [SP-1838]
             sta  $02             ; A=A&$03 X=A Y=$001C ; [SP-1838]
             lda  $99A4,Y         ; -> $99C0 ; A=A&$03 X=A Y=$001C ; [SP-1838]
             sta  $03             ; A=A&$03 X=A Y=$001C ; [SP-1838]
-            jsr  lookup_add      ; A=A&$03 X=A Y=$001C ; [SP-1840]
+            jsr  combat_tile_at_xy      ; A=A&$03 X=A Y=$001C ; [SP-1840]
             lda  $1F             ; A=[$001F] X=A Y=$001C ; [SP-1840]
             sta  ($FE),Y         ; A=[$001F] X=A Y=$001C ; [SP-1840]
             jsr  $0328           ; A=[$001F] X=A Y=$001C ; [SP-1842]
@@ -5492,12 +5552,12 @@ loc_008777  jsr  $46F6           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1828]
             lda  $99AC,X         ; A=$00F7 X=A Y=$0000 ; [SP-1844]
             sta  ($FE),Y         ; A=$00F7 X=A Y=$0000 ; [SP-1844]
             jsr  $0328           ; A=$00F7 X=A Y=$0000 ; [SP-1846]
-            jsr  multiply        ; A=$00F7 X=A Y=$0000 ; [SP-1848]
+            jsr  render_encrypt_records        ; A=$00F7 X=A Y=$0000 ; [SP-1848]
             jsr  $46F6           ; Call $0046F6(Y)
             ldy  #$11            ; A=$00F7 X=A Y=$0011 ; [SP-1850]
             lda  ($FE),Y         ; A=$00F7 X=A Y=$0011 ; [SP-1850]
             cmp  #$C4            ; A=$00F7 X=A Y=$0011 ; [SP-1850]
-            bne  loc_008811      ; A=$00F7 X=A Y=$0011 ; [SP-1850]
+            bne  render_combat_status_upd      ; A=$00F7 X=A Y=$0011 ; [SP-1850]
             jsr  $46BA           ; A=$00F7 X=A Y=$0011 ; [SP-1852]
 
 ; --- Data region (51 bytes) ---
@@ -5507,62 +5567,62 @@ loc_008777  jsr  $46F6           ; A=[$A500] X=$0040 Y=$0000 ; [SP-1828]
             DB      $02,$68,$60
 ; --- End data region (51 bytes) ---
 
-; XREF: 2 refs (2 branches) from $00880D, loc_008777
-loc_008811  jsr  process_3       ; A=$00F7 X=A Y=$0011 ; [SP-1860]
+; XREF: 2 refs (2 branches) from $00880D, render_combat_resolve
+render_combat_status_upd  jsr  move_display_party_status       ; A=$00F7 X=A Y=$0011 ; [SP-1860]
             lda  #$18            ; A=$0018 X=A Y=$0011 ; [SP-1860]
             sta  $F9             ; A=$0018 X=A Y=$0011 ; [SP-1860]
             lda  #$17            ; A=$0017 X=A Y=$0011 ; [SP-1860]
             sta  $FA             ; A=$0017 X=A Y=$0011 ; [SP-1860]
-            jmp  loc_0085EE      ; A=$0017 X=A Y=$0011 ; [SP-1860]
+            jmp  render_combat_monster_ai      ; A=$0017 X=A Y=$0011 ; [SP-1860]
 
 ; ---------------------------------------------------------------------------
-; dispatch_4  [1 call]
-;   Called by: loc_008714
+; render_party_member  [1 call]
+;   Called by: render_combat_tile_drop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00881F: register -> A:X []
 ; Proto: uint32_t func_00881F(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [7 dead stores]
-; XREF: 1 ref (1 call) from loc_008714
-dispatch_4  jsr  $46F6           ; A=$0017 X=A Y=$0011 ; [SP-1862]
+; XREF: 1 ref (1 call) from render_combat_tile_drop
+render_party_member  jsr  $46F6           ; A=$0017 X=A Y=$0011 ; [SP-1862]
             jsr  $46E7           ; A=$0017 X=A Y=$0011 ; [SP-1864]
-            bmi  dispatch_4_L2   ; A=$0017 X=A Y=$0011 ; [SP-1864]
+            bmi  render_party_armor_drop   ; A=$0017 X=A Y=$0011 ; [SP-1864]
             jsr  $46E7           ; A=$0017 X=A Y=$0011 ; [SP-1866]
             and  #$0F            ; A=A&$0F X=A Y=$0011 ; [SP-1866]
-            beq  loc_008880      ; A=A&$0F X=A Y=$0011 ; [SP-1866]
+            beq  render_party_exit      ; A=A&$0F X=A Y=$0011 ; [SP-1866]
             ldy  #$30            ; A=A&$0F X=A Y=$0030 ; [SP-1866]
             cmp  ($FE),Y         ; A=A&$0F X=A Y=$0030 ; [SP-1866]
-            beq  loc_008880      ; A=A&$0F X=A Y=$0030 ; [SP-1866]
+            beq  render_party_exit      ; A=A&$0F X=A Y=$0030 ; [SP-1866]
             clc                  ; A=A&$0F X=A Y=$0030 ; [SP-1866]
             adc  #$30            ; A=A+$30 X=A Y=$0030 ; [SP-1866]
             tay                  ; A=A+$30 X=A Y=A ; [SP-1866]
             lda  ($FE),Y         ; A=A+$30 X=A Y=A ; [SP-1866]
-            beq  loc_008880      ; A=A+$30 X=A Y=A ; [SP-1866]
+            beq  render_party_exit      ; A=A+$30 X=A Y=A ; [SP-1866]
             lda  #$00            ; A=$0000 X=A Y=A ; [SP-1866]
             sta  ($FE),Y         ; A=$0000 X=A Y=A ; [SP-1866]
             jmp  $885C           ; " :FPLR-"
-; XREF: 1 ref (1 branch) from dispatch_4
-dispatch_4_L2 jsr  $46E7           ; A=$0000 X=A Y=A ; [SP-1868]
+; XREF: 1 ref (1 branch) from render_party_member
+render_party_armor_drop jsr  $46E7           ; A=$0000 X=A Y=A ; [SP-1868]
             and  #$07            ; A=A&$07 X=A Y=A ; [SP-1868]
-            beq  loc_008880      ; A=A&$07 X=A Y=A ; [SP-1868]
+            beq  render_party_exit      ; A=A&$07 X=A Y=A ; [SP-1868]
             ldy  #$28            ; A=A&$07 X=A Y=$0028 ; [SP-1868]
             cmp  ($FE),Y         ; A=A&$07 X=A Y=$0028 ; [SP-1868]
-            beq  loc_008880      ; A=A&$07 X=A Y=$0028 ; [SP-1868]
+            beq  render_party_exit      ; A=A&$07 X=A Y=$0028 ; [SP-1868]
             clc                  ; A=A&$07 X=A Y=$0028 ; [SP-1868]
             adc  #$28            ; A=A+$28 X=A Y=$0028 ; [SP-1868]
             tay                  ; A=A+$28 X=A Y=A ; [SP-1868]
             lda  ($FE),Y         ; A=A+$28 X=A Y=A ; [SP-1868]
-            beq  loc_008880      ; A=A+$28 X=A Y=A ; [SP-1868]
+            beq  render_party_exit      ; A=A+$28 X=A Y=A ; [SP-1868]
             lda  #$00            ; A=$0000 X=A Y=A ; [SP-1868]
             sta  ($FE),Y         ; A=$0000 X=A Y=A ; [SP-1868]
             jsr  $46BA           ; Call $0046BA(A)
-            bne  dispatch_4_L1   ; A=$0000 X=A Y=A ; [SP-1870]
+            bne  render_party_drop_jmp   ; A=$0000 X=A Y=A ; [SP-1870]
             DB      $D2
             lda  $A500           ; A=[$A500] X=A Y=A ; [SP-1870]
 
 ; ---
             DB      $D5,$18,$69,$01
-data_008869
+render_party_data
             DB      $20,$D2,$46,$20,$BA,$46,$AD,$D0,$C9,$CC,$C6,$C5,$D2
 ; ---
 
@@ -5572,37 +5632,37 @@ data_008869
             DB      $A1,$FF,$00,$A9,$FA,$20,$05,$47
 ; ---
 
-; XREF: 6 refs (6 branches) from dispatch_4, adjust, adjust, dispatch_4_L2, dispatch_4_L2, ...
-loc_008880  rts                  ; A=[$A500] X=A Y=A ; [SP-1877]
+; XREF: 6 refs (6 branches) from render_party_member, render_animate, render_animate, render_party_armor_drop, render_party_armor_drop, ...
+render_party_exit  rts                  ; A=[$A500] X=A Y=A ; [SP-1877]
 
 ; ---------------------------------------------------------------------------
-; helper_9  [1 call]
-;   Called by: loc_00870E
+; render_get_tile_char  [1 call]
+;   Called by: render_combat_tile_check
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008881: register -> A:X []
 ; Proto: uint32_t func_008881(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y)
-; XREF: 1 ref (1 call) from loc_00870E
-helper_9    jsr  $46E7           ; A=[$A500] X=A Y=A ; [SP-1879]
+; XREF: 1 ref (1 call) from render_combat_tile_check
+render_get_tile_char    jsr  $46E7           ; A=[$A500] X=A Y=A ; [SP-1879]
             and  #$03            ; A=A&$03 X=A Y=A ; [SP-1879]
-            beq  helper_9_L2     ; A=A&$03 X=A Y=A ; [SP-1879]
+            beq  render_tile_check_status     ; A=A&$03 X=A Y=A ; [SP-1879]
 
 ; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from helper_9_L2
-helper_9_L1 rts                  ; A=A&$03 X=A Y=A ; [SP-1877]
-; XREF: 1 ref (1 branch) from helper_9
-helper_9_L2 jsr  $46F6           ; A=A&$03 X=A Y=A ; [SP-1879]
+; XREF: 1 ref (1 branch) from render_tile_check_status
+render_tile_char_done rts                  ; A=A&$03 X=A Y=A ; [SP-1877]
+; XREF: 1 ref (1 branch) from render_get_tile_char
+render_tile_check_status jsr  $46F6           ; A=A&$03 X=A Y=A ; [SP-1879]
             ldy  #$11            ; A=A&$03 X=A Y=$0011 ; [SP-1879]
             lda  ($FE),Y         ; A=A&$03 X=A Y=$0011 ; [SP-1879]
             cmp  #$C7            ; A=A&$03 X=A Y=$0011 ; [SP-1879]
-            bne  helper_9_L1     ; A=A&$03 X=A Y=$0011 ; [SP-1879]
+            bne  render_tile_char_done     ; A=A&$03 X=A Y=$0011 ; [SP-1879]
 ; === End of while loop ===
 
             lda  #$D0            ; A=$00D0 X=A Y=$0011 ; [SP-1879]
             sta  ($FE),Y         ; A=$00D0 X=A Y=$0011 ; [SP-1879]
             jsr  $46BA           ; A=$00D0 X=A Y=$0011 ; [SP-1881]
-            bne  data_008869     ; A=$00D0 X=A Y=$0011 ; [SP-1881]
+            bne  render_party_data     ; A=$00D0 X=A Y=$0011 ; [SP-1881]
             DB      $D2
             lda  $A500           ; A=[$A500] X=A Y=$0011 ; [SP-1881]
 
@@ -5613,22 +5673,22 @@ helper_9_L2 jsr  $46F6           ; A=A&$03 X=A Y=A ; [SP-1879]
 
 
 ; ---------------------------------------------------------------------------
-; get_value_7  [3 calls]
-;   Called by: helper_7_L7, loc_0085B1, move_data_L8
+; render_calc_offset  [3 calls]
+;   Called by: render_party_status_disp, render_combat_load_turn, game_loop_get_viewport
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0088BD: register -> A:X [L]
 ; Proto: uint32_t func_0088BD(void);
 ; Liveness: returns(A,X,Y) [3 dead stores]
-; XREF: 3 refs (3 calls) from helper_7_L7, loc_0085B1, move_data_L8
-get_value_7 lda  $D5             ; A=[$00D5] X=A Y=$0011 ; [SP-1890]
-            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1890]
+; XREF: 3 refs (3 calls) from render_party_status_disp, render_combat_load_turn, game_loop_get_viewport
+render_calc_offset lda  $D5             ; A=[$00D5] X=A Y=$0011 ; [SP-1890]
+            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1890]
 
 ; === while loop starts here [nest:7] ===
-; XREF: 1 ref (1 branch) from multiply_L4
-get_value_7_L1 asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1890]
-            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1890]
-            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1890]
+; XREF: 1 ref (1 branch) from render_encrypt_vblank
+render_offset_shift asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1890]
+            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1890]
+            asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1890]
             asl  a               ; A=[$00D5] X=A Y=$0011 ; [SP-1890]
             clc                  ; A=[$00D5] X=A Y=$0011 ; [SP-1890]
             adc  #$07            ; A=A+$07 X=A Y=$0011 ; [SP-1890]
@@ -5638,8 +5698,8 @@ get_value_7_L1 asl  a               ; A=[$00D5] X=A Y=$0011 ; [OPT] STRENGTH_RED
             sta  $F3             ; A=$0007 X=A Y=$001F ; [SP-1890]
 
 ; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from get_value_7_L3
-get_value_7_L2 lda  $4300,X         ; A=$0007 X=A Y=$001F ; [SP-1890]
+; XREF: 1 ref (1 branch) from render_offset_end
+render_offset_xor_loop lda  $4300,X         ; A=$0007 X=A Y=$001F ; [SP-1890]
             sta  $FE             ; A=$0007 X=A Y=$001F ; [SP-1890]
             lda  $43C0,X         ; A=$0007 X=A Y=$001F ; [SP-1890]
             sta  $FF             ; A=$0007 X=A Y=$001F ; [SP-1890]
@@ -5648,25 +5708,25 @@ get_value_7_L2 lda  $4300,X         ; A=$0007 X=A Y=$001F ; [SP-1890]
             sta  ($FE),Y         ; A=A^$FF X=A Y=$001F ; [SP-1890]
             dex                  ; A=A^$FF X=X-$01 Y=$001F ; [SP-1890]
             dec  $F3             ; A=A^$FF X=X-$01 Y=$001F ; [SP-1890]
-            bpl  get_value_7_L2  ; A=A^$FF X=X-$01 Y=$001F ; [SP-1890]
+            bpl  render_offset_xor_loop  ; A=A^$FF X=X-$01 Y=$001F ; [SP-1890]
 ; === End of while loop ===
 
             rts                  ; A=A^$FF X=X-$01 Y=$001F ; [SP-1888]
 
 ; ---------------------------------------------------------------------------
-; multiply  [29 calls]
-;   Called by: loc_008777, loc_00572B, loc_006307, process_5_L5, dispatch, set_value_L2, set_value_L1, helper_4_L14
+; render_encrypt_records  [29 calls]
+;   Called by: render_combat_resolve, input_dungeon_gen_pos, file_mark_apply_loop, combat_end_flag, equip_handle, char_turn_next, char_turn_loop, move_turn_add_exp
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0088E4: register -> A:X []
 ; Proto: uint32_t func_0088E4(void);
 ; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 29 refs (16 calls) from $005713, loc_008777, $0092AD, loc_008777, $0092B5, ...
-multiply    lda  $D5             ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1888]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-1888]
+; XREF: 29 refs (16 calls) from $005713, render_combat_resolve, $0092AD, render_combat_resolve, $0092B5, ...
+render_encrypt_records    lda  $D5             ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
+            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
+            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
+            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
+            asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-1888]
             asl  a               ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
             clc                  ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
             adc  #$1F            ; A=A+$1F X=X-$01 Y=$001F ; [SP-1888]
@@ -5675,8 +5735,8 @@ multiply    lda  $D5             ; A=[$00D5] X=X-$01 Y=$001F ; [SP-1888]
             sta  $F3             ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
 
 ; === while loop starts here [nest:9] ===
-; XREF: 1 ref (1 branch) from multiply_L2
-multiply_L1 ldx  $FB             ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
+; XREF: 1 ref (1 branch) from render_encrypt_inner
+render_encrypt_outer ldx  $FB             ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
             lda  $4300,X         ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
             sta  $FE             ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
             lda  $43C0,X         ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
@@ -5684,51 +5744,51 @@ multiply_L1 ldx  $FB             ; A=$0018 X=X-$01 Y=$001F ; [SP-1888]
             ldy  #$26            ; A=$0018 X=X-$01 Y=$0026 ; [SP-1888]
 
 ; === while loop starts here [nest:10] ===
-; XREF: 1 ref (1 branch) from multiply_L2
-multiply_L2 lda  ($FE),Y         ; A=$0018 X=X-$01 Y=$0026 ; [SP-1888]
+; XREF: 1 ref (1 branch) from render_encrypt_inner
+render_encrypt_inner lda  ($FE),Y         ; A=$0018 X=X-$01 Y=$0026 ; [SP-1888]
             eor  #$FF            ; A=A^$FF X=X-$01 Y=$0026 ; [SP-1888]
             sta  ($FE),Y         ; A=A^$FF X=X-$01 Y=$0026 ; [SP-1888]
             dey                  ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
             cpy  #$18            ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
-            bcs  multiply_L2     ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
+            bcs  render_encrypt_inner     ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
 ; === End of while loop ===
 
             dec  $FB             ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
             dec  $F3             ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
-            bne  multiply_L1     ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
+            bne  render_encrypt_outer     ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
 ; === End of while loop ===
 
             rts                  ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1886]
 
 ; === while loop starts here [nest:7] ===
-; XREF: 1 ref (1 branch) from multiply_L4
-multiply_L3 jsr  $F020           ; Call $00F020(A, X, Y)
-            beq  get_value_7_L3  ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
+; XREF: 1 ref (1 branch) from render_encrypt_vblank
+render_encrypt_prng_call jsr  $F020           ; Call $00F020(A, X, Y)
+            beq  render_offset_end  ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1888]
             rts                  ; A=A^$FF X=X-$01 Y=$0025 ; [SP-1886]
-multiply_L4 ldy  #$80            ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
-            bmi  move_data_3_L7  ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
-            bvs  get_value_7_L1  ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
+render_encrypt_vblank ldy  #$80            ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
+            bmi  render_text_set_cursor  ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
+            bvs  render_offset_shift  ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
             cpy  #$E0            ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
-            beq  multiply_L3     ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
+            beq  render_encrypt_prng_call     ; A=A^$FF X=X-$01 Y=$0080 ; [SP-1886]
             tay                  ; A=A^$FF X=X-$01 Y=A ; [SP-1886]
             lda  #$00            ; A=$0000 X=X-$01 Y=A ; [SP-1886]
             sta  $FE             ; A=$0000 X=X-$01 Y=A ; [SP-1886]
             lda  #$98            ; A=$0098 X=X-$01 Y=A ; [SP-1886]
             sta  $FF             ; A=$0098 X=X-$01 Y=A ; [SP-1886]
             ldx  #$00            ; A=$0098 X=$0000 Y=A ; [SP-1886]
-            jmp  move_data_3_L1  ; A=$0098 X=$0000 Y=A ; [SP-1886]
+            jmp  render_text_read_char  ; A=$0098 X=$0000 Y=A ; [SP-1886]
 
 ; ---------------------------------------------------------------------------
-; move_data_3  [14 calls]
-;   Called by: loc_008470, data_00548A
-;   Calls: draw_hgr
+; render_draw_text_row  [14 calls]
+;   Called by: render_monster_attack, input_cmd_table
+;   Calls: render_advance_ptr
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008932: register -> A:X []
 ; Proto: uint32_t func_008932(void);
 ; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 14 refs (14 calls) from $00846C, loc_008470, $005D41, $005D76, $006D4F, ...
-move_data_3 tay                  ; A=$0098 X=$0000 Y=$0098 ; [SP-1886]
+; XREF: 14 refs (14 calls) from $00846C, render_monster_attack, $005D41, $005D76, $006D4F, ...
+render_draw_text_row tay                  ; A=$0098 X=$0000 Y=$0098 ; [SP-1886]
             lda  #$7A            ; A=$007A X=$0000 Y=$0098 ; [SP-1886]
             sta  $FE             ; A=$007A X=$0000 Y=$0098 ; [SP-1886]
             lda  #$89            ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
@@ -5736,59 +5796,59 @@ move_data_3 tay                  ; A=$0098 X=$0000 Y=$0098 ; [SP-1886]
             ldx  #$00            ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
 
 ; === while loop starts here [nest:7] ===
-; XREF: 2 refs (2 jumps) from multiply_L4, move_data_3_L2
-move_data_3_L1 lda  ($FE,X)         ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
-            beq  move_data_3_L3  ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
+; XREF: 2 refs (2 jumps) from render_encrypt_vblank, render_text_advance_ptr
+render_text_read_char lda  ($FE,X)         ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
+            beq  render_text_dec_row  ; A=$0089 X=$0000 Y=$0098 ; [SP-1886]
 
 ; === while loop starts here [nest:7] ===
-; XREF: 1 ref (1 jump) from move_data_3_L3
-move_data_3_L2 jsr  draw_hgr        ; Call $008973(A)
-            jmp  move_data_3_L1  ; A=$0089 X=$0000 Y=$0098 ; [SP-1888]
-; XREF: 1 ref (1 branch) from move_data_3_L1
-move_data_3_L3 dey                  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
-            beq  move_data_3_L4  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
-            jmp  move_data_3_L2  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
+; XREF: 1 ref (1 jump) from render_text_dec_row
+render_text_advance_ptr jsr  render_advance_ptr        ; Call $008973(A)
+            jmp  render_text_read_char  ; A=$0089 X=$0000 Y=$0098 ; [SP-1888]
+; XREF: 1 ref (1 branch) from render_text_read_char
+render_text_dec_row dey                  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
+            beq  render_text_next_char  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
+            jmp  render_text_advance_ptr  ; A=$0089 X=$0000 Y=$0097 ; [SP-1888]
 ; === End of while loop ===
 
 
 ; === while loop starts here [nest:7] ===
-; XREF: 3 refs (2 jumps) (1 branch) from move_data_3_L4, move_data_3_L3, move_data_3_L7
-move_data_3_L4 jsr  draw_hgr        ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
+; XREF: 3 refs (2 jumps) (1 branch) from render_text_next_char, render_text_dec_row, render_text_set_cursor
+render_text_next_char jsr  render_advance_ptr        ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
             ldx  #$00            ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
             lda  ($FE,X)         ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
-            beq  move_data_3_L5  ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
+            beq  render_text_done  ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
             cmp  #$FF            ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
-            beq  move_data_3_L6  ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
+            beq  render_text_newline  ; A=$0089 X=$0000 Y=$0097 ; [SP-1890]
             and  #$7F            ; A=A&$7F X=$0000 Y=$0097 ; [SP-1890]
             jsr  $46CC           ; Call $0046CC(X)
             inc  $F9             ; A=A&$7F X=$0000 Y=$0097 ; [SP-1892]
-            jmp  move_data_3_L4  ; A=A&$7F X=$0000 Y=$0097 ; [SP-1892]
+            jmp  render_text_next_char  ; A=A&$7F X=$0000 Y=$0097 ; [SP-1892]
 ; === End of while loop ===
 
 
 ; === while loop starts here [nest:7] ===
-; XREF: 2 refs (2 branches) from move_data_3_L4, draw_hgr
-move_data_3_L5 rts                  ; A=A&$7F X=$0000 Y=$0097 ; [SP-1890]
-; XREF: 1 ref (1 branch) from move_data_3_L4
-move_data_3_L6 jsr  $46BD           ; A=A&$7F X=$0000 Y=$0097 ; [SP-1892]
+; XREF: 2 refs (2 branches) from render_text_next_char, render_advance_ptr
+render_text_done rts                  ; A=A&$7F X=$0000 Y=$0097 ; [SP-1890]
+; XREF: 1 ref (1 branch) from render_text_next_char
+render_text_newline jsr  $46BD           ; A=A&$7F X=$0000 Y=$0097 ; [SP-1892]
             lda  #$17            ; A=$0017 X=$0000 Y=$0097 ; [SP-1892]
             sta  $FA             ; A=$0017 X=$0000 Y=$0097 ; [SP-1892]
             lda  #$18            ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
-; XREF: 1 ref (1 branch) from multiply_L4
-move_data_3_L7 sta  $F9             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
-            jmp  move_data_3_L4  ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
+; XREF: 1 ref (1 branch) from render_encrypt_vblank
+render_text_set_cursor sta  $F9             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
+            jmp  render_text_next_char  ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
 
 ; ---------------------------------------------------------------------------
-; draw_hgr  [2 calls]
-;   Called by: move_data_3_L4, move_data_3_L2
+; render_advance_ptr  [2 calls]
+;   Called by: render_text_next_char, render_text_advance_ptr
 ; ---------------------------------------------------------------------------
 
 ; FUNC $008973: register -> A:X [IJ]
 ; Proto: uint32_t func_008973(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (2 calls) from move_data_3_L4, move_data_3_L2
-draw_hgr    inc  $FE             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
-            bne  move_data_3_L5  ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
+; XREF: 2 refs (2 calls) from render_text_next_char, render_text_advance_ptr
+render_advance_ptr    inc  $FE             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
+            bne  render_text_done  ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
 ; === End of while loop ===
 
             inc  $FF             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
@@ -6021,19 +6081,19 @@ draw_hgr    inc  $FE             ; A=$0018 X=$0000 Y=$0097 ; [SP-1892]
 
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:3] ===
-; XREF: 9 refs (8 jumps) (1 branch) from $009132, draw_hgr_L1, loc_0092DA, loc_0092C1, loc_00856B, ...
-draw_hgr_L1 jsr  set_value_2     ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
+; XREF: 9 refs (8 jumps) (1 branch) from $009132, render_return_to_game, dungeon_lava, dungeon_fire, render_victory_music, ...
+render_return_to_game jsr  combat_check_party_alive     ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
             cmp  #$0F            ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
-            bne  draw_hgr_L1     ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
+            bne  render_return_to_game     ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
 ; === End of while loop ===
 
-            jsr  draw_hgr_2      ; A=$0018 X=$0000 Y=$0097 ; [SP-2117]
+            jsr  tile_read_map      ; A=$0018 X=$0000 Y=$0097 ; [SP-2117]
             lda  #$17            ; A=$0017 X=$0000 Y=$0097 ; [SP-2117]
             sta  $FA             ; A=$0017 X=$0000 Y=$0097 ; [SP-2117]
             lda  #$18            ; A=$0018 X=$0000 Y=$0097 ; [SP-2117]
             sta  $F9             ; A=$0018 X=$0000 Y=$0097 ; [SP-2117]
             lda  $CC             ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2117]
-            bne  draw_hgr_L2     ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2117]
+            bne  render_dungeon_entry     ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2117]
             jsr  $46BA           ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2119]
             cmp  #$D4            ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2119]
 
@@ -6043,8 +6103,8 @@ draw_hgr_L1 jsr  set_value_2     ; A=$0018 X=$0000 Y=$0097 ; [SP-2115]
             DB      $A0,$C4,$C1,$D2,$CB,$A1,$FF,$00,$20,$C3,$46
 ; ---
 
-; XREF: 1 ref (1 branch) from draw_hgr_L1
-draw_hgr_L2 jsr  $46BA           ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2124]
+; XREF: 1 ref (1 branch) from render_return_to_game
+render_dungeon_entry jsr  $46BA           ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2124]
             ora  $A900,X         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2124]
             brk  #$85            ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2127]
 
@@ -6058,16 +6118,16 @@ draw_hgr_L2 jsr  $46BA           ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2124]
             DB      $0A,$A8,$B9,$B2,$8D,$85,$FE,$B9,$B3,$8D,$85,$FF,$6C,$FE,$00,$F1
             DB      $8E,$F1,$8E,$5C,$53,$0C,$8F,$F1,$8E,$F1,$8E,$69,$5B,$8F,$5D,$F1
             DB      $5F,$4E,$60
-data_008DC6
+dungeon_draw_data
             DB      $37
             DB      $8F
             DB      $F1,$8E,$F6,$60
 ; --- End data region (137 bytes) ---
 
-loc_008DCC  lda  ($61,X)         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2128]
+dungeon_dispatch  lda  ($61,X)         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2128]
             DB      $E2
             adc  ($60,X)         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2128]
-data_008DD1
+dungeon_tile_table
             DB      $8F
             sbc  ($8E),Y         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2126]
             brk  #$66            ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2126]
@@ -6106,7 +6166,7 @@ data_008DD1
 ; --- End data region (443 bytes) ---
 
 ; XREF: 1 ref (1 branch) from $008F8C
-loc_008F91  sed                  ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2206]
+dungeon_use_gem  sed                  ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2206]
             lda  ($FE),Y         ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2206]
             sec                  ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2206]
             sbc  #$01            ; A=A-$01 X=$0000 Y=$0097 ; [SP-2206]
@@ -6117,9 +6177,9 @@ loc_008F91  sed                  ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2206]
             sta  $B0             ; A=$0000 X=$0000 Y=$0097 ; [SP-2206]
 
 ; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from loc_008FA0
-loc_008FA0  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2206]
-            bne  loc_008FA0      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2206]
+; XREF: 1 ref (1 branch) from dungeon_gem_wait_vbl
+dungeon_gem_wait_vbl  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2206]
+            bne  dungeon_gem_wait_vbl      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2206]
             jsr  $46B7           ; Call $0046B7(A)
 
 ; ---
@@ -6131,83 +6191,83 @@ loc_008FA0  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2206]
             DB      $A9,$0A,$85,$B0,$A9,$04,$85,$B1,$20,$00,$94,$4C,$C2,$8F
 ; ---
 
-; XREF: 11 refs (11 jumps) from $008F34, $008EBB, loc_008FA0, $008F09, $008ED5, ...
-loc_008FC2  jsr  $03AF           ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2212]
-            jsr  helper_4        ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2214]
-            jsr  process_3       ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2216]
+; XREF: 11 refs (11 jumps) from $008F34, $008EBB, dungeon_gem_wait_vbl, $008F09, $008ED5, ...
+dungeon_turn_process  jsr  $03AF           ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2212]
+            jsr  move_process_turn        ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2214]
+            jsr  move_display_party_status       ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2216]
             lda  #$17            ; A=$0017 X=$0000 Y=$0097 ; [SP-2216]
             sta  $FA             ; A=$0017 X=$0000 Y=$0097 ; [SP-2216]
             lda  #$18            ; A=$0018 X=$0000 Y=$0097 ; [SP-2216]
             sta  $F9             ; A=$0018 X=$0000 Y=$0097 ; [SP-2216]
             lda  $CC             ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2216]
-            beq  loc_008FD9      ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2216]
+            beq  dungeon_check_tile      ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2216]
             dec  $CC             ; A=[$00CC] X=$0000 Y=$0097 ; [SP-2216]
-; XREF: 1 ref (1 branch) from loc_008FC2
-loc_008FD9  lda  $00             ; A=[$0000] X=$0000 Y=$0097 ; [SP-2216]
+; XREF: 1 ref (1 branch) from dungeon_turn_process
+dungeon_check_tile  lda  $00             ; A=[$0000] X=$0000 Y=$0097 ; [SP-2216]
             sta  $02             ; A=[$0000] X=$0000 Y=$0097 ; [SP-2216]
             lda  $01             ; A=[$0001] X=$0000 Y=$0097 ; [SP-2216]
             sta  $03             ; A=[$0001] X=$0000 Y=$0097 ; [SP-2216]
-            jsr  multiply_2      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
-            beq  loc_008FE9      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
-            jmp  loc_009014      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
-; XREF: 1 ref (1 branch) from loc_008FD9
-loc_008FE9  clc                  ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
+            jsr  calc_hgr_scanline      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
+            beq  dungeon_random_event      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
+            jmp  dungeon_tile_type_1      ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
+; XREF: 1 ref (1 branch) from dungeon_check_tile
+dungeon_random_event  clc                  ; A=[$0001] X=$0000 Y=$0097 ; [SP-2218]
             lda  #$82            ; A=$0082 X=$0000 Y=$0097 ; [SP-2218]
             adc  $13             ; A=$0082 X=$0000 Y=$0097 ; [SP-2218]
             jsr  $46E4           ; Call $0046E4(A)
-            bmi  loc_008FF6      ; A=$0082 X=$0000 Y=$0097 ; [SP-2220]
-            jmp  draw_hgr_L1     ; A=$0082 X=$0000 Y=$0097 ; [SP-2220]
-; XREF: 1 ref (1 branch) from loc_008FE9
-loc_008FF6  lda  $13             ; A=[$0013] X=$0000 Y=$0097 ; [SP-2220]
+            bmi  dungeon_calc_encounter      ; A=$0082 X=$0000 Y=$0097 ; [SP-2220]
+            jmp  render_return_to_game     ; A=$0082 X=$0000 Y=$0097 ; [SP-2220]
+; XREF: 1 ref (1 branch) from dungeon_random_event
+dungeon_calc_encounter  lda  $13             ; A=[$0013] X=$0000 Y=$0097 ; [SP-2220]
             clc                  ; A=[$0013] X=$0000 Y=$0097 ; [SP-2220]
             adc  #$02            ; A=A+$02 X=$0000 Y=$0097 ; [SP-2220]
             jsr  $46E4           ; A=A+$02 X=$0000 Y=$0097 ; [SP-2222]
             cmp  #$07            ; A=A+$02 X=$0000 Y=$0097 ; [SP-2222]
-            bcc  loc_009004      ; A=A+$02 X=$0000 Y=$0097 ; [SP-2222]
+            bcc  dungeon_set_encounter      ; A=A+$02 X=$0000 Y=$0097 ; [SP-2222]
             lda  #$06            ; A=$0006 X=$0000 Y=$0097 ; [SP-2222]
-; XREF: 1 ref (1 branch) from loc_008FF6
-loc_009004  clc                  ; A=$0006 X=$0000 Y=$0097 ; [SP-2222]
+; XREF: 1 ref (1 branch) from dungeon_calc_encounter
+dungeon_set_encounter  clc                  ; A=$0006 X=$0000 Y=$0097 ; [SP-2222]
             adc  #$18            ; A=A+$18 X=$0000 Y=$0097 ; [SP-2222]
             asl  a               ; A=A+$18 X=$0000 Y=$0097 ; [SP-2222]
             sta  $CE             ; A=A+$18 X=$0000 Y=$0097 ; [SP-2222]
-            jsr  multiply_2      ; A=A+$18 X=$0000 Y=$0097 ; [SP-2224]
+            jsr  calc_hgr_scanline      ; A=A+$18 X=$0000 Y=$0097 ; [SP-2224]
             lda  #$40            ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
             sta  ($FE),Y         ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  helper_7_L1     ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 jump) from loc_008FD9
-loc_009014  cmp  #$01            ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_00901F      ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  render_combat_update     ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 jump) from dungeon_check_tile
+dungeon_tile_type_1  cmp  #$01            ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_2      ; A=$0040 X=$0000 Y=$0097 ; [SP-2224]
             lda  #$00            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
             sta  ($FE),Y         ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_009076      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_009014
-loc_00901F  cmp  #$02            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_009026      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_009174      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_00901F
-loc_009026  cmp  #$03            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_00902D      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_0092C1      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_009026
-loc_00902D  cmp  #$04            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_009034      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_009135      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_00902D
-loc_009034  cmp  #$05            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_00903B      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_00931C      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_009034
-loc_00903B  cmp  #$06            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_009042      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_0092DA      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_00903B
-loc_009042  cmp  #$08            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            bne  loc_009049      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-            jmp  loc_00904C      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 branch) from loc_009042
-loc_009049  jmp  draw_hgr_L1     ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
-; XREF: 1 ref (1 jump) from loc_009042
-loc_00904C  jsr  multiply_2      ; Call $0093DE(1 stack)
+            jmp  dungeon_time_lord      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_1
+dungeon_tile_type_2  cmp  #$02            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_3      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_mark      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_2
+dungeon_tile_type_3  cmp  #$03            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_4      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_fire      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_3
+dungeon_tile_type_4  cmp  #$04            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_5      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_fountain      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_4
+dungeon_tile_type_5  cmp  #$05            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_6      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_chest      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_5
+dungeon_tile_type_6  cmp  #$06            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_type_8      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_lava      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_6
+dungeon_tile_type_8  cmp  #$08            ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            bne  dungeon_tile_default      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+            jmp  dungeon_tile_inscription      ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 branch) from dungeon_tile_type_8
+dungeon_tile_default  jmp  render_return_to_game     ; A=$0000 X=$0000 Y=$0097 ; [SP-2224]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_8
+dungeon_tile_inscription  jsr  calc_hgr_scanline      ; Call $0093DE(1 stack)
             lda  #$00            ; A=$0000 X=$0000 Y=$0097 ; [SP-2226]
             sta  ($FE),Y         ; A=$0000 X=$0000 Y=$0097 ; [SP-2226]
             jsr  $46BA           ; A=$0000 X=$0000 Y=$0097 ; [SP-2228]
@@ -6220,15 +6280,15 @@ loc_00904C  jsr  multiply_2      ; Call $0093DE(1 stack)
             DB      $89,$20,$BA,$46,$FF,$00,$4C,$13,$8D
 ; ---
 
-; XREF: 1 ref (1 jump) from loc_009014
-loc_009076  lda  #$00            ; A=$0000 X=$0000 Y=$0097 ; [SP-2236]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_1
+dungeon_time_lord  lda  #$00            ; A=$0000 X=$0000 Y=$0097 ; [SP-2236]
             sta  $B1             ; A=$0000 X=$0000 Y=$0097 ; [SP-2236]
             sta  $B0             ; A=$0000 X=$0000 Y=$0097 ; [SP-2236]
 
 ; === while loop starts here [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_00907C
-loc_00907C  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2236]
-            bne  loc_00907C      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2236]
+; XREF: 1 ref (1 branch) from dungeon_time_wait_vbl
+dungeon_time_wait_vbl  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2236]
+            bne  dungeon_time_wait_vbl      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2236]
             jsr  $46B7           ; Call $0046B7(A)
 
 ; --- Data region (178 bytes, text data) ---
@@ -6251,8 +6311,8 @@ loc_00907C  lda  $B2             ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2236]
             DB      $00,$18,$A9,$04,$85,$B1,$4C,$13,$8D
 ; --- End data region (178 bytes) ---
 
-; XREF: 1 ref (1 jump) from loc_00902D
-loc_009135  jsr  multiply_2      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2264]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_4
+dungeon_fountain  jsr  calc_hgr_scanline      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2264]
             lda  #$00            ; A=$0000 X=$0000 Y=$0097 ; [SP-2264]
             sta  ($FE),Y         ; A=$0000 X=$0000 Y=$0097 ; [SP-2264]
             jsr  $46BA           ; Call $0046BA(A)
@@ -6267,15 +6327,15 @@ loc_009135  jsr  multiply_2      ; A=[$00B2] X=$0000 Y=$0097 ; [SP-2264]
             DB      $8D
 ; --- End data region (49 bytes) ---
 
-; XREF: 1 ref (1 jump) from loc_00901F
-loc_009174  lda  #$00            ; A=$0000 X=$0000 Y=$0098 ; [SP-2273]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_2
+dungeon_mark  lda  #$00            ; A=$0000 X=$0000 Y=$0098 ; [SP-2273]
             sta  $B1             ; A=$0000 X=$0000 Y=$0098 ; [SP-2273]
             sta  $B0             ; A=$0000 X=$0000 Y=$0098 ; [SP-2273]
 
 ; === while loop starts here [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_00917A
-loc_00917A  lda  $B2             ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2273]
-            bne  loc_00917A      ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2273]
+; XREF: 1 ref (1 branch) from dungeon_mark_wait_vbl
+dungeon_mark_wait_vbl  lda  $B2             ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2273]
+            bne  dungeon_mark_wait_vbl      ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2273]
             jsr  $46B7           ; Call $0046B7(A)
 
 ; --- Data region (320 bytes, text data) ---
@@ -6307,38 +6367,38 @@ loc_00917A  lda  $B2             ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2273]
             DB      $20,$05,$47,$20,$E4,$88,$20,$E9,$58,$20,$38,$73,$4C,$97,$91
 ; --- End data region (320 bytes) ---
 
-; XREF: 1 ref (1 jump) from loc_009026
-loc_0092C1  jsr  $46BA           ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2337]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_3
+dungeon_fire  jsr  $46BA           ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2337]
 
 ; ---
             ASC     "STRANGE WIND!"
             DB      $FF,$00,$A9,$00,$85,$CC,$4C,$13,$8D
 ; ---
 
-; XREF: 1 ref (1 jump) from loc_00903B
-loc_0092DA  jsr  multiply_2      ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2339]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_6
+dungeon_lava  jsr  calc_hgr_scanline      ; A=[$00B2] X=$0000 Y=$0098 ; [SP-2339]
             lda  #$00            ; A=$0000 X=$0000 Y=$0098 ; [SP-2339]
             sta  ($FE),Y         ; A=$0000 X=$0000 Y=$0098 ; [SP-2339]
             lda  $E1             ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2339]
             jsr  $46E4           ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2341]
             sta  $D5             ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2341]
-            jsr  process_4       ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
-            beq  loc_0092F0      ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
-            jmp  draw_hgr_L1     ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
-; XREF: 1 ref (1 branch) from loc_0092DA
-loc_0092F0  ldy  #$20            ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2343]
+            jsr  magic_resolve_effect       ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
+            beq  dungeon_trap_setup      ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
+            jmp  render_return_to_game     ; A=[$00E1] X=$0000 Y=$0098 ; [SP-2343]
+; XREF: 1 ref (1 branch) from dungeon_lava
+dungeon_trap_setup  ldy  #$20            ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2343]
             lda  ($FE),Y         ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2343]
-            bne  loc_0092FC      ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2343]
-            jsr  dispatch        ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
-            jmp  loc_009303      ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
-; XREF: 1 ref (1 branch) from loc_0092F0
-loc_0092FC  sed                  ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
+            bne  dungeon_trap_bcd      ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2343]
+            jsr  equip_handle        ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
+            jmp  dungeon_trap_damage      ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
+; XREF: 1 ref (1 branch) from dungeon_trap_setup
+dungeon_trap_bcd  sed                  ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
             sec                  ; A=[$00E1] X=$0000 Y=$0020 ; [SP-2345]
             sbc  #$01            ; A=A-$01 X=$0000 Y=$0020 ; [SP-2345]
             cld                  ; A=A-$01 X=$0000 Y=$0020 ; [SP-2345]
             sta  ($FE),Y         ; A=A-$01 X=$0000 Y=$0020 ; [SP-2345]
-; XREF: 1 ref (1 jump) from loc_0092F0
-loc_009303  lda  #$FA            ; A=$00FA X=$0000 Y=$0020 ; [SP-2345]
+; XREF: 1 ref (1 jump) from dungeon_trap_setup
+dungeon_trap_damage  lda  #$FA            ; A=$00FA X=$0000 Y=$0020 ; [SP-2345]
             jsr  $4705           ; Call $004705(Y)
             jsr  $46BA           ; A=$00FA X=$0000 Y=$0020 ; [SP-2349]
 
@@ -6348,15 +6408,15 @@ loc_009303  lda  #$FA            ; A=$00FA X=$0000 Y=$0020 ; [SP-2345]
             DB      $FF,$00,$20,$38,$73,$4C,$13,$8D
 ; ---
 
-; XREF: 1 ref (1 jump) from loc_009034
-loc_00931C  lda  #$00            ; A=$0000 X=$0000 Y=$0020 ; [SP-2349]
+; XREF: 1 ref (1 jump) from dungeon_tile_type_5
+dungeon_chest  lda  #$00            ; A=$0000 X=$0000 Y=$0020 ; [SP-2349]
             sta  $B1             ; A=$0000 X=$0000 Y=$0020 ; [SP-2349]
             sta  $B0             ; A=$0000 X=$0000 Y=$0020 ; [SP-2349]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 branch) from loc_009322
-loc_009322  lda  $B2             ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2349]
-            bne  loc_009322      ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2349]
+; XREF: 1 ref (1 branch) from dungeon_chest_status
+dungeon_chest_status  lda  $B2             ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2349]
+            bne  dungeon_chest_status      ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2349]
             jsr  $46B7           ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2351]
 
 ; --- Data region (181 bytes) ---
@@ -6382,19 +6442,19 @@ loc_009322  lda  $B2             ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2349]
 
 
 ; ---------------------------------------------------------------------------
-; multiply_2  [11 calls]
-;   Called by: loc_008FD9, data_008DD1, loc_009004, loc_00904C, loc_00572B, loc_009135, loc_0092DA
+; calc_hgr_scanline  [11 calls]
+;   Called by: dungeon_check_tile, dungeon_tile_table, dungeon_set_encounter, dungeon_tile_inscription, input_dungeon_gen_pos, dungeon_fountain, dungeon_lava
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0093DE: register -> A:X []
 ; Proto: uint32_t func_0093DE(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-; XREF: 11 refs (11 calls) from $005BC4, loc_008FD9, data_008DD1, loc_009004, loc_00904C, ...
-multiply_2  clc                  ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2381]
+; XREF: 11 refs (11 calls) from $005BC4, dungeon_check_tile, dungeon_tile_table, dungeon_set_encounter, dungeon_tile_inscription, ...
+calc_hgr_scanline  clc                  ; A=[$00B2] X=$0000 Y=$0020 ; [SP-2381]
             lda  $03             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-2381]
-            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-2381]
+            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
+            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
+            asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for render_encrypt_records ; [SP-2381]
             asl  a               ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
             adc  $02             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]
             sta  $FE             ; A=[$0003] X=$0000 Y=$0020 ; [SP-2381]

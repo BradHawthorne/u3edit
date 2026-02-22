@@ -1,3 +1,52 @@
+; ===========================================================================
+; SUBS.s — Ultima III: Exodus Shared Subroutine Library
+; ===========================================================================
+;
+; 3,584 bytes at $4100. Shared routines called by ULT3 and EXOD.
+; Reassembled byte-identical from CIDAR disassembly via asmiigs.
+;
+; Subsystems:
+;   $4100-$46B9  Data tables: HGR scanline addresses, sprite graphics,
+;                jump dispatch table, inline string printer entry
+;   $4732        print_inline_str  — Print text embedded after JSR $46BA
+;   $4767        scroll_text_up    — Scroll text window, redraw viewport border
+;   $47B2        save_text_ptr     — Save/restore text pointer $FE/$FF
+;   $4855        draw_hgr_stripe   — Draw colored vertical stripe on HGR
+;   $487B        clear_hgr_page    — Zero-fill HGR page 1 ($2000-$3FFF)
+;   $4893        plot_char_glyph   — Plot 7x8 character glyph to HGR screen
+;   $48D9        swap_tile_frames  — Swap tile animation frames in memory
+;   $48FF        advance_ptr_128   — Add $80 to pointer $FE/$FF
+;   $490D        print_digit       — Print single ASCII digit via plot_char
+;   $4916        print_bcd_byte    — Print BCD byte as 2 decimal digits
+;   $4935        calc_roster_ptr   — Compute roster slot address ($9500+N*64)
+;   $4955        copy_roster_to_plrs — Copy roster records → active PLRS
+;   $496B        copy_plrs_to_roster — Copy active PLRS → roster records
+;   $49FF        modulo            — A mod $F3 (modular arithmetic)
+;   $4A13        update_viewport   — Full viewport display refresh
+;   $4A26        animate_tiles     — Cycle overworld tile animation frames
+;   $4A8D        animate_cursor    — Cursor blink / text-mode tile animation
+;   $4BCA        setup_char_ptr    — Set $FE/$FF = $4000 + slot*64
+;   $4BE4        print_char_name   — Print character name centered on screen
+;   $4C0C        draw_text_window  — Text window mode display and scrolling
+;   $4CE8        play_sfx          — Sound effect dispatcher ($F6-$FF)
+;   $4E40        get_random        — Pseudo-random number generator
+;
+; Zero-Page Usage:
+;   $00/$01    map_cursor_x/y        Map/overworld position
+;   $02/$03    combat_cursor_x/y     Combat grid position
+;   $0F        animation_slot        Tile animation table offset
+;   $10        combat_active_flag    Nonzero = in combat
+;   $11        text_window_mode      Wind direction display index
+;   $95/$96    sfx_scratch           Sound effect working variables
+;   $D0-$D5    display_state         Viewport rendering state
+;   $D7        char_name_index       Character name byte offset
+;   $E1        party_size            Active party member count
+;   $E6-$E9    party_slots           Roster indices for 4 party members
+;   $F0-$F3    temp_work             General scratch registers
+;   $F9/$FA    text_cursor_x/y       Text output cursor position
+;   $FC/$FD    dest_ptr              Destination pointer (copy ops)
+;   $FE/$FF    src_ptr / data_ptr    Source/general data pointer
+;
 ; === Optimization Hints Report ===
 ; Total hints: 24
 ; Estimated savings: 81 cycles/bytes
@@ -21,11 +70,11 @@
 ; $0047AE   REDUNDANT_LOAD    MEDIUM    3        Redundant LDY: same value loaded at $0047AC
 ; $0047BF   REDUNDANT_LOAD    MEDIUM    3        Redundant LDA: same value loaded at $0047BB
 ; $0047D9   REDUNDANT_LOAD    MEDIUM    3        Redundant LDA: same value loaded at $0047D5
-; $00485B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $00485C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0048A0   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $0048A1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
-; $004BF6   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for multiply
+; $00485B   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for calc_roster_ptr
+; $00485C   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for calc_roster_ptr
+; $0048A0   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for calc_roster_ptr
+; $0048A1   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for calc_roster_ptr
+; $004BF6   STRENGTH_RED      LOW       1        Multiple ASL A: consider using lookup table for calc_roster_ptr
 ; $004A22   TAIL_CALL         HIGH      6        Tail call: JSR/JSL at $004A22 followed by RTS
 ; $004A4B   TAIL_CALL         HIGH      6        Tail call: JSR/JSL at $004A4B followed by RTS
 
@@ -740,17 +789,17 @@
 ; Forward references — labels at mid-instruction addresses
 ; ===========================================================================
 
-; NOTE: utility_2_L3 enters mid-instruction — alternate decode: SBC ... / CLC / LDA $48BF
-utility_2_L3 EQU $48C0
+; NOTE: plot_char_smc_page enters mid-instruction — alternate decode: SBC ... / CLC / LDA $48BF
+plot_char_smc_page EQU $48C0
 
-; NOTE: utility_2_L4 enters mid-instruction — alternate decode: SBC ... / LDA ... / STA $48BF
-utility_2_L4 EQU $48C2
+; NOTE: plot_char_smc_lo enters mid-instruction — alternate decode: SBC ... / LDA ... / STA $48BF
+plot_char_smc_lo EQU $48C2
 
-; NOTE: utility_2_L5 enters mid-instruction — alternate decode: SBC ... / PHA / ADC #$80
-utility_2_L5 EQU $48C3
+; NOTE: plot_char_smc_hi enters mid-instruction — alternate decode: SBC ... / PHA / ADC #$80
+plot_char_smc_hi EQU $48C3
 
-; NOTE: write_text_screen_L5 enters mid-instruction — alternate decode: BPL $4BBA / CLC / LDA $FE
-write_text_screen_L5 EQU $4BB3
+; NOTE: text_scroll_entry enters mid-instruction — alternate decode: BPL $4BBA / CLC / LDA $FE
+text_scroll_entry EQU $4BB3
 
 ; (4 forward-reference equates, 4 with alternate decode notes)
 
@@ -763,7 +812,7 @@ write_text_screen_L5 EQU $4BB3
 ; LUMA: int_brk
             brk  #$00            ; [SP-3]
             DB      $60
-loc_004103  ora  ($60,X)         ; [SP-1]
+zp_init_2  ora  ($60,X)         ; [SP-1]
             ora  ($60,X)         ; [SP-1]
             ora  ($40,X)         ; [SP-1]
 ; LUMA: int_brk
@@ -774,7 +823,7 @@ loc_004103  ora  ($60,X)         ; [SP-1]
             DB      $02,$18,$06,$00,$00,$00,$00,$60
 ; ---
 
-loc_004123  ora  ($61),Y         ; [SP-17]
+zp_init_3  ora  ($61),Y         ; [SP-17]
             ora  ($61),Y         ; [SP-17]
             ora  ($41),Y         ; [SP-17]
             php                  ; [SP-18]
@@ -782,22 +831,22 @@ loc_004123  ora  ($61),Y         ; [SP-17]
             DB      $07
             bvs  $4131           ; [SP-18]
             DB      $60
-loc_00412F  ora  ($40,X)         ; [SP-16]
+zp_init_4  ora  ($40,X)         ; [SP-16]
 ; LUMA: int_brk
             brk  #$60            ; [SP-19]
             DB      $01,$60
-data_004135
+gfx_params_1
             DB      $0F
-            bpl  loc_004140      ; [SP-19]
+            bpl  gfx_stub_rts      ; [SP-19]
             php                  ; [SP-19]
 
 ; ---
             DB      $08,$04,$18,$03,$00,$00,$00
 ; ---
 
-loc_004140  rts                  ; [SP-21]
+gfx_stub_rts  rts                  ; [SP-21]
             DB      $03,$60
-data_004143
+gfx_params_2
             DB      $03
 ; LUMA: epilogue_rts
             rts                  ; [SP-21]
@@ -805,7 +854,7 @@ data_004143
 ; --- Data region (62 bytes) ---
             DB      $03,$40,$01,$7C,$1F,$3E,$3E,$37,$76,$63,$63,$43,$61,$43,$61,$60
             DB      $03,$70,$07,$30,$06,$30,$06,$30,$06,$38,$0E,$20,$05,$60
-data_004163
+sprite_data_1
             DB      $07
             DB      $22
             DB      $05 ; string length
@@ -814,16 +863,16 @@ data_004163
             DB      $0C,$32,$1C,$3A,$00,$00,$00,$60
 ; --- End data region (62 bytes) ---
 
-loc_004183  ora  ($66,X)         ; [SP-25]
+sprite_data_2  ora  ($66,X)         ; [SP-25]
             ora  $1162,Y         ; [SP-25]
             DB      $42
             bpl  $4209           ; [SP-25]
             DB      $1F,$70,$03,$60
-loc_00418F  ora  ($40,X)         ; [SP-25]
+sprite_data_3  ora  ($40,X)         ; [SP-25]
 ; LUMA: int_brk
             brk  #$60            ; [SP-28]
             DB      $01,$60
-loc_004195  ora  ($30,X)         ; [SP-28]
+sprite_data_4  ora  ($30,X)         ; [SP-28]
             DB      $03
             bpl  $419C           ; [SP-28]
 
@@ -836,7 +885,7 @@ loc_004195  ora  ($30,X)         ; [SP-28]
             DB      $7C,$03,$78,$05,$70,$04,$20,$7E,$70,$04,$70,$00,$58,$01,$04,$01
             DB      $02,$01,$03,$03,$00,$00,$00,$00,$10,$04,$70,$07,$66,$33,$66,$33
             DB      $46,$31,$7C,$1F,$78,$0F,$60
-data_004211
+sprite_data_5
             DB      $03
 ; --- End data region (120 bytes) ---
 
@@ -847,25 +896,25 @@ data_004211
             DB      $03,$70,$07,$30,$06,$30,$06,$30,$06,$38,$0E,$00,$00,$00,$00,$40
             DB      $03,$40,$03,$40,$03,$00,$01,$70,$0F,$08,$11,$64,$27,$02,$41,$40
             DB      $03,$00,$01,$40,$03,$20,$04,$20,$04,$20,$04,$30,$0C,$60
-data_004241
+sprite_data_6
             DB      $03
             DB      $27
             DB      $02,$67,$03,$62,$03,$4F,$01,$7F,$1F,$7A,$3F,$72,$77,$62,$63,$60
             DB      $63,$70,$27,$78,$0F,$38,$0E,$18,$0C,$1C,$1C,$1C,$1C
 ; --- End data region (77 bytes) ---
 
-loc_004260  bpl  data_004266     ; [SP-62]
+sprite_data_7  bpl  sprite_data_8     ; [SP-62]
 
 ; --- Data region (34 bytes) ---
             DB      $72
             DB      $27
             DB      $57,$75
-data_004266
+sprite_data_8
             DB      $27
             DB      $72
             DB      $4F,$79,$1F,$7C,$7F,$7F,$77,$77,$73,$67,$63,$63,$43,$61,$61,$43
             DB      $11,$44,$08,$08,$1C,$1C,$14,$14,$00,$00,$60
-data_004283
+sprite_data_9
             DB      $03
 ; --- End data region (34 bytes) ---
 
@@ -877,7 +926,7 @@ data_004283
             DB      $30,$03,$60
 ; ---
 
-loc_004298  asl  $30             ; [SP-65]
+sprite_data_10  asl  $30             ; [SP-65]
             DB      $0C
             clc                  ; [SP-65]
             clc                  ; [SP-65]
@@ -885,7 +934,7 @@ loc_004298  asl  $30             ; [SP-65]
 ; ---
             DB      $0C,$00,$00,$00,$00,$00,$00,$0C,$00,$0F,$7E,$5C,$3F,$7E,$1F,$70
             DB      $07,$70,$01,$60
-data_0042B1
+sprite_data_11
             DB      $03
 ; ---
 
@@ -975,49 +1024,49 @@ data_0042B1
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; utility  [5 calls, 2 jumps]
-;   Called by: plot_hgr_2_L3, loc_004C7A, loc_004C91, loc_004CA8, helper_L2
-;   Calls: utility_2, helper
+; print_inline_str  [5 calls, 2 jumps]
+;   Called by: text_wind_show, text_mode_1, text_mode_2, text_mode_3, scroll_text_col
+;   Calls: plot_char_glyph, scroll_text_up
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004732: register -> A:X []
 ; Proto: uint32_t func_004732(uint16_t param_X);
 ; Liveness: params(X) returns(A,X,Y) [2 dead stores]
-; XREF: 7 refs (5 calls) (2 jumps) from $0046BA, plot_hgr_2_L3, loc_004C7A, loc_004C91, loc_004CA8, ...
-utility     pla                  ; A=[stk] ; [SP-12]
+; XREF: 7 refs (5 calls) (2 jumps) from $0046BA, text_wind_show, text_mode_1, text_mode_2, text_mode_3, ...
+print_inline_str     pla                  ; A=[stk] ; [SP-12]
             sta  $FE             ; A=[stk] ; [SP-12]
             pla                  ; A=[stk] ; [SP-11]
             sta  $FF             ; A=[stk] ; [SP-11]
 
 ; === while loop starts here [nest:7] ===
-; XREF: 2 refs (2 jumps) from utility_L2, utility_L3
-utility_L1  ldy  #$00            ; A=[stk] Y=$0000 ; [SP-11]
+; XREF: 2 refs (2 jumps) from print_str_fetch, print_str_newline
+print_str_loop  ldy  #$00            ; A=[stk] Y=$0000 ; [SP-11]
             inc  $FE             ; A=[stk] Y=$0000 ; [SP-11]
-            bne  utility_L2      ; A=[stk] Y=$0000 ; [SP-11]
+            bne  print_str_fetch      ; A=[stk] Y=$0000 ; [SP-11]
             inc  $FF             ; A=[stk] Y=$0000 ; [SP-11]
 ; LUMA: data_ptr_offset
-; XREF: 1 ref (1 branch) from utility_L1
-utility_L2  lda  ($FE),Y         ; A=[stk] Y=$0000 ; [SP-11]
-            beq  utility_L4      ; A=[stk] Y=$0000 ; [SP-11]
+; XREF: 1 ref (1 branch) from print_str_loop
+print_str_fetch  lda  ($FE),Y         ; A=[stk] Y=$0000 ; [SP-11]
+            beq  print_str_done      ; A=[stk] Y=$0000 ; [SP-11]
             cmp  #$FF            ; A=[stk] Y=$0000 ; [SP-11]
-            beq  utility_L3      ; A=[stk] Y=$0000 ; [SP-11]
+            beq  print_str_newline      ; A=[stk] Y=$0000 ; [SP-11]
             and  #$7F            ; A=A&$7F Y=$0000 ; [SP-11]
-            jsr  utility_2       ; A=A&$7F Y=$0000 ; [SP-13]
+            jsr  plot_char_glyph       ; A=A&$7F Y=$0000 ; [SP-13]
             inc  $F9             ; A=A&$7F Y=$0000 ; [SP-13]
-            jmp  utility_L1      ; A=A&$7F Y=$0000 ; [SP-13]
+            jmp  print_str_loop      ; A=A&$7F Y=$0000 ; [SP-13]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from utility_L2
-utility_L3  jsr  helper          ; A=A&$7F Y=$0000 ; [SP-15]
+; XREF: 1 ref (1 branch) from print_str_fetch
+print_str_newline  jsr  scroll_text_up          ; A=A&$7F Y=$0000 ; [SP-15]
             lda  #$18            ; A=$0018 Y=$0000 ; [SP-15]
             sta  $F9             ; A=$0018 Y=$0000 ; [SP-15]
             lda  #$17            ; A=$0017 Y=$0000 ; [SP-15]
             sta  $FA             ; A=$0017 Y=$0000 ; [SP-15]
-            jmp  utility_L1      ; A=$0017 Y=$0000 ; [SP-15]
+            jmp  print_str_loop      ; A=$0017 Y=$0000 ; [SP-15]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from utility_L2
-utility_L4  lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
+; XREF: 1 ref (1 branch) from print_str_fetch
+print_str_done  lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
             pha                  ; A=[$00FF] Y=$0000 ; [SP-16]
             lda  $FE             ; A=[$00FE] Y=$0000 ; [SP-16]
             pha                  ; A=[$00FE] Y=$0000 ; [SP-17]
@@ -1025,23 +1074,23 @@ utility_L4  lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
             rts                  ; A=[$00FE] Y=$0000 ; [SP-15]
 
 ; ---------------------------------------------------------------------------
-; helper  [1 call, 1 jump]
-;   Called by: utility_L3
-;   Calls: utility
+; scroll_text_up  [1 call, 1 jump]
+;   Called by: print_str_newline
+;   Calls: print_inline_str
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004767: register -> A:X []
 ; Liveness: returns(A,X,Y) [9 dead stores]
-; XREF: 2 refs (1 call) (1 jump) from utility_L3, $0046BD
-helper      lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
+; XREF: 2 refs (1 call) (1 jump) from print_str_newline, $0046BD
+scroll_text_up      lda  $FF             ; A=[$00FF] Y=$0000 ; [SP-15]
             pha                  ; A=[$00FF] Y=$0000 ; [SP-16]
             lda  $FE             ; A=[$00FE] Y=$0000 ; [SP-16]
             pha                  ; A=[$00FE] Y=$0000 ; [SP-17]
             ldx  #$88            ; A=[$00FE] X=$0088 Y=$0000 ; [SP-17]
 
 ; === while loop starts here (counter: X 'iter_x', range: 0..184, iters: 184) [nest:7] ===
-; XREF: 1 ref (1 branch) from helper_L2
-helper_L1   ldy  #$18            ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
+; XREF: 1 ref (1 branch) from scroll_text_col
+scroll_text_row   ldy  #$18            ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
 ; LUMA: data_array_x
             lda  $4300,X         ; -> $4388 ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
             sta  $FE             ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
@@ -1056,24 +1105,24 @@ helper_L1   ldy  #$18            ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
 
 ; === while loop starts here (counter: Y 'iter_y', range: 0..40, iters: 40) [nest:8] ===
 ; LUMA: data_ptr_offset
-; XREF: 1 ref (1 branch) from helper_L2
-helper_L2   lda  ($FC),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
+; XREF: 1 ref (1 branch) from scroll_text_col
+scroll_text_col   lda  ($FC),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
             sta  ($FE),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
             iny                  ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
             cpy  #$28            ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
-            bcc  helper_L2       ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
+            bcc  scroll_text_col       ; A=[$00FE] X=$0088 Y=$0019 ; [SP-17]
 ; === End of while loop (counter: Y) ===
 
             inx                  ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
             cpx  #$B8            ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
-            bcc  helper_L1       ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
+            bcc  scroll_text_row       ; A=[$00FE] X=$0089 Y=$0019 ; [SP-17]
 ; === End of while loop (counter: X) ===
 
             lda  #$18            ; A=$0018 X=$0089 Y=$0019 ; [SP-17]
             sta  $F9             ; A=$0018 X=$0089 Y=$0019 ; [SP-17]
             lda  #$17            ; A=$0017 X=$0089 Y=$0019 ; [SP-17]
             sta  $FA             ; A=$0017 X=$0089 Y=$0019 ; [SP-17]
-            jsr  utility         ; A=$0017 X=$0089 Y=$0019 ; [SP-19]
+            jsr  print_inline_str         ; A=$0017 X=$0089 Y=$0019 ; [SP-19]
             ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [SP-19]
             ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $00479E ; [SP-19]
             ldy  #$A0            ; A=$0017 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDY: same value loaded at $0047A0 ; [SP-19]
@@ -1087,40 +1136,40 @@ helper_L2   lda  ($FC),Y         ; A=[$00FE] X=$0088 Y=$0018 ; [SP-17]
             brk  #$68            ; A=$0017 X=$0089 Y=$00A0 ; [SP-22]
 
 ; ---------------------------------------------------------------------------
-; sub_0047B2
+; save_text_ptr
 ; ---------------------------------------------------------------------------
-sub_0047B2  sta  $FE             ; A=$0017 X=$0089 Y=$00A0 ; [SP-22]
+save_text_ptr  sta  $FE             ; A=$0017 X=$0089 Y=$00A0 ; [SP-22]
             pla                  ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
             sta  $FF             ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
 ; LUMA: epilogue_rts
             rts                  ; A=[stk] X=$0089 Y=$00A0 ; [SP-19]
 ; XREF: 1 ref (1 jump) from $0046C0
-helper_L3   jsr  move_data       ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
+draw_border_init   jsr  clear_hgr_page       ; A=[stk] X=$0089 Y=$00A0 ; [SP-21]
             lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
             sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
 
 ; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from helper_L4
-helper_L4   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047BB ; [SP-21]
+; XREF: 1 ref (1 branch) from draw_border_horiz
+draw_border_horiz   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047BB ; [SP-21]
             sta  $F1             ; A=$0000 X=$0089 Y=$00A0 ; [SP-21]
-            jsr  shift_bits      ; A=$0000 X=$0089 Y=$00A0 ; [SP-23]
+            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-23]
             lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-23]
             sta  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-23]
-            jsr  shift_bits      ; A=$0017 X=$0089 Y=$00A0 ; [SP-25]
+            jsr  draw_hgr_stripe      ; A=$0017 X=$0089 Y=$00A0 ; [SP-25]
             inc  $F2             ; A=$0017 X=$0089 Y=$00A0 ; [SP-25]
             lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
             cmp  #$18            ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
-            bcc  helper_L4       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
+            bcc  draw_border_horiz       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-25]
 ; === End of while loop ===
 
             lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
             sta  $F1             ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
 
 ; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from helper_L5
-helper_L5   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047D5 ; [SP-25]
+; XREF: 1 ref (1 branch) from draw_border_vert
+draw_border_vert   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOAD: Redundant LDA: same value loaded at $0047D5 ; [SP-25]
             sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-25]
-            jsr  shift_bits      ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
+            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
             nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
             nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
             nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
@@ -1130,49 +1179,49 @@ helper_L5   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [OPT] REDUNDANT_LOA
             nop                  ; A=$0000 X=$0089 Y=$00A0 ; [SP-27]
             lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-27]
             sta  $F2             ; A=$0017 X=$0089 Y=$00A0 ; [SP-27]
-            jsr  shift_bits      ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
+            jsr  draw_hgr_stripe      ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
             inc  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
             lda  $F1             ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
             cmp  #$17            ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
-            bcc  helper_L5       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
+            bcc  draw_border_vert       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-29]
 ; === End of while loop ===
 
             lda  #$17            ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
             sta  $F1             ; A=$0017 X=$0089 Y=$00A0 ; [SP-29]
 
 ; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from helper_L6
-helper_L6   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-29]
+; XREF: 1 ref (1 branch) from draw_border_bottom
+draw_border_bottom   lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-29]
             sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-29]
-            jsr  shift_bits      ; A=$0000 X=$0089 Y=$00A0 ; [SP-31]
+            jsr  draw_hgr_stripe      ; A=$0000 X=$0089 Y=$00A0 ; [SP-31]
             lda  #$04            ; A=$0004 X=$0089 Y=$00A0 ; [SP-31]
             sta  $F2             ; A=$0004 X=$0089 Y=$00A0 ; [SP-31]
-            jsr  shift_bits      ; A=$0004 X=$0089 Y=$00A0 ; [SP-33]
+            jsr  draw_hgr_stripe      ; A=$0004 X=$0089 Y=$00A0 ; [SP-33]
             lda  #$08            ; A=$0008 X=$0089 Y=$00A0 ; [SP-33]
             sta  $F2             ; A=$0008 X=$0089 Y=$00A0 ; [SP-33]
-            jsr  shift_bits      ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
+            jsr  draw_hgr_stripe      ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
             lda  #$0C            ; A=$000C X=$0089 Y=$00A0 ; [SP-35]
             sta  $F2             ; A=$000C X=$0089 Y=$00A0 ; [SP-35]
-            jsr  shift_bits      ; A=$000C X=$0089 Y=$00A0 ; [SP-37]
+            jsr  draw_hgr_stripe      ; A=$000C X=$0089 Y=$00A0 ; [SP-37]
             lda  #$10            ; A=$0010 X=$0089 Y=$00A0 ; [SP-37]
             sta  $F2             ; A=$0010 X=$0089 Y=$00A0 ; [SP-37]
-            jsr  shift_bits      ; A=$0010 X=$0089 Y=$00A0 ; [SP-39]
+            jsr  draw_hgr_stripe      ; A=$0010 X=$0089 Y=$00A0 ; [SP-39]
             inc  $F1             ; A=$0010 X=$0089 Y=$00A0 ; [SP-39]
             lda  $F1             ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
             cmp  #$28            ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
-            bcc  helper_L6       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
+            bcc  draw_border_bottom       ; A=[$00F1] X=$0089 Y=$00A0 ; [SP-39]
             lda  #$00            ; A=$0000 X=$0089 Y=$00A0 ; [SP-39]
             sta  $F2             ; A=$0000 X=$0089 Y=$00A0 ; [SP-39]
             lda  #$27            ; A=$0027 X=$0089 Y=$00A0 ; [SP-39]
             sta  $F1             ; A=$0027 X=$0089 Y=$00A0 ; [SP-39]
 
 ; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 branch) from helper_L7
-helper_L7   jsr  shift_bits      ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
+; XREF: 1 ref (1 branch) from draw_border_right
+draw_border_right   jsr  draw_hgr_stripe      ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
             inc  $F2             ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
             lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
             cmp  #$11            ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
-            bcc  helper_L7       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
+            bcc  draw_border_right       ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-41]
 ; LUMA: epilogue_rts
             rts                  ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-39]
 
@@ -1183,30 +1232,30 @@ helper_L7   jsr  shift_bits      ; A=$0027 X=$0089 Y=$00A0 ; [SP-41]
 
 ; LUMA: epilogue_rts
 ; XREF: 1 ref (1 jump) from $0046C6
-helper_L8   rts                  ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
+draw_border_done   rts                  ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
 
 ; ---------------------------------------------------------------------------
-; shift_bits  [10 calls]
-;   Called by: helper_L6, helper_L5, helper_L4, helper_L7
+; draw_hgr_stripe  [10 calls]
+;   Called by: draw_border_bottom, draw_border_vert, draw_border_horiz, draw_border_right
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004855: register -> A:X [L]
 ; Proto: uint32_t func_004855(void);
 ; Liveness: returns(A,X,Y) [3 dead stores]
-; XREF: 10 refs (10 calls) from helper_L6, helper_L5, helper_L6, helper_L4, helper_L5, ...
-shift_bits  lda  #$08            ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
+; XREF: 10 refs (10 calls) from draw_border_bottom, draw_border_vert, draw_border_bottom, draw_border_horiz, draw_border_vert, ...
+draw_hgr_stripe  lda  #$08            ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
             sta  $F3             ; A=$0008 X=$0089 Y=$00A0 ; [SP-35]
             lda  $F2             ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
-            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-35]
-            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-35]
+            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-35]
+            asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-35]
             asl  a               ; A=[$00F2] X=$0089 Y=$00A0 ; [SP-35]
             tax                  ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
             ldy  $F1             ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
 
 ; === while loop starts here (counter: X 'iter_x') [nest:6] ===
 ; LUMA: data_array_x
-; XREF: 1 ref (1 branch) from shift_bits_L3
-shift_bits_L1 lda  $4300,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
+; XREF: 1 ref (1 branch) from draw_stripe_next
+draw_stripe_row lda  $4300,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
             sta  $FE             ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
 ; LUMA: data_array_x
             lda  $43C0,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
@@ -1214,84 +1263,84 @@ shift_bits_L1 lda  $4300,X         ; A=[$00F2] X=[$00F2] Y=$00A0 ; [SP-35]
             tya                  ; A=$00A0 X=[$00F2] Y=$00A0 ; [SP-35]
             lsr  a               ; A=$00A0 X=[$00F2] Y=$00A0 ; [SP-35]
             lda  #$AA            ; A=$00AA X=[$00F2] Y=$00A0 ; [SP-35]
-            bcs  shift_bits_L2   ; A=$00AA X=[$00F2] Y=$00A0 ; [SP-35]
+            bcs  draw_stripe_store   ; A=$00AA X=[$00F2] Y=$00A0 ; [SP-35]
             eor  #$7F            ; A=A^$7F X=[$00F2] Y=$00A0 ; [SP-35]
-; XREF: 1 ref (1 branch) from shift_bits_L1
-shift_bits_L2 sta  ($FE),Y         ; A=A^$7F X=[$00F2] Y=$00A0 ; [SP-35]
+; XREF: 1 ref (1 branch) from draw_stripe_row
+draw_stripe_store sta  ($FE),Y         ; A=A^$7F X=[$00F2] Y=$00A0 ; [SP-35]
             inx                  ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
             dec  $F3             ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
-shift_bits_L3 bne  shift_bits_L1   ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
+draw_stripe_next bne  draw_stripe_row   ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-35]
 ; === End of while loop (counter: X) ===
 
 ; LUMA: epilogue_rts
             rts                  ; A=A^$7F X=X+$01 Y=$00A0 ; [SP-33]
 
 ; ---------------------------------------------------------------------------
-; move_data  [1 call, 1 jump]
-;   Called by: helper_L3
+; clear_hgr_page  [1 call, 1 jump]
+;   Called by: draw_border_init
 ; ---------------------------------------------------------------------------
 
 ; FUNC $00487B: register -> A:X [I]
 ; Proto: uint32_t func_00487B(void);
 ; Liveness: returns(A,X,Y)
-; XREF: 2 refs (1 call) (1 jump) from helper_L3, $0046C9
-move_data   lda  #$20            ; A=$0020 X=X+$01 Y=$00A0 ; [SP-33]
+; XREF: 2 refs (1 call) (1 jump) from draw_border_init, $0046C9
+clear_hgr_page   lda  #$20            ; A=$0020 X=X+$01 Y=$00A0 ; [SP-33]
             sta  $FF             ; A=$0020 X=X+$01 Y=$00A0 ; [SP-33]
             lda  #$00            ; A=$0000 X=X+$01 Y=$00A0 ; [SP-33]
             sta  $FE             ; A=$0000 X=X+$01 Y=$00A0 ; [SP-33]
             ldy  #$00            ; A=$0000 X=X+$01 Y=$0000 ; [SP-33]
 
 ; === while loop starts here (counter: Y 'iter_y') [nest:6] ===
-; XREF: 2 refs (2 branches) from move_data_L1, move_data_L1
-move_data_L1 sta  ($FE),Y         ; A=$0000 X=X+$01 Y=$0000 ; [SP-33]
+; XREF: 2 refs (2 branches) from clear_hgr_loop, clear_hgr_loop
+clear_hgr_loop sta  ($FE),Y         ; A=$0000 X=X+$01 Y=$0000 ; [SP-33]
             iny                  ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            bne  move_data_L1    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
+            bne  clear_hgr_loop    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
 ; === End of while loop (counter: Y) ===
 
             inc  $FF             ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
             ldx  $FF             ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
             cpx  #$40            ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
-            bcc  move_data_L1    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
+            bcc  clear_hgr_loop    ; A=$0000 X=X+$01 Y=$0001 ; [SP-33]
 ; === End of while loop (counter: Y) ===
 
 ; LUMA: epilogue_rts
             rts                  ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
 
 ; ---------------------------------------------------------------------------
-; utility_2  [11 calls, 1 jump]
-;   Called by: multiply_L4, sub_00490D, utility_3_L3, lookup_add_L1, utility_L2, shift_bits_2_L3
+; plot_char_glyph  [11 calls, 1 jump]
+;   Called by: copy_plrs_byte, print_digit, rng_done, print_bcd_byte, print_str_fetch, print_name_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004893: register -> A:X [L]
 ; Proto: uint32_t func_004893(void);
 ; Liveness: returns(A,X,Y) [2 dead stores]
-; XREF: 12 refs (11 calls) (1 jump) from multiply_L4, multiply_L4, sub_00490D, multiply_L4, $0046CC, ...
-utility_2   cmp  #$60            ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
-            bcc  utility_2_L1    ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
+; XREF: 12 refs (11 calls) (1 jump) from copy_plrs_byte, copy_plrs_byte, print_digit, copy_plrs_byte, $0046CC, ...
+plot_char_glyph   cmp  #$60            ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
+            bcc  plot_char_clip    ; A=$0000 X=X+$01 Y=$0001 ; [SP-31]
             and  #$1F            ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
-; XREF: 1 ref (1 branch) from utility_2
-utility_2_L1 sta  $F0             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
+; XREF: 1 ref (1 branch) from plot_char_glyph
+plot_char_clip sta  $F0             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
             ldy  $F9             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
             ldx  $FA             ; A=A&$1F X=X+$01 Y=$0001 ; [SP-31]
             txa                  ; A=X X=X+$01 Y=$0001 ; [SP-31]
-            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-31]
-            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-31]
+            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-31]
+            asl  a               ; A=X X=X+$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-31]
             asl  a               ; A=X X=X+$01 Y=$0001 ; [SP-31]
             sta  $F1             ; A=X X=X+$01 Y=$0001 ; [SP-31]
             lda  #$08            ; A=$0008 X=X+$01 Y=$0001 ; [SP-31]
             sta  $F3             ; A=$0008 X=X+$01 Y=$0001 ; [SP-31]
             lda  #$04            ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  utility_2_L3    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> utility_2_L3
+            sta  plot_char_smc_page    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_page
 
 ; === while loop starts here [nest:9] ===
-; XREF: 1 ref (1 branch) from utility_2_L6
-utility_2_L2 ldx  $F1             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
+; XREF: 1 ref (1 branch) from plot_char_next
+plot_char_row ldx  $F1             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
 ; LUMA: data_array_x
             lda  $4300,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  utility_2_L4    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> utility_2_L4
+            sta  plot_char_smc_lo    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_lo
 ; LUMA: data_array_x
             lda  $43C0,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
-            sta  utility_2_L5    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> utility_2_L5
+            sta  plot_char_smc_hi    ; A=$0004 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> plot_char_smc_hi
             ldx  $F0             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
 ; LUMA: data_array_x
             lda  $FF00,X         ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
@@ -1301,45 +1350,45 @@ utility_2_L2 ldx  $F1             ; A=$0004 X=X+$01 Y=$0001 ; [SP-31]
             lda  $48BF           ; A=[$48BF] X=X+$01 Y=$0001 ; [SP-31]
             adc  #$80            ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
             sta  $48BF           ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31] ; WARNING: Self-modifying code -> $48BF
-            bcc  utility_2_L6    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            inc  utility_2_L3    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-; XREF: 1 ref (1 branch) from utility_2_L5
-utility_2_L6 inc  $F1             ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
+            bcc  plot_char_next    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
+            inc  plot_char_smc_page    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
+; XREF: 1 ref (1 branch) from plot_char_smc_hi
+plot_char_next inc  $F1             ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
             dec  $F3             ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
-            bne  utility_2_L2    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
+            bne  plot_char_row    ; A=A+$80 X=X+$01 Y=$0001 ; [SP-31]
 ; === End of while loop ===
 
 ; LUMA: epilogue_rts
             rts                  ; A=A+$80 X=X+$01 Y=$0001 ; [SP-29]
 
 ; ---------------------------------------------------------------------------
-; move_data_2  [4 calls, 1 jump, 1 branch]
-;   Called by: plot_hgr_L1, plot_hgr_L2, plot_hgr
-;   Calls: lookup_add
+; swap_tile_frames  [4 calls, 1 jump, 1 branch]
+;   Called by: anim_tiles_set2, anim_tiles_set3, animate_tiles
+;   Calls: advance_ptr_128
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0048D9: register -> A:X []
 ; Proto: uint32_t func_0048D9(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [3 dead stores]
-; XREF: 6 refs (4 calls) (1 jump) (1 branch) from plot_hgr_L1, plot_hgr_L2, move_data_2_L1, plot_hgr, plot_hgr_L1, ...
-move_data_2 lda  #$00            ; A=$0000 X=X+$01 Y=$0001 ; [SP-29]
+; XREF: 6 refs (4 calls) (1 jump) (1 branch) from anim_tiles_set2, anim_tiles_set3, swap_tile_loop, animate_tiles, anim_tiles_set2, ...
+swap_tile_frames lda  #$00            ; A=$0000 X=X+$01 Y=$0001 ; [SP-29]
             sta  $FE             ; A=$0000 X=X+$01 Y=$0001 ; [SP-29]
             lda  #$08            ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
             sta  $FF             ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
             ldx  $0F80,Y         ; -> $0F81 ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
 
 ; === while loop starts here [nest:14] ===
-; XREF: 1 ref (1 branch) from move_data_2_L1
-move_data_2_L1 lda  ($FE),Y         ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
+; XREF: 1 ref (1 branch) from swap_tile_loop
+swap_tile_loop lda  ($FE),Y         ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
             pha                  ; A=$0008 X=X+$01 Y=$0001 ; [SP-30]
             txa                  ; A=X X=X+$01 Y=$0001 ; [SP-30]
             sta  ($FE),Y         ; A=X X=X+$01 Y=$0001 ; [SP-30]
             pla                  ; A=[stk] X=X+$01 Y=$0001 ; [SP-29]
             tax                  ; A=[stk] X=[stk] Y=$0001 ; [SP-29]
-            jsr  lookup_add      ; Call $0048FF(A)
+            jsr  advance_ptr_128      ; Call $0048FF(A)
             lda  $FF             ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
             cmp  #$10            ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
-            bcc  move_data_2_L1  ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
+            bcc  swap_tile_loop  ; A=[$00FF] X=[stk] Y=$0001 ; [SP-31]
 ; === End of while loop ===
 
             txa                  ; A=[stk] X=[stk] Y=$0001 ; [SP-31]
@@ -1347,21 +1396,21 @@ move_data_2_L1 lda  ($FE),Y         ; A=$0008 X=X+$01 Y=$0001 ; [SP-29]
             iny                  ; A=[stk] X=[stk] Y=$0002 ; [SP-31]
             tya                  ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
             lsr  a               ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
-            bcs  move_data_2     ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
+            bcs  swap_tile_frames     ; A=$0002 X=[stk] Y=$0002 ; [SP-31]
 ; === End of while loop (counter: Y) ===
 
             rts                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
 
 ; ---------------------------------------------------------------------------
-; lookup_add  [1 call]
-;   Called by: move_data_2_L1
+; advance_ptr_128  [1 call]
+;   Called by: swap_tile_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0048FF: register -> A:X []
 ; Proto: uint32_t func_0048FF(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
-; XREF: 1 ref (1 call) from move_data_2_L1
-lookup_add  clc                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
+; XREF: 1 ref (1 call) from swap_tile_loop
+advance_ptr_128  clc                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
             lda  $FE             ; A=[$00FE] X=[stk] Y=$0002 ; [SP-29]
             adc  #$80            ; A=A+$80 X=[stk] Y=$0002 ; [SP-29]
             sta  $FE             ; A=A+$80 X=[stk] Y=$0002 ; [SP-29]
@@ -1371,44 +1420,44 @@ lookup_add  clc                  ; A=$0002 X=[stk] Y=$0002 ; [SP-29]
             rts                  ; A=A X=[stk] Y=$0002 ; [SP-27]
 
 ; ---------------------------------------------------------------------------
-; sub_00490D  [1 jump]
-;   Calls: utility_2
+; print_digit  [1 jump]
+;   Calls: plot_char_glyph
 ; ---------------------------------------------------------------------------
 ; XREF: 1 ref (1 jump) from $0046D2
-sub_00490D  clc                  ; A=A X=[stk] Y=$0002 ; [SP-27]
+print_digit  clc                  ; A=A X=[stk] Y=$0002 ; [SP-27]
             adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-            jsr  utility_2       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
+            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
             inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
             rts                  ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
 ; XREF: 1 ref (1 jump) from $0046D5
-lookup_add_L1 sta  $4934           ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
+print_bcd_byte sta  $4934           ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
             and  #$F0            ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
             lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
             lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
             lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
             lsr  a               ; A=A&$F0 X=[stk] Y=$0002 ; [SP-27]
             adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-27]
-            jsr  utility_2       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
+            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
             inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
             lda  $4934           ; A=[$4934] X=[stk] Y=$0002 ; [SP-29]
             and  #$0F            ; A=A&$0F X=[stk] Y=$0002 ; [SP-29]
             clc                  ; A=A&$0F X=[stk] Y=$0002 ; [SP-29]
             adc  #$30            ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
-            jsr  utility_2       ; A=A+$30 X=[stk] Y=$0002 ; [SP-31]
+            jsr  plot_char_glyph       ; A=A+$30 X=[stk] Y=$0002 ; [SP-31]
             inc  $F9             ; A=A+$30 X=[stk] Y=$0002 ; [SP-31]
             rts                  ; A=A+$30 X=[stk] Y=$0002 ; [SP-29]
             DB      $00
 
 ; ---------------------------------------------------------------------------
-; multiply  [2 calls, 1 jump]
-;   Called by: sub_004955, multiply_L3
+; calc_roster_ptr  [2 calls, 1 jump]
+;   Called by: copy_roster_to_plrs, copy_plrs_slot
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004935: register -> A:X [I]
 ; Proto: uint32_t func_004935(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [2 dead stores]
-; XREF: 3 refs (2 calls) (1 jump) from sub_004955, $0046D8, multiply_L3
-multiply    lda  #$00            ; A=$0000 X=[stk] Y=$0002 ; [SP-32]
+; XREF: 3 refs (2 calls) (1 jump) from copy_roster_to_plrs, $0046D8, copy_plrs_slot
+calc_roster_ptr    lda  #$00            ; A=$0000 X=[stk] Y=$0002 ; [SP-32]
             sta  $FE             ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
             lda  $E6,X           ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
             sec                  ; A=$0000 X=[stk] Y=$0002 ; [SP-35]
@@ -1417,7 +1466,7 @@ multiply    lda  #$00            ; A=$0000 X=[stk] Y=$0002 ; [SP-32]
             ror  $FE             ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
             lsr  a               ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
             ror  $FE             ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
-multiply_L1 clc                  ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
+calc_roster_offset clc                  ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
             adc  #$95            ; A=A+$95 X=[stk] Y=$0002 ; [SP-35]
             sta  $FF             ; A=A+$95 X=[stk] Y=$0002 ; [SP-35]
             lda  #$40            ; A=$0040 X=[stk] Y=$0002 ; [SP-35]
@@ -1431,13 +1480,13 @@ multiply_L1 clc                  ; A=A-$01 X=[stk] Y=$0002 ; [SP-35]
             rts                  ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
 
 ; ---------------------------------------------------------------------------
-; sub_004955  [1 jump]
-;   Calls: multiply
+; copy_roster_to_plrs  [1 jump]
+;   Calls: calc_roster_ptr
 ; ---------------------------------------------------------------------------
 ; XREF: 1 ref (1 jump) from $0046DB
-sub_004955  ldx  $E1             ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
+copy_roster_to_plrs  ldx  $E1             ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
             dex                  ; A=[stk] X=X-$01 Y=$0002 ; [SP-33]
-            jsr  multiply        ; A=[stk] X=X-$01 Y=$0002 ; [SP-35]
+            jsr  calc_roster_ptr        ; A=[stk] X=X-$01 Y=$0002 ; [SP-35]
             ldy  #$3F            ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
             lda  ($FE),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
             sta  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
@@ -1447,24 +1496,24 @@ sub_004955  ldx  $E1             ; A=[stk] X=[stk] Y=$0002 ; [SP-33]
             bpl  $4958           ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
             rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
 ; XREF: 1 ref (1 jump) from $0046DE
-multiply_L2 ldx  $E1             ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
+copy_plrs_to_roster ldx  $E1             ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
             dex                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
 
 ; === while loop starts here [nest:11] ===
-; XREF: 1 ref (1 branch) from multiply_L4
-multiply_L3 jsr  multiply        ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
+; XREF: 1 ref (1 branch) from copy_plrs_byte
+copy_plrs_slot jsr  calc_roster_ptr        ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
             ldy  #$3F            ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
 
 ; === while loop starts here [nest:12] ===
-; XREF: 1 ref (1 branch) from multiply_L4
-multiply_L4 lda  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
+; XREF: 1 ref (1 branch) from copy_plrs_byte
+copy_plrs_byte lda  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
             sta  ($FE),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
             dey                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  multiply_L4     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
+            bpl  copy_plrs_byte     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
 ; === End of while loop ===
 
             dex                  ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
-            bpl  multiply_L3     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
+            bpl  copy_plrs_slot     ; A=[stk] X=X-$01 Y=$003E ; [SP-35]
 ; === End of while loop ===
 
             rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-33]
@@ -1487,34 +1536,34 @@ multiply_L4 lda  ($FC),Y         ; A=[stk] X=X-$01 Y=$003F ; [SP-35]
 ; ===========================================================================
 
 ; ---------------------------------------------------------------------------
-; plot_hgr_3  [1 call, 1 jump]
-;   Called by: plot_hgr_2_L1
-;   Calls: utility_3
+; modulo  [1 call, 1 jump]
+;   Called by: text_wind_rng
+;   Calls: get_random
 ; ---------------------------------------------------------------------------
 
 ; FUNC $0049FF: register -> A:X [I]
 ; Proto: uint32_t func_0049FF(uint16_t param_A, uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(A,X,Y) returns(A,X,Y)
-; XREF: 2 refs (1 call) (1 jump) from $0046E4, plot_hgr_2_L1
-plot_hgr_3  sta  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-45]
-            jsr  utility_3       ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+; XREF: 2 refs (1 call) (1 jump) from $0046E4, text_wind_rng
+modulo  sta  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-45]
+            jsr  get_random       ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
 
 ; === while loop starts here [nest:12] ===
-; XREF: 1 ref (1 jump) from plot_hgr_3_L1
-plot_hgr_3_L1 cmp  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            bcc  plot_hgr_3_L2   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+; XREF: 1 ref (1 jump) from modulo_loop
+modulo_loop cmp  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+            bcc  modulo_done   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
             sec                  ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
             sbc  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            jmp  plot_hgr_3_L1   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+            jmp  modulo_loop   ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from plot_hgr_3_L1
-plot_hgr_3_L2 cmp  #$00            ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+; XREF: 1 ref (1 branch) from modulo_loop
+modulo_done cmp  #$00            ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
             sta  $F3             ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
             rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-45]
 ; XREF: 1 ref (1 jump) from $0046EA
-dispatch    jsr  plot_hgr_2      ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
-            jsr  plot_hgr        ; A=[stk] X=X-$01 Y=$003E ; [SP-49]
+update_viewport    jsr  draw_text_window      ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
+            jsr  animate_tiles        ; A=[stk] X=X-$01 Y=$003E ; [SP-49]
             jsr  $4A52           ; A=[stk] X=X-$01 Y=$003E ; [SP-51]
             jsr  $4AB0           ; A=[stk] X=X-$01 Y=$003E ; [SP-53]
             jsr  $4B48           ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
@@ -1522,46 +1571,46 @@ dispatch    jsr  plot_hgr_2      ; A=[stk] X=X-$01 Y=$003E ; [SP-47]
             rts                  ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
 
 ; ---------------------------------------------------------------------------
-; plot_hgr  [1 call, 1 jump]
-;   Called by: dispatch
-;   Calls: move_data_2
+; animate_tiles  [1 call, 1 jump]
+;   Called by: update_viewport
+;   Calls: swap_tile_frames
 ; ---------------------------------------------------------------------------
-; XREF: 2 refs (1 call) (1 jump) from dispatch, $0046ED
-plot_hgr    dec  data_004A4F     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
-            bne  plot_hgr_L1     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
+; XREF: 2 refs (1 call) (1 jump) from update_viewport, $0046ED
+animate_tiles    dec  anim_counter_1     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
+            bne  anim_tiles_set2     ; A=[stk] X=X-$01 Y=$003E ; [SP-55]
             lda  #$02            ; A=$0002 X=X-$01 Y=$003E ; [SP-55]
-            sta  data_004A4F     ; A=$0002 X=X-$01 Y=$003E ; [SP-55]
+            sta  anim_counter_1     ; A=$0002 X=X-$01 Y=$003E ; [SP-55]
             ldy  #$00            ; A=$0002 X=X-$01 Y=$0000 ; [SP-55]
-            jsr  move_data_2     ; A=$0002 X=X-$01 Y=$0000 ; [SP-57]
-; XREF: 1 ref (1 branch) from plot_hgr
-plot_hgr_L1 ldy  #$40            ; A=$0002 X=X-$01 Y=$0040 ; [SP-57]
-            jsr  move_data_2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            dec  data_004A50     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            bne  plot_hgr_L2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
+            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0000 ; [SP-57]
+; XREF: 1 ref (1 branch) from animate_tiles
+anim_tiles_set2 ldy  #$40            ; A=$0002 X=X-$01 Y=$0040 ; [SP-57]
+            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
+            dec  anim_counter_2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
+            bne  anim_tiles_set3     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
             lda  #$02            ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
-            sta  data_004A50     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
+            sta  anim_counter_2     ; A=$0002 X=X-$01 Y=$0040 ; [SP-59]
             ldy  #$42            ; A=$0002 X=X-$01 Y=$0042 ; [SP-59]
-            jsr  move_data_2     ; A=$0002 X=X-$01 Y=$0042 ; [SP-61]
-; XREF: 1 ref (1 branch) from plot_hgr_L1
-plot_hgr_L2 ldy  #$44            ; A=$0002 X=X-$01 Y=$0044 ; [SP-61]
-            jsr  move_data_2     ; A=$0002 X=X-$01 Y=$0044 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $004A4B followed by RTS ; [SP-63]
+            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0042 ; [SP-61]
+; XREF: 1 ref (1 branch) from anim_tiles_set2
+anim_tiles_set3 ldy  #$44            ; A=$0002 X=X-$01 Y=$0044 ; [SP-61]
+            jsr  swap_tile_frames     ; A=$0002 X=X-$01 Y=$0044 ; [OPT] TAIL_CALL: Tail call: JSR/JSL at $004A4B followed by RTS ; [SP-63]
             rts                  ; A=$0002 X=X-$01 Y=$0044 ; [SP-61]
 
 ; ---
-data_004A4F
+anim_counter_1
             DB      $02
-data_004A50
+anim_counter_2
             DB      $07,$04,$20,$5F,$4A,$20,$76,$4A,$20,$8D,$4A,$60
-data_004A5C
+anim_counter_3
             DB      $03
-loc_004A5D
+anim_counter_4
             DB      $02
-data_004A5E
+anim_counter_5
             DB      $01,$CE,$5C,$4A,$D0,$11
 ; ---
 
-loc_004A64  lda  #$03            ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
-            sta  data_004A5C     ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
+swap_viewport_buf  lda  #$03            ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
+            sta  anim_counter_3     ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
             ldx  $088F           ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
             ldy  $090F           ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
             sty  $088F           ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
@@ -1575,14 +1624,14 @@ loc_004A64  lda  #$03            ; A=$0003 X=X-$01 Y=$0044 ; [SP-64]
 
 
 ; ---------------------------------------------------------------------------
-; write_text_screen  [1 call]
-;   Called by: data_004A50
+; animate_cursor  [1 call]
+;   Called by: anim_counter_2
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 call) from data_004A50
-write_text_screen dec  data_004A5E     ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
-            bne  write_text_screen_L1 ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
+; XREF: 1 ref (1 call) from anim_counter_2
+animate_cursor dec  anim_counter_5     ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
+            bne  anim_cursor_done ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
             lda  #$01            ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-            sta  data_004A5E     ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
+            sta  anim_counter_5     ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
             ldx  $0917           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
             ldy  $0997           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
             sty  $0917           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
@@ -1591,8 +1640,8 @@ write_text_screen dec  data_004A5E     ; A=$0003 X=X-$01 Y=$0044 ; [SP-60]
             ldy  $0996           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
             sty  $0916           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
             stx  $0996           ; A=$0001 X=X-$01 Y=$0044 ; [SP-60]
-; XREF: 1 ref (1 branch) from write_text_screen
-write_text_screen_L1 rts                  ; A=$0001 X=X-$01 Y=$0044 ; [SP-58]
+; XREF: 1 ref (1 branch) from animate_cursor
+anim_cursor_done rts                  ; A=$0001 X=X-$01 Y=$0044 ; [SP-58]
 
 ; --- Data region (76 bytes) ---
             DB      $AD,$3E,$09,$0A,$69,$00,$8D,$3E,$09,$AD,$3F,$09,$0A,$69,$00,$8D
@@ -1602,8 +1651,8 @@ write_text_screen_L1 rts                  ; A=$0001 X=X-$01 Y=$0044 ; [SP-58]
             DB      $8D,$3E,$0C,$AD,$BE,$0C,$49,$1E,$8D,$BE,$0C,$60
 ; --- End data region (76 bytes) ---
 
-; XREF: 1 ref (1 branch) from write_text_screen_L1
-write_text_screen_L2 lda  $0BBF           ; A=[$0BBF] X=X-$01 Y=$0044 ; [SP-56]
+; XREF: 1 ref (1 branch) from anim_cursor_done
+toggle_cursor_1 lda  $0BBF           ; A=[$0BBF] X=X-$01 Y=$0044 ; [SP-56]
             eor  #$1E            ; A=A^$1E X=X-$01 Y=$0044 ; [SP-56]
             sta  $0BBF           ; A=A^$1E X=X-$01 Y=$0044 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $004B01 ; [SP-56]
             lda  $0C3F           ; A=[$0C3F] X=X-$01 Y=$0044 ; [SP-56]
@@ -1619,8 +1668,8 @@ write_text_screen_L2 lda  $0BBF           ; A=[$0BBF] X=X-$01 Y=$0044 ; [SP-56]
             DB      $AD,$BE,$0E,$49,$1E,$8D,$BE,$0E,$60
 ; ---
 
-; XREF: 1 ref (1 branch) from write_text_screen_L1
-write_text_screen_L3 lda  $0DBF           ; A=[$0DBF] X=X-$01 Y=$0044 ; [SP-52]
+; XREF: 1 ref (1 branch) from anim_cursor_done
+toggle_cursor_2 lda  $0DBF           ; A=[$0DBF] X=X-$01 Y=$0044 ; [SP-52]
             eor  #$1E            ; A=A^$1E X=X-$01 Y=$0044 ; [SP-52]
             sta  $0DBF           ; A=A^$1E X=X-$01 Y=$0044 ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $004B33 ; [SP-52]
             lda  $0E3F           ; A=[$0E3F] X=X-$01 Y=$0044 ; [SP-52]
@@ -1641,10 +1690,10 @@ write_text_screen_L3 lda  $0DBF           ; A=[$0DBF] X=X-$01 Y=$0044 ; [SP-52]
             DB      $B3,$4B,$4C,$48,$4B,$A9,$05,$8D,$B4,$4B,$60
 ; --- End data region (107 bytes) ---
 
-; XREF: 3 refs from write_text_screen_L3, write_text_screen_L3, write_text_screen_L3
-write_text_screen_L4 bpl  write_text_screen_L7 ; A=A^$1E X=X-$01 Y=$0044 ; [SP-53]
-; XREF: 1 ref from write_text_screen_L3
-write_text_screen_L6 ora  $18             ; A=A^$1E X=X-$01 Y=$0044 ; [SP-53]
+; XREF: 3 refs from toggle_cursor_2, toggle_cursor_2, toggle_cursor_2
+advance_scanline bpl  advance_scan_jmp ; A=A^$1E X=X-$01 Y=$0044 ; [SP-53]
+; XREF: 1 ref from toggle_cursor_2
+advance_scan_clc ora  $18             ; A=A^$1E X=X-$01 Y=$0044 ; [SP-53]
             lda  $FE             ; A=[$00FE] X=X-$01 Y=$0044 ; [SP-53]
             adc  #$80            ; A=A+$80 X=X-$01 Y=$0044 ; [SP-53]
             sta  $FE             ; A=A+$80 X=X-$01 Y=$0044 ; [SP-53]
@@ -1653,22 +1702,22 @@ write_text_screen_L6 ora  $18             ; A=A^$1E X=X-$01 Y=$0044 ; [SP-53]
             sta  $FF             ; A=A X=X-$01 Y=$0044 ; [SP-53]
             rts                  ; A=A X=X-$01 Y=$0044 ; [SP-51]
             DB      $86
-; XREF: 1 ref (1 branch) from write_text_screen_L4
-write_text_screen_L7 sbc  $FA84,Y         ; -> $FAC8 ; A=A X=X-$01 Y=$0044 ; [SP-51]
-            jmp  utility         ; A=A X=X-$01 Y=$0044 ; [SP-51]
+; XREF: 1 ref (1 branch) from advance_scanline
+advance_scan_jmp sbc  $FA84,Y         ; -> $FAC8 ; A=A X=X-$01 Y=$0044 ; [SP-51]
+            jmp  print_inline_str         ; A=A X=X-$01 Y=$0044 ; [SP-51]
 ; === End of while loop (counter: Y) ===
 
 
 ; ---------------------------------------------------------------------------
-; shift_bits_2  [2 calls, 1 jump]
-;   Called by: shift_bits_2_L1, shift_bits_2_L3
+; setup_char_ptr  [2 calls, 1 jump]
+;   Called by: print_char_name, print_name_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004BCA: register -> A:X [I]
 ; Proto: uint32_t func_004BCA(uint16_t param_X, uint16_t param_Y);
 ; Liveness: params(X,Y) returns(A,X,Y) [1 dead stores]
-; XREF: 3 refs (2 calls) (1 jump) from $0046F6, shift_bits_2_L1, shift_bits_2_L3
-shift_bits_2 lda  #$00            ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
+; XREF: 3 refs (2 calls) (1 jump) from $0046F6, print_char_name, print_name_loop
+setup_char_ptr lda  #$00            ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
             sta  $FE             ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
             lda  $D5             ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
             lsr  a               ; A=[$00D5] X=X-$01 Y=$0044 ; [SP-51]
@@ -1679,16 +1728,16 @@ shift_bits_2 lda  #$00            ; A=$0000 X=X-$01 Y=$0044 ; [SP-51]
             sta  $FF             ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
             rts                  ; A=$0040 X=X-$01 Y=$0044 ; [SP-49]
 ; XREF: 1 ref (1 jump) from $0046F9
-shift_bits_2_L1 jsr  shift_bits_2    ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
+print_char_name jsr  setup_char_ptr    ; A=$0040 X=X-$01 Y=$0044 ; [SP-51]
             ldy  #$00            ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
             lda  ($FE),Y         ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
-            beq  shift_bits_2_L4 ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
+            beq  print_name_done ; A=$0040 X=X-$01 Y=$0000 ; [SP-51]
 
 ; === while loop starts here [nest:8] ===
-; XREF: 1 ref (1 branch) from shift_bits_2_L2
-shift_bits_2_L2 iny                  ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
+; XREF: 1 ref (1 branch) from find_name_end
+find_name_end iny                  ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
             lda  ($FE),Y         ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
-            bne  shift_bits_2_L2 ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
+            bne  find_name_end ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
 ; === End of while loop ===
 
             tya                  ; A=$0001 X=X-$01 Y=$0001 ; [SP-51]
@@ -1699,7 +1748,7 @@ shift_bits_2_L2 iny                  ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
             sbc  $F0             ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
             sta  $F9             ; A=$001F X=X-$01 Y=$0001 ; [SP-51]
             lda  $D5             ; A=[$00D5] X=X-$01 Y=$0001 ; [SP-51]
-            asl  a               ; A=[$00D5] X=X-$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for multiply ; [SP-51]
+            asl  a               ; A=[$00D5] X=X-$01 Y=$0001 ; [OPT] STRENGTH_RED: Multiple ASL A: consider using lookup table for calc_roster_ptr ; [SP-51]
             asl  a               ; A=[$00D5] X=X-$01 Y=$0001 ; [SP-51]
             adc  #$01            ; A=A+$01 X=X-$01 Y=$0001 ; [SP-51]
             sta  $FA             ; A=A+$01 X=X-$01 Y=$0001 ; [SP-51]
@@ -1707,20 +1756,20 @@ shift_bits_2_L2 iny                  ; A=$0040 X=X-$01 Y=$0001 ; [SP-51]
             sta  $D7             ; A=$0000 X=X-$01 Y=$0001 ; [SP-51]
 
 ; === while loop starts here [nest:6] ===
-; XREF: 1 ref (1 jump) from shift_bits_2_L3
-shift_bits_2_L3 jsr  shift_bits_2    ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
+; XREF: 1 ref (1 jump) from print_name_loop
+print_name_loop jsr  setup_char_ptr    ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
             ldy  $D7             ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
             lda  ($FE),Y         ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
-            beq  shift_bits_2_L4 ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
+            beq  print_name_done ; A=$0000 X=X-$01 Y=$0001 ; [SP-53]
             and  #$7F            ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
-            jsr  utility_2       ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
+            jsr  plot_char_glyph       ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
             inc  $F9             ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
             inc  $D7             ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
-            jmp  shift_bits_2_L3 ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
+            jmp  print_name_loop ; A=A&$7F X=X-$01 Y=$0001 ; [SP-55]
 ; === End of while loop ===
 
-; XREF: 2 refs (2 branches) from shift_bits_2_L3, shift_bits_2_L1
-shift_bits_2_L4 rts                  ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
+; XREF: 2 refs (2 branches) from print_name_loop, print_char_name
+print_name_done rts                  ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
 
 ; --- Data region (38 bytes) ---
             DB      $A5,$00,$85,$02,$A5,$01,$85,$03,$4C,$21,$4C,$A5,$03,$85,$FF,$A9
@@ -1730,40 +1779,40 @@ shift_bits_2_L4 rts                  ; A=A&$7F X=X-$01 Y=$0001 ; [SP-53]
 
 
 ; ---------------------------------------------------------------------------
-; plot_hgr_2  [1 call]
-;   Called by: dispatch
-;   Calls: plot_hgr_3, utility
+; draw_text_window  [1 call]
+;   Called by: update_viewport
+;   Calls: modulo, print_inline_str
 ; ---------------------------------------------------------------------------
-; XREF: 1 ref (1 call) from dispatch
-plot_hgr_2  dec  loc_004CD3      ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
-            bpl  plot_hgr_2_L3   ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
+; XREF: 1 ref (1 call) from update_viewport
+draw_text_window  dec  text_wind_counter      ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
+            bpl  text_wind_show   ; A=A&$7F X=X-$01 Y=$0001 ; [SP-51]
             lda  #$08            ; A=$0008 X=X-$01 Y=$0001 ; [SP-51]
-            sta  loc_004CD3      ; A=$0008 X=X-$01 Y=$0001 ; [SP-51] ; WARNING: Self-modifying code -> loc_004CD3
+            sta  text_wind_counter      ; A=$0008 X=X-$01 Y=$0001 ; [SP-51] ; WARNING: Self-modifying code -> text_wind_counter
 
 ; === while loop starts here [nest:5] ===
-; XREF: 1 ref (1 branch) from plot_hgr_2_L1
-plot_hgr_2_L1 lda  #$09            ; A=$0009 X=X-$01 Y=$0001 ; [SP-51]
-            jsr  plot_hgr_3      ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
+; XREF: 1 ref (1 branch) from text_wind_rng
+text_wind_rng lda  #$09            ; A=$0009 X=X-$01 Y=$0001 ; [SP-51]
+            jsr  modulo      ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
             cmp  #$05            ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
-            bcc  plot_hgr_2_L2   ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
+            bcc  text_wind_set   ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
             sec                  ; A=$0009 X=X-$01 Y=$0001 ; [SP-53]
             sbc  #$04            ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
             cmp  $11             ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
-            beq  plot_hgr_2_L1   ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
+            beq  text_wind_rng   ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from plot_hgr_2_L1
-plot_hgr_2_L2 sta  $11             ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
-; XREF: 1 ref (1 branch) from plot_hgr_2
-plot_hgr_2_L3 lda  $F9             ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-53]
+; XREF: 1 ref (1 branch) from text_wind_rng
+text_wind_set sta  $11             ; A=A-$04 X=X-$01 Y=$0001 ; [SP-53]
+; XREF: 1 ref (1 branch) from draw_text_window
+text_wind_show lda  $F9             ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-53]
             pha                  ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-54]
             lda  #$06            ; A=$0006 X=X-$01 Y=$0001 ; [SP-54]
             sta  $F9             ; A=$0006 X=X-$01 Y=$0001 ; [SP-54]
             lda  #$17            ; A=$0017 X=X-$01 Y=$0001 ; [SP-54]
             sta  $FA             ; A=$0017 X=X-$01 Y=$0001 ; [SP-54]
             lda  $11             ; A=[$0011] X=X-$01 Y=$0001 ; [SP-54]
-            bne  loc_004C7A      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-54]
-            jsr  utility         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
+            bne  text_mode_1      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-54]
+            jsr  print_inline_str         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
             ora  $C1C3,X         ; S1_xC3 - Slot 1 ROM offset $C3 {Slot}
             cpy  $A0CD           ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
             DB      $D7
@@ -1771,16 +1820,16 @@ plot_hgr_2_L3 lda  $F9             ; A=[$00F9] X=X-$01 Y=$0001 ; [SP-53]
 
 ; ---
             DB      $C4
-data_004C74
+text_mode_data
             DB      $D3
             DB      $1F
             DB      $00,$4C,$CF,$4C
 ; ---
 
-; XREF: 1 ref (1 branch) from plot_hgr_2_L3
-loc_004C7A  cmp  #$01            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
-            bne  loc_004C91      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
-            jsr  utility         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-58]
+; XREF: 1 ref (1 branch) from text_wind_show
+text_mode_1  cmp  #$01            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
+            bne  text_mode_2      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
+            jsr  print_inline_str         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-58]
             ora  $CFCE,X         ; SLOTEXP_x7CE - Slot expansion ROM offset $7CE {Slot}
 
 ; ---
@@ -1789,10 +1838,10 @@ loc_004C7A  cmp  #$01            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-56]
             DB      $C8,$A0,$D7,$C9,$CE,$C4,$1F,$00,$4C,$CF,$4C
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_004C7A
-loc_004C91  cmp  #$02            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-61]
-            bne  loc_004CA8      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-61]
-            jsr  utility         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-63]
+; XREF: 1 ref (1 branch) from text_mode_1
+text_mode_2  cmp  #$02            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-61]
+            bne  text_mode_3      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-61]
+            jsr  print_inline_str         ; A=[$0011] X=X-$01 Y=$0001 ; [SP-63]
             ora  $C1C5,X         ; S1_xC5 - Slot 1 ROM offset $C5 {Slot}
 
 ; ---
@@ -1801,10 +1850,10 @@ loc_004C91  cmp  #$02            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-61]
             DB      $A0,$A0,$D7,$C9,$CE,$C4,$1F,$00,$4C,$CF,$4C
 ; ---
 
-; XREF: 1 ref (1 branch) from loc_004C91
-loc_004CA8  cmp  #$03            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-66]
-            bne  loc_004CBF      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-66]
-            jsr  utility         ; Call $004732(1 stack)
+; XREF: 1 ref (1 branch) from text_mode_2
+text_mode_3  cmp  #$03            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-66]
+            bne  text_mode_4      ; A=[$0011] X=X-$01 Y=$0001 ; [SP-66]
+            jsr  print_inline_str         ; Call $004732(1 stack)
             ora  $CFD3,X         ; SLOTEXP_x7D3 - Slot expansion ROM offset $7D3 {Slot}
             cmp  $D4,X           ; A=[$0011] X=X-$01 Y=$0001 ; [SP-68]
             iny                  ; A=[$0011] X=X-$01 Y=$0002 ; [SP-68]
@@ -1813,8 +1862,8 @@ loc_004CA8  cmp  #$03            ; A=[$0011] X=X-$01 Y=$0001 ; [SP-66]
             cpy  $1F             ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-68]
             brk  #$4C            ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-71]
             DB      $CF,$4C
-; XREF: 1 ref (1 branch) from loc_004CA8
-loc_004CBF  jsr  utility         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-71]
+; XREF: 1 ref (1 branch) from text_mode_3
+text_mode_4  jsr  print_inline_str         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-71]
             ora  $C5D7,X         ; S5_xD7 - Slot 5 ROM offset $D7 {Slot}
 
 ; ---
@@ -1823,313 +1872,313 @@ loc_004CBF  jsr  utility         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-71]
             DB      $A0,$A0,$D7,$C9,$CE,$C4,$1F,$00,$68,$85,$F9,$60
 ; ---
 
-; XREF: 1 ref from plot_hgr_2
+; XREF: 1 ref from draw_text_window
 ; *** MODIFIED AT RUNTIME by $4C43 ***
-loc_004CD3  ora  ($C5,X)         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-72]
+text_wind_counter  ora  ($C5,X)         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-72]
             ora  ($D0),Y         ; A=[$0011] X=X-$01 Y=$00D7 ; [SP-72]
             ora  #$A5            ; A=A|$A5 X=X-$01 Y=$00D7 ; [SP-72]
             asl  $16C9           ; A=A|$A5 X=X-$01 Y=$00D7 ; [SP-72]
-            bne  loc_004CE5      ; A=A|$A5 X=X-$01 Y=$00D7 ; [SP-72]
+            bne  text_wind_zero      ; A=A|$A5 X=X-$01 Y=$00D7 ; [SP-72]
             lda  #$FF            ; A=$00FF X=X-$01 Y=$00D7 ; [SP-72]
             rts                  ; A=$00FF X=X-$01 Y=$00D7 ; [SP-70]
             DB      $A5,$11,$F0,$F3
-; XREF: 1 ref (1 branch) from loc_004CD3
-loc_004CE5  lda  #$00            ; A=$0000 X=X-$01 Y=$00D7 ; [SP-70]
+; XREF: 1 ref (1 branch) from text_wind_counter
+text_wind_zero  lda  #$00            ; A=$0000 X=X-$01 Y=$00D7 ; [SP-70]
             rts                  ; A=$0000 X=X-$01 Y=$00D7 ; [SP-68]
 
 ; ---------------------------------------------------------------------------
-; sub_004CE8  [1 jump]
+; play_sfx  [1 jump]
 ; ---------------------------------------------------------------------------
 ; XREF: 1 ref (1 jump) from $004705
-sub_004CE8  sta  $F0             ; A=$0000 X=X-$01 Y=$00D7 ; [SP-68]
+play_sfx  sta  $F0             ; A=$0000 X=X-$01 Y=$00D7 ; [SP-68]
             lda  $10             ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-68]
-            beq  loc_004CEF      ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-68]
+            beq  sfx_dispatch      ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-68]
             rts                  ; A=[$0010] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from sub_004CE8
-loc_004CEF  lda  $F0             ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from play_sfx
+sfx_dispatch  lda  $F0             ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
             cmp  #$FF            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004CF8      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004D38      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004CEF
-loc_004CF8  cmp  #$FE            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004CFF      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004D46      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004CF8
-loc_004CFF  cmp  #$FD            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D06      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004D54      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004CFF
-loc_004D06  cmp  #$FC            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D0D      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004DBA      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D06
-loc_004D0D  cmp  #$FB            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D14      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004DD7      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D0D
-loc_004D14  cmp  #$FA            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D1B      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004DE8      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D14
-loc_004D1B  cmp  #$F9            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D22      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004DF8      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D1B
-loc_004D22  cmp  #$F8            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D29      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004DFF      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D22
-loc_004D29  cmp  #$F7            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D30      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004E1C      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D29
-loc_004D30  cmp  #$F6            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            bne  loc_004D37      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-            jmp  loc_004E27      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
-; XREF: 1 ref (1 branch) from loc_004D30
-loc_004D37  rts                  ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-64]
-; XREF: 1 ref (1 jump) from loc_004CEF
-loc_004D38  ldy  #$10            ; A=[$00F0] X=X-$01 Y=$0010 ; [SP-64]
+            bne  sfx_check_FE      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_beep_hi      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_dispatch
+sfx_check_FE  cmp  #$FE            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_FD      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_beep_lo      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_FE
+sfx_check_FD  cmp  #$FD            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_FC      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_sweep      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_FD
+sfx_check_FC  cmp  #$FC            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_FB      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_noise      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_FC
+sfx_check_FB  cmp  #$FB            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_FA      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_buzz      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_FB
+sfx_check_FA  cmp  #$FA            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_F9      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_chirp      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_FA
+sfx_check_F9  cmp  #$F9            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_F8      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_sweep_alt      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_F9
+sfx_check_F8  cmp  #$F8            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_F7      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_descend      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_F8
+sfx_check_F7  cmp  #$F7            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_check_F6      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_ascend      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_F7
+sfx_check_F6  cmp  #$F6            ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            bne  sfx_return      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+            jmp  sfx_short_desc      ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-66]
+; XREF: 1 ref (1 branch) from sfx_check_F6
+sfx_return  rts                  ; A=[$00F0] X=X-$01 Y=$00D7 ; [SP-64]
+; XREF: 1 ref (1 jump) from sfx_dispatch
+sfx_beep_hi  ldy  #$10            ; A=[$00F0] X=X-$01 Y=$0010 ; [SP-64]
 
 ; === loop starts here (counter: Y, range: 16..0, iters: 16) ===
-; XREF: 1 ref (1 branch) from loc_004D3A
-loc_004D3A  lda  #$30            ; A=$0030 X=X-$01 Y=$0010 ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_beep_hi_loop
+sfx_beep_hi_loop  lda  #$30            ; A=$0030 X=X-$01 Y=$0010 ; [SP-64]
             jsr  $FCA8           ; WAIT - Apple II delay routine
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dey                  ; A=$0030 X=X-$01 Y=$000F ; [SP-66]
-            bne  loc_004D3A      ; A=$0030 X=X-$01 Y=$000F ; [SP-66]
+            bne  sfx_beep_hi_loop      ; A=$0030 X=X-$01 Y=$000F ; [SP-66]
 ; === End of loop (counter: Y) ===
 
             rts                  ; A=$0030 X=X-$01 Y=$000F ; [SP-64]
-; XREF: 1 ref (1 jump) from loc_004CF8
-loc_004D46  ldy  #$30            ; A=$0030 X=X-$01 Y=$0030 ; [SP-64]
+; XREF: 1 ref (1 jump) from sfx_check_FE
+sfx_beep_lo  ldy  #$30            ; A=$0030 X=X-$01 Y=$0030 ; [SP-64]
 
 ; === loop starts here (counter: Y, range: 48..0, iters: 48) ===
-; XREF: 1 ref (1 branch) from loc_004D48
-loc_004D48  lda  #$18            ; A=$0018 X=X-$01 Y=$0030 ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_beep_lo_loop
+sfx_beep_lo_loop  lda  #$18            ; A=$0018 X=X-$01 Y=$0030 ; [SP-64]
             jsr  $FCA8           ; WAIT - Apple II delay routine
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dey                  ; A=$0018 X=X-$01 Y=$002F ; [SP-66]
-            bne  loc_004D48      ; A=$0018 X=X-$01 Y=$002F ; [SP-66]
+            bne  sfx_beep_lo_loop      ; A=$0018 X=X-$01 Y=$002F ; [SP-66]
 ; === End of loop (counter: Y) ===
 
             rts                  ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
 
 ; === while loop starts here (counter: X 'i') ===
-; XREF: 2 refs (2 jumps) from loc_004DF8, loc_004CFF
-loc_004D54  stx  data_004DB6     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
-            sty  data_004DB7     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
-            lda  data_004DB6     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
-            sta  data_004DB8     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 2 refs (2 jumps) from sfx_sweep_alt, sfx_check_FD
+sfx_sweep  stx  sfx_save_x     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
+            sty  sfx_duration     ; A=$0018 X=X-$01 Y=$002F ; [SP-64]
+            lda  sfx_save_x     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
+            sta  sfx_period_1     ; A=[$4DB6] X=X-$01 Y=$002F ; [SP-64]
             lda  #$01            ; A=$0001 X=X-$01 Y=$002F ; [SP-64]
-            sta  data_004DB9     ; A=$0001 X=X-$01 Y=$002F ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $004D62 ; [SP-64]
+            sta  sfx_period_2     ; A=$0001 X=X-$01 Y=$002F ; [OPT] PEEPHOLE: Load after store: 2 byte pattern at $004D62 ; [SP-64]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_004D76
-loc_004D65  lda  data_004DB7     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_wait2
+sfx_sweep_outer  lda  sfx_duration     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             sta  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from loc_004D76
-loc_004D6A  ldx  data_004DB8     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_wait2
+sfx_sweep_half1  ldx  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_004D6D
-loc_004D6D  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D6D      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_wait1
+sfx_sweep_wait1  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_wait1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            ldx  data_004DB9     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            ldx  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_004D76
-loc_004D76  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D76      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_wait2
+sfx_sweep_wait2  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_wait2      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D6A      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            dec  data_004DB8     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            inc  data_004DB9     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            lda  data_004DB9     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_half1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            dec  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            inc  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            lda  sfx_period_2     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
             cmp  #$1B            ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D65      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_outer      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_004D9E
-loc_004D8D  lda  data_004DB7     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
+sfx_sweep_dn_outer  lda  sfx_duration     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             sta  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === while loop starts here [nest:2] ===
-; XREF: 1 ref (1 branch) from loc_004D9E
-loc_004D92  ldx  data_004DB8     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
+sfx_sweep_dn_half1  ldx  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_004D95
-loc_004D95  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D95      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait1
+sfx_sweep_dn_wait1  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_dn_wait1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
-            ldx  data_004DB9     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            ldx  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
 
 ; === loop starts here (counter: X) [nest:3] ===
-; XREF: 1 ref (1 branch) from loc_004D9E
-loc_004D9E  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D9E      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_sweep_dn_wait2
+sfx_sweep_dn_wait2  dex                  ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_dn_wait2      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $F3             ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D92      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            dec  data_004DB9     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            inc  data_004DB8     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
-            lda  data_004DB9     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_dn_half1      ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            dec  sfx_period_2     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            inc  sfx_period_1     ; A=[$4DB7] X=X-$01 Y=$002F ; [SP-64]
+            lda  sfx_period_2     ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
             cmp  #$00            ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004D8D      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_sweep_dn_outer      ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-64]
             rts                  ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-62]
-data_004DB6
+sfx_save_x
             DB      $C0
-data_004DB7
+sfx_duration
             DB      $10
-data_004DB8
+sfx_period_1
             DB      $FB
-data_004DB9
+sfx_period_2
             DB      $2C
-; XREF: 1 ref (1 jump) from loc_004D06
-loc_004DBA  stx  $F3             ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-62]
+; XREF: 1 ref (1 jump) from sfx_check_FC
+sfx_noise  stx  $F3             ; A=[$4DB9] X=X-$01 Y=$002F ; [SP-62]
             lda  #$80            ; A=$0080 X=X-$01 Y=$002F ; [SP-62]
             sta  $D4             ; A=$0080 X=X-$01 Y=$002F ; [SP-62]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_004DC8
-loc_004DC0  jsr  utility_3       ; A=$0080 X=X-$01 Y=$002F ; [SP-64]
+; XREF: 1 ref (1 branch) from sfx_noise_delay
+sfx_noise_loop  jsr  get_random       ; A=$0080 X=X-$01 Y=$002F ; [SP-64]
             and  #$0F            ; A=A&$0F X=X-$01 Y=$002F ; [SP-64]
             adc  $F3             ; A=A&$0F X=X-$01 Y=$002F ; [SP-64]
             tax                  ; A=A&$0F X=A Y=$002F ; [SP-64]
 
 ; === loop starts here (counter: X) [nest:2] ===
-; XREF: 1 ref (1 branch) from loc_004DC8
-loc_004DC8  pha                  ; A=A&$0F X=A Y=$002F ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $004DC8 ; [SP-65]
+; XREF: 1 ref (1 branch) from sfx_noise_delay
+sfx_noise_delay  pha                  ; A=A&$0F X=A Y=$002F ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $004DC8 ; [SP-65]
             pla                  ; A=[stk] X=A Y=$002F ; [SP-64]
             pha                  ; A=[stk] X=A Y=$002F ; [OPT] PEEPHOLE: Redundant PHA/PLA: 2 byte pattern at $004DCA ; [SP-65]
             pla                  ; A=[stk] X=A Y=$002F ; [SP-64]
             dex                  ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004DC8      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_noise_delay      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $D4             ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
-            bne  loc_004DC0      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
+            bne  sfx_noise_loop      ; A=[stk] X=X-$01 Y=$002F ; [SP-64]
             rts                  ; A=[stk] X=X-$01 Y=$002F ; [SP-62]
-; XREF: 1 ref (1 jump) from loc_004D0D
-loc_004DD7  ldx  #$00            ; A=[stk] X=$0000 Y=$002F ; [SP-62]
+; XREF: 1 ref (1 jump) from sfx_check_FB
+sfx_buzz  ldx  #$00            ; A=[stk] X=$0000 Y=$002F ; [SP-62]
             sta  $95             ; A=[stk] X=$0000 Y=$002F ; [SP-62]
 
 ; === while loop starts here [nest:1] ===
-; XREF: 2 refs (2 branches) from loc_004DDB, loc_004DDB
-loc_004DDB  inx                  ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            bne  loc_004DDB      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
+; XREF: 2 refs (2 branches) from sfx_buzz_loop, sfx_buzz_loop
+sfx_buzz_loop  inx                  ; A=[stk] X=$0001 Y=$002F ; [SP-62]
+            bne  sfx_buzz_loop      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $95             ; A=[stk] X=$0001 Y=$002F ; [SP-62]
             ldx  $95             ; A=[stk] X=$0001 Y=$002F ; [SP-62]
-            bne  loc_004DDB      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
+            bne  sfx_buzz_loop      ; A=[stk] X=$0001 Y=$002F ; [SP-62]
             rts                  ; A=[stk] X=$0001 Y=$002F ; [SP-60]
-; XREF: 1 ref (1 jump) from loc_004D14
-loc_004DE8  ldx  #$A0            ; A=[stk] X=$00A0 Y=$002F ; [SP-60]
+; XREF: 1 ref (1 jump) from sfx_check_FA
+sfx_chirp  ldx  #$A0            ; A=[stk] X=$00A0 Y=$002F ; [SP-60]
             txa                  ; A=$00A0 X=$00A0 Y=$002F ; [SP-60]
             tay                  ; A=$00A0 X=$00A0 Y=$00A0 ; [SP-60]
 
 ; === loop starts here (counter: X) [nest:1] ===
-; XREF: 2 refs (2 branches) from loc_004DEC, loc_004DEC
-loc_004DEC  dex                  ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
-            bne  loc_004DEC      ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
+; XREF: 2 refs (2 branches) from sfx_chirp_loop, sfx_chirp_loop
+sfx_chirp_loop  dex                  ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
+            bne  sfx_chirp_loop      ; A=$00A0 X=$009F Y=$00A0 ; [SP-60]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dey                  ; A=$00A0 X=$009F Y=$009F ; [SP-60]
             tya                  ; A=$009F X=$009F Y=$009F ; [SP-60]
             tax                  ; A=$009F X=$009F Y=$009F ; [SP-60]
-            bne  loc_004DEC      ; A=$009F X=$009F Y=$009F ; [SP-60]
+            bne  sfx_chirp_loop      ; A=$009F X=$009F Y=$009F ; [SP-60]
             rts                  ; A=$009F X=$009F Y=$009F ; [SP-58]
-; XREF: 1 ref (1 jump) from loc_004D1B
-loc_004DF8  ldx  #$E0            ; A=$009F X=$00E0 Y=$009F ; [SP-58]
+; XREF: 1 ref (1 jump) from sfx_check_F9
+sfx_sweep_alt  ldx  #$E0            ; A=$009F X=$00E0 Y=$009F ; [SP-58]
             ldy  #$06            ; A=$009F X=$00E0 Y=$0006 ; [SP-58]
-            jmp  loc_004D54      ; A=$009F X=$00E0 Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from loc_004D22
-loc_004DFF  lda  #$40            ; A=$0040 X=$00E0 Y=$0006 ; [SP-58]
+            jmp  sfx_sweep      ; A=$009F X=$00E0 Y=$0006 ; [SP-58]
+; XREF: 1 ref (1 jump) from sfx_check_F8
+sfx_descend  lda  #$40            ; A=$0040 X=$00E0 Y=$0006 ; [SP-58]
             sta  $95             ; A=$0040 X=$00E0 Y=$0006 ; [SP-58]
             lda  #$E0            ; A=$00E0 X=$00E0 Y=$0006 ; [SP-58]
             sta  $96             ; A=$00E0 X=$00E0 Y=$0006 ; [SP-58]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 branch) from loc_004E0D
-loc_004E07  jsr  utility_3       ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
+; XREF: 1 ref (1 branch) from sfx_descend_wait
+sfx_descend_loop  jsr  get_random       ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
             ora  $96             ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
             tax                  ; A=$00E0 X=$00E0 Y=$0006 ; [SP-60]
 
 ; === loop starts here (counter: X) [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_004E0D
-loc_004E0D  dex                  ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
-            bne  loc_004E0D      ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
+; XREF: 1 ref (1 branch) from sfx_descend_wait
+sfx_descend_wait  dex                  ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
+            bne  sfx_descend_wait      ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $96             ; A=$00E0 X=$00DF Y=$0006 ; [SP-60]
             lda  $96             ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
             cmp  $95             ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
-            bcs  loc_004E07      ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
+            bcs  sfx_descend_loop      ; A=[$0096] X=$00DF Y=$0006 ; [SP-60]
             rts                  ; A=[$0096] X=$00DF Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from loc_004D29
-loc_004E1C  lda  #$FF            ; A=$00FF X=$00DF Y=$0006 ; [SP-58]
+; XREF: 1 ref (1 jump) from sfx_check_F7
+sfx_ascend  lda  #$FF            ; A=$00FF X=$00DF Y=$0006 ; [SP-58]
             sta  $95             ; A=$00FF X=$00DF Y=$0006 ; [SP-58]
             lda  #$00            ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
             sta  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-            jmp  loc_004E2F      ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
-; XREF: 1 ref (1 jump) from loc_004D30
-loc_004E27  lda  #$08            ; A=$0008 X=$00DF Y=$0006 ; [SP-58]
+            jmp  sfx_rise_fall_loop      ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
+; XREF: 1 ref (1 jump) from sfx_check_F6
+sfx_short_desc  lda  #$08            ; A=$0008 X=$00DF Y=$0006 ; [SP-58]
             sta  $95             ; A=$0008 X=$00DF Y=$0006 ; [SP-58]
             lda  #$00            ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
             sta  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-58]
 
 ; === while loop starts here ===
-; XREF: 2 refs (1 jump) (1 branch) from loc_004E35, loc_004E1C
-loc_004E2F  jsr  utility_3       ; A=$0000 X=$00DF Y=$0006 ; [SP-60]
+; XREF: 2 refs (1 jump) (1 branch) from sfx_rise_fall_wait, sfx_ascend
+sfx_rise_fall_loop  jsr  get_random       ; A=$0000 X=$00DF Y=$0006 ; [SP-60]
             ora  $96             ; A=$0000 X=$00DF Y=$0006 ; [SP-60]
             tax                  ; A=$0000 X=$0000 Y=$0006 ; [SP-60]
 
 ; === loop starts here (counter: X) [nest:1] ===
-; XREF: 1 ref (1 branch) from loc_004E35
-loc_004E35  dex                  ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            bne  loc_004E35      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
+; XREF: 1 ref (1 branch) from sfx_rise_fall_wait
+sfx_rise_fall_wait  dex                  ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
+            bne  sfx_rise_fall_wait      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
             bit  $C030           ; SPKR - Speaker toggle {Speaker} <speaker_toggle>
             dec  $95             ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
-            bne  loc_004E2F      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
+            bne  sfx_rise_fall_loop      ; A=$0000 X=$FFFF Y=$0006 ; [SP-60]
             rts                  ; A=$0000 X=$FFFF Y=$0006 ; [SP-58]
 
 ; ---------------------------------------------------------------------------
-; utility_3  [4 calls, 1 jump]
-;   Called by: loc_004DC0, loc_004E07, plot_hgr_3, loc_004E2F
+; get_random  [4 calls, 1 jump]
+;   Called by: sfx_noise_loop, sfx_descend_loop, modulo, sfx_rise_fall_loop
 ; ---------------------------------------------------------------------------
 
 ; FUNC $004E40: register -> A:X []
 ; Proto: uint32_t func_004E40(uint16_t param_Y);
 ; Liveness: params(Y) returns(A,X,Y) [4 dead stores]
-; XREF: 5 refs (4 calls) (1 jump) from loc_004DC0, loc_004E07, plot_hgr_3, loc_004E2F, $0046E7
-utility_3   txa                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-58]
+; XREF: 5 refs (4 calls) (1 jump) from sfx_noise_loop, sfx_descend_loop, modulo, sfx_rise_fall_loop, $0046E7
+get_random   txa                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-58]
             pha                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-59]
             clc                  ; A=$FFFF X=$FFFF Y=$0006 ; [SP-59]
             ldx  #$0E            ; A=$FFFF X=$000E Y=$0006 ; [SP-59]
             lda  $4E70           ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 branch) from utility_3_L1
-utility_3_L1 adc  $4E61,X         ; -> $4E6F ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
+; XREF: 1 ref (1 branch) from rng_add_loop
+rng_add_loop adc  $4E61,X         ; -> $4E6F ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
             sta  $4E61,X         ; -> $4E6F ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
             dex                  ; A=[$4E70] X=$000D Y=$0006 ; [SP-59]
-            bpl  utility_3_L1    ; A=[$4E70] X=$000D Y=$0006 ; [SP-59]
+            bpl  rng_add_loop    ; A=[$4E70] X=$000D Y=$0006 ; [SP-59]
 ; === End of while loop ===
 
             ldx  #$0F            ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
 
 ; === while loop starts here ===
-; XREF: 1 ref (1 branch) from utility_3_L2
-utility_3_L2 inc  $4E61,X         ; -> $4E70 ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
-            bne  utility_3_L3    ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
+; XREF: 1 ref (1 branch) from rng_inc_loop
+rng_inc_loop inc  $4E61,X         ; -> $4E70 ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
+            bne  rng_done    ; A=[$4E70] X=$000F Y=$0006 ; [SP-59]
             dex                  ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
-            bpl  utility_3_L2    ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
+            bpl  rng_inc_loop    ; A=[$4E70] X=$000E Y=$0006 ; [SP-59]
 ; === End of while loop ===
 
-; XREF: 1 ref (1 branch) from utility_3_L2
-utility_3_L3 pla                  ; A=[stk] X=$000E Y=$0006 ; [SP-58]
+; XREF: 1 ref (1 branch) from rng_inc_loop
+rng_done pla                  ; A=[stk] X=$000E Y=$0006 ; [SP-58]
             tax                  ; A=[stk] X=[stk] Y=$0006 ; [SP-58]
             lda  $4E61           ; A=[$4E61] X=[stk] Y=$0006 ; [SP-58]
             rts                  ; A=[$4E61] X=[stk] Y=$0006 ; [SP-56]
