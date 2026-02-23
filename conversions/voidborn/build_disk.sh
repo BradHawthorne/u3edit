@@ -210,11 +210,6 @@ def alloc_block():
     next_free += 1
     return blk
 
-# Pre-allocate GAME subdirectory blocks (need enough for 96+ entries)
-# Each block holds 12 file entries (13 - 1 header/continuation)
-game_dir_block_count = max(1, math.ceil((len(game_files) + 1) / 12))
-game_dir_blocks = [alloc_block() for _ in range(game_dir_block_count)]
-
 def write_block(blk_num, data):
     offset = blk_num * BLOCK_SIZE
     disk[offset:offset + len(data)] = data
@@ -303,15 +298,28 @@ def make_entry(storage_type, name, file_type, key_block, blocks_used, eof, aux_t
     entry[0x20] = (aux_type >> 8) & 0xFF
     return entry
 
+# --- Enforce engine memory layout constraints ---
+# TLK files load at \$9800 into a 256-byte buffer; larger files corrupt memory
+# ULT3 loads at \$5000; data files start at \$9400 so max size is 17408 bytes
+for i, (pname, ftype, aux, data) in enumerate(game_files):
+    if pname.startswith('TLK') and len(data) > 256:
+        game_files[i] = (pname, ftype, aux, data[:256])
+    if pname == 'ULT3' and len(data) > 17408:
+        game_files[i] = (pname, ftype, aux, data[:17408])
+
 # --- Write all file data ---
 file_records = []  # (prodos_name, file_type, aux_type, key_block, storage_type, blocks_used, eof, is_root)
 
-# Write root files first — PRODOS must be earliest on disk (boot code loads it)
+# Write root files first — PRODOS must start at block 7 (boot code expects it)
 prodos_order = {'PRODOS': 0, 'LOADER.SYSTEM': 1}
 root_files.sort(key=lambda r: (prodos_order.get(r[0], 99), r[0]))
 for prodos_name, file_type, aux_type, data in root_files:
     key_block, storage_type, blocks_used = write_file(data)
     file_records.append((prodos_name, file_type, aux_type, key_block, storage_type, blocks_used, len(data), True))
+
+# Allocate GAME subdirectory blocks AFTER root files (matches vanilla layout)
+game_dir_block_count = max(1, math.ceil((len(game_files) + 1) / 12))
+game_dir_blocks = [alloc_block() for _ in range(game_dir_block_count)]
 
 for prodos_name, file_type, aux_type, data in game_files:
     key_block, storage_type, blocks_used = write_file(data)
