@@ -86,7 +86,7 @@ The TUI supports tile painting for maps, form editing for character stats (inclu
 
 ## Disk Image Support
 
-If you have [diskiigs](https://github.com/BradHawthorne/rosetta) on your PATH (or set `DISKIIGS_PATH`), ult3edit can work directly with ProDOS disk images:
+ult3edit includes a native ProDOS disk image builder and can work directly with `.po` disk images:
 
 ```bash
 ult3edit disk info game.po
@@ -111,6 +111,7 @@ ult3edit disk list game.po
 | `sound` | Sound data editor (SOSA, SOSM, MBS) | `view`, `edit`, `import` |
 | `patch` | Engine binary patcher (CIDAR offsets) | `view`, `edit`, `dump`, `import`, `strings`, `strings-edit`, `strings-import`, `compile-names`, `decompile-names`, `validate-names` |
 | `ddrw` | Dungeon drawing data editor | `view`, `edit`, `import` |
+| `exod` | Intro/title screen graphics editor | `view`, `export`, `import`, `crawl {view,export,import,render,compose}`, `glyph {view,export}` |
 | `diff` | Game data comparison tool | (compares two files or directories) |
 | `disk` | ProDOS disk image operations | `info`, `list`, `extract`, `audit` |
 
@@ -483,7 +484,7 @@ ult3edit disk audit game.po --detail
 ult3edit disk audit game.po --json -o audit.json
 ```
 
-Requires [diskiigs](https://github.com/BradHawthorne/rosetta) on your PATH (or set `DISKIIGS_PATH`).
+Uses the native ProDOS disk image builder (no external tools required).
 
 ## File Formats
 
@@ -673,6 +674,23 @@ bash conversions/voidborn/apply.sh path/to/game.po
 - **Shop overlay** strings JSON (weapon/armor/item shop text)
 - **DDRW** dungeon drawing data JSON
 - **Title** screen text
+- **Text crawl** coordinate data (composed via bitmap font)
+
+## Engine SDK
+
+The `engine/` directory contains a buildable engine source tree using the [Rosetta](https://github.com/BradHawthorne/rosetta) toolchain (asmiigs/deasmiigs). All three engine binaries (SUBS, ULT3, EXOD) reassemble byte-identical from CIDAR disassembly.
+
+- **Fully symbolicated** — all 864 labels renamed to semantic names
+- **Fully annotated** — every code function has academic-level documentation
+- **Two-tier scenario build** — source-level patching (no string length limits) with binary-level fallback
+
+```bash
+# Build and verify all 3 engine binaries
+cd engine && bash build.sh
+
+# Patch engine strings for a total conversion
+python engine/tools/source_patcher.py engine/ult3/ult3.s patches.json
+```
 
 ## License
 
