@@ -477,6 +477,14 @@ if [ -d "$SOURCES_DIR" ]; then
         echo "  Imported dungeon drawing data"
     fi
 
+    # Import title screen text crawl coordinates
+    EXOD=$(find_file "EXOD")
+    CRAWL_JSON="${SOURCES_DIR}/crawl.json"
+    if [ -f "$EXOD" ] && [ -f "$CRAWL_JSON" ]; then
+        ult3edit exod crawl import "$EXOD" "$CRAWL_JSON" 2>/dev/null || true
+        echo "  Imported title text crawl coordinates"
+    fi
+
     # Apply engine inline string patches
     # Two-tier: source-level (no length limits) if asmiigs available, else binary
     ENGINE_DIR="${SCRIPT_DIR}/../../engine"
