@@ -1,6 +1,6 @@
 [project]
 name = "ult3edit"
-version = "1.11.0"
+version = "1.12.0"
 description = "Ultima III: Exodus - Data file toolkit for Apple II archaeology"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,6 +43,7 @@ ult3-sound = "ult3edit.sound:main"
 ult3-patch = "ult3edit.patch:main"
 ult3-ddrw = "ult3edit.ddrw:main"
 ult3-diff = "ult3edit.diff:main"
+ult3-exod = "ult3edit.exod:main"
 
 [build-system]
 requires = ["hatchling"]

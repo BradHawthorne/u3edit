@@ -40,6 +40,7 @@ from . import sound
 from . import patch
 from . import ddrw
 from . import diff
+from . import exod
 
 
 def _cmd_unified_edit(args) -> None:
@@ -95,6 +96,7 @@ def main() -> None:
     patch.register_parser(subparsers)
     ddrw.register_parser(subparsers)
     diff.register_parser(subparsers)
+    exod.register_parser(subparsers)
 
     args = parser.parse_args()
 
@@ -120,6 +122,7 @@ def main() -> None:
         'patch': patch.dispatch,
         'ddrw': ddrw.dispatch,
         'diff': diff.dispatch,
+        'exod': exod.dispatch,
     }
 
     if args.tool == 'edit':

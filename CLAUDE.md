@@ -11,10 +11,12 @@ ult3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides 
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 1552 tests
+pytest -v                            # Run all 1603 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 ult3edit roster view path/to/ROST      # CLI usage pattern
+ult3edit exod export EXOD -o out/      # Export title screen frames as PNG templates
+ult3edit exod import EXOD art.png --frame title  # Import PNG as title frame
 ult3edit edit game.po                  # Unified TUI editor (requires prompt_toolkit)
 ```
 
@@ -22,7 +24,7 @@ ult3edit edit game.po                  # Unified TUI editor (requires prompt_too
 
 ### Module-per-data-type pattern
 
-Each game data type lives in `src/ult3edit/{module}.py` (roster, bestiary, map, tlk, combat, save, special, text, spell, equip, shapes, sound, patch, ddrw, diff, disk). Most modules follow the standard contract:
+Each game data type lives in `src/ult3edit/{module}.py` (roster, bestiary, map, tlk, combat, save, special, text, spell, equip, shapes, sound, patch, ddrw, diff, disk, exod). Most modules follow the standard contract:
 
 - **Data class** (e.g., `Character`, `Monster`): wraps `bytearray` with `@property` accessors
 - **`load_*(path)` / `save_*(path, obj)`**: File I/O
@@ -98,6 +100,7 @@ Exceptions: `equip` and `spell` are view-only (no `cmd_edit`/`cmd_import`). `dif
 - **`sound view/edit/import`**: SOSA/SOSM/MBS data files — hex dump, AY-3-8910 register parsing and music stream decoding (notes, tempo, loops) for MBS. Note: SOSA (overworld map state) and SOSM (overworld monster positions) are save-state files, not sound data, despite being managed by the sound subcommand.
 - **`patch view/edit/dump/import/strings/strings-edit/strings-import/compile-names/decompile-names/validate-names`**: Engine binary patcher for CIDAR-identified offsets in ULT3 — name table (921 bytes, terrain/monster/weapon/armor/spell names), moongate coordinates, food depletion rate. `view --json` → `import` round-trips all region types (text, bytes, coords). `strings` subcommand catalogs all 245 JSR $46BA inline strings with `--search` filter and `--json` export. `strings-edit` / `strings-import` for in-place inline string editing by index/vanilla/address. `compile-names` / `decompile-names` / `validate-names` for text-first `.names` file workflow.
 - **`ddrw view/edit/import`**: Dungeon drawing data (1792 bytes) with structured perspective vector and tile record parsing.
+- **`exod view/export/import`**: EXOD intro/title screen graphics editor (26,208 bytes at $2000). `view` shows frame structure and HGR palette. `export` extracts 6 animation frames (title, serpent, castle, exodus, frame3, frame4) + full 280x192 canvas as PNG at configurable `--scale` (default 2x). `import` converts PNG images back to Apple II HGR format and patches into EXOD — supports individual frames or full canvas. PNG reader/writer are stdlib-only (no Pillow). HGR encoding uses two-pass palette bit propagation for faithful color mapping. Round-trip is pixel-perfect; palette bit for all-black/all-white bytes is cosmetically irrelevant.
 - **`disk info/list/extract/audit`**: ProDOS disk image operations — show volume info, list files, extract all files, audit disk space (free blocks, alignment waste, capacity estimates). Requires external `diskiigs` tool.
 - **`TILE_CHARS_REVERSE` / `DUNGEON_TILE_CHARS_REVERSE`**: Reverse lookups in `constants.py` for char→tile-byte conversion (used by import commands). **`TILE_NAMES_REVERSE` / `DUNGEON_TILE_NAMES_REVERSE`**: Full name→tile-byte reverse lookups for JSON round-trip (e.g., "Grass"→0x04).
 - **CON file layout** (fully resolved via engine code tracing): 0x79-0x7F = unused padding, 0x90-0x9F = runtime monster arrays (saved-tile + status, overwritten at init), 0xA8-0xAF = runtime PC arrays (saved-tile + appearance, overwritten at init), 0xB0-0xBF = unused tail padding. Preserved for round-trip fidelity.
