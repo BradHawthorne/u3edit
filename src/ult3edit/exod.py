@@ -1101,6 +1101,85 @@ def glyph_to_pixels(glyph_data: bytes) -> tuple:
     return pixels, width, height
 
 
+def pixels_to_glyph(pixels: list, width: int, height: int,
+                    dither: bool = False) -> bytes:
+    """Encode RGB pixels to glyph data (16 rows x 13 HGR bytes = 208 bytes).
+
+    pixels: flat list of (r,g,b) tuples, width * height entries.
+    width: must be 91 (GLYPH_COLS * HGR_PIXELS_PER_BYTE).
+    height: must be 16 (GLYPH_ROWS).
+    dither: if True, use Floyd-Steinberg dithering via encode_hgr_image().
+
+    Returns 208-byte bytes object ready for patching into EXOD binary.
+    """
+    expected_w = GLYPH_COLS * HGR_PIXELS_PER_BYTE  # 91
+    expected_h = GLYPH_ROWS  # 16
+    if width != expected_w or height != expected_h:
+        raise ValueError(
+            f"Glyph PNG must be {expected_w}x{expected_h}, "
+            f"got {width}x{height}")
+
+    if dither:
+        hgr_rows = encode_hgr_image(pixels, width, height, start_col=0)
+        result = bytearray()
+        for row_bytes in hgr_rows:
+            padded = bytearray(GLYPH_COLS)
+            padded[:len(row_bytes)] = row_bytes[:GLYPH_COLS]
+            result.extend(padded)
+        return bytes(result)
+
+    result = bytearray()
+    for row in range(height):
+        row_pixels = pixels[row * width:(row + 1) * width]
+        row_bytes = encode_hgr_row(row_pixels, start_col=0)
+        padded = bytearray(GLYPH_COLS)
+        padded[:len(row_bytes)] = row_bytes[:GLYPH_COLS]
+        result.extend(padded)
+    return bytes(result)
+
+
+def patch_glyph_data(exod_data: bytearray, glyph_idx: int, variant_idx: int,
+                     glyph_bytes: bytes) -> bytearray:
+    """Patch glyph data into EXOD binary at the correct offset.
+
+    Follows the two-level pointer chain:
+      main_ptr[glyph_idx] -> sub_ptr[variant_idx] -> file_offset
+
+    Returns modified bytearray. Raises ValueError on invalid pointers.
+    """
+    if glyph_idx < 0 or glyph_idx >= GLYPH_COUNT:
+        raise ValueError(f"Glyph index must be 0-{GLYPH_COUNT - 1}, "
+                         f"got {glyph_idx}")
+    if variant_idx < 0 or variant_idx >= GLYPH_VARIANTS:
+        raise ValueError(f"Variant index must be 0-{GLYPH_VARIANTS - 1}, "
+                         f"got {variant_idx}")
+    if len(glyph_bytes) != GLYPH_DATA_SIZE:
+        raise ValueError(f"Glyph data must be {GLYPH_DATA_SIZE} bytes, "
+                         f"got {len(glyph_bytes)}")
+
+    pointers = extract_glyph_pointers(exod_data)
+    main_ptr = pointers[glyph_idx]
+    main_off = glyph_ptr_to_file_offset(main_ptr)
+    if main_off < 0:
+        raise ValueError(f"Glyph {glyph_idx} main pointer ${main_ptr:04X} "
+                         f"is out of valid range ($0400-$3FFF)")
+
+    subptrs = extract_glyph_subpointers(exod_data, main_ptr)
+    sub_ptr = subptrs[variant_idx]
+    sub_off = glyph_ptr_to_file_offset(sub_ptr)
+    if sub_off < 0:
+        raise ValueError(f"Glyph {glyph_idx} variant {variant_idx} "
+                         f"pointer ${sub_ptr:04X} is out of valid range")
+
+    if sub_off + GLYPH_DATA_SIZE > len(exod_data):
+        raise ValueError(f"Glyph data at offset ${sub_off:04X} extends "
+                         f"beyond file end (${len(exod_data):04X})")
+
+    result = bytearray(exod_data)
+    result[sub_off:sub_off + GLYPH_DATA_SIZE] = glyph_bytes
+    return result
+
+
 # ============================================================================
 # CLI commands
 # ============================================================================
@@ -1609,6 +1688,56 @@ def cmd_glyph_export(args) -> None:
                   f"({GLYPH_COLS * HGR_PIXELS_PER_BYTE}x{GLYPH_ROWS})")
 
 
+def cmd_glyph_import(args) -> None:
+    """Import a PNG image as glyph data into the EXOD binary."""
+    filepath = args.file
+    png_path = args.png
+    glyph_idx = args.glyph
+    variant_idx = args.variant
+    use_dither = getattr(args, 'dither', False)
+
+    if not os.path.isfile(filepath):
+        print(f"Error: EXOD file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+    if not os.path.isfile(png_path):
+        print(f"Error: PNG file not found: {png_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        exod_data = bytearray(f.read())
+
+    pixels, width, height = read_png(png_path)
+
+    try:
+        glyph_bytes = pixels_to_glyph(pixels, width, height, dither=use_dither)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        exod_data = patch_glyph_data(exod_data, glyph_idx, variant_idx,
+                                     glyph_bytes)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    dither_label = " (dithered)" if use_dither else ""
+    print(f"  Imported glyph {glyph_idx} variant {variant_idx}: "
+          f"{width}x{height}{dither_label}")
+
+    if getattr(args, 'dry_run', False):
+        print("  (dry run — no file written)")
+        return
+
+    from .fileutil import backup_file
+    if getattr(args, 'backup', False):
+        backup_file(filepath)
+
+    with open(filepath, 'wb') as f:
+        f.write(exod_data)
+    print(f"  Written: {filepath}")
+
+
 # ============================================================================
 # CLI registration
 # ============================================================================
@@ -1663,7 +1792,7 @@ def _add_crawl_parsers(parent_sub) -> None:
 def _add_glyph_parsers(parent_sub) -> None:
     """Add glyph table subcommands to a subparser group."""
     glyph_parser = parent_sub.add_parser(
-        'glyph', help='Glyph table viewer')
+        'glyph', help='Glyph table viewer and editor')
     glyph_sub = glyph_parser.add_subparsers(dest='glyph_cmd',
                                             help='Glyph command')
 
@@ -1678,6 +1807,21 @@ def _add_glyph_parsers(parent_sub) -> None:
     ge.add_argument('-o', '--output', help='Output directory')
     ge.add_argument('--scale', type=int, default=2,
                     help='Scale factor (default: 2)')
+
+    # glyph import
+    gi = glyph_sub.add_parser('import', help='Import PNG as glyph data')
+    gi.add_argument('file', help='Path to EXOD binary')
+    gi.add_argument('png', help='Path to PNG image (91x16)')
+    gi.add_argument('--glyph', type=int, required=True,
+                    help='Glyph index (0-4)')
+    gi.add_argument('--variant', type=int, required=True,
+                    help='Variant index (0-6)')
+    gi.add_argument('--backup', action='store_true',
+                    help='Create .bak backup')
+    gi.add_argument('--dry-run', action='store_true',
+                    help='Show changes only')
+    gi.add_argument('--dither', action='store_true',
+                    help='Floyd-Steinberg error diffusion dithering')
 
 
 def register_parser(subparsers) -> None:
@@ -1743,8 +1887,10 @@ def _dispatch_glyph(args) -> None:
         cmd_glyph_view(args)
     elif cmd == 'export':
         cmd_glyph_export(args)
+    elif cmd == 'import':
+        cmd_glyph_import(args)
     else:
-        print("Usage: ult3edit exod glyph {view|export} ...",
+        print("Usage: ult3edit exod glyph {view|export|import} ...",
               file=sys.stderr)
         sys.exit(1)
 

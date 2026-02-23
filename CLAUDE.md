@@ -11,7 +11,7 @@ ult3edit is a data toolkit for Ultima III: Exodus (Apple II, 1983). It provides 
 ```bash
 pip install -e ".[dev]"              # Install with pytest
 pip install -e ".[tui]"              # Install with prompt_toolkit for TUI editors
-pytest -v                            # Run all 1696 tests
+pytest -v                            # Run all 1753 tests
 pytest tests/test_roster.py          # Run one test module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero  # Run single test
 ult3edit roster view path/to/ROST      # CLI usage pattern
@@ -65,6 +65,7 @@ Exceptions: `equip` and `spell` are view-only (no `cmd_edit`/`cmd_import`). `dif
 - **`BaseTileEditor`**: UI layer that wraps `EditorState` for rendering and key handling
 - **`theme.py`**: `U3_STYLE` prompt_toolkit stylesheet for consistent look
 - **`form_editor.py`**: Reusable form-based editing component for character/monster/save fields
+- **`exod_editor.py`**: EXOD tab with 3 sub-editors via DrillDownTab — `ExodCrawlEditor` (editable coordinate list), `ExodGlyphViewer` (read-only pointer table), `ExodFrameViewer` (read-only HGR summary). Virtual file names (`EXOD:crawl`, etc.) map to single EXOD binary.
 - Note: PLRS editing is CLI-only (`save edit --plrs-slot`), not available in TUI
 
 ### File resolution (`fileutil.py`)
@@ -102,8 +103,8 @@ Exceptions: `equip` and `spell` are view-only (no `cmd_edit`/`cmd_import`). `dif
 - **`ddrw view/edit/import`**: Dungeon drawing data (1792 bytes) with structured perspective vector and tile record parsing.
 - **`exod view/export/import`**: EXOD intro/title screen graphics editor (26,208 bytes at $2000). `view` shows frame structure and HGR palette. `export` extracts 6 animation frames (title, serpent, castle, exodus, frame3, frame4) + full 280x192 canvas as PNG at configurable `--scale` (default 2x). `import` converts PNG images back to Apple II HGR format and patches into EXOD — supports individual frames or full canvas. PNG reader/writer are stdlib-only (no Pillow). HGR encoding uses three-pass palette selection with CCIR 601 perceptual color distance and Floyd-Steinberg dithering (`--dither`). Round-trip is pixel-perfect; palette bit for all-black/all-white bytes is cosmetically irrelevant.
 - **`exod crawl view/export/import/render/compose`**: Text crawl coordinate editor for the "BY LORD BRITISH" pixel-plotted text at file offset $6000 (memory $8000). Stream of (X, Y) byte pairs terminated by $00, Y inverted via $BF - Y_byte. `view` shows coordinate table (`--json` for JSON). `export` writes JSON with `[x, y]` point arrays. `import` reads JSON back into EXOD binary (`--backup`, `--dry-run`). `render` plots double-wide white pixels on 280x192 black canvas as PNG (`--scale`). `compose` generates crawl coordinates from a text string using a built-in 5x7 bitmap font (A-Z, 0-9, punctuation) — auto-centers horizontally, configurable `--x`/`--y`/`--spacing`, optional `--render` preview PNG. Output JSON is directly compatible with `crawl import`.
-- **`exod glyph view/export`**: Glyph table viewer for the column-reveal animation at file offset $0400-$1AFF. Two-level pointer chain: 5-entry main table (indices 0-3 drawn, 4 is sentinel) → 7 sub-pointers per glyph (column variants) → 208-byte pixel data blocks (16 rows x 13 bytes HGR). `view` shows pointer table with sub-pointer details (`--json`). `export` renders each variant as PNG (`--scale`).
-- **`disk info/list/extract/audit`**: ProDOS disk image operations — show volume info, list files, extract all files, audit disk space (free blocks, alignment waste, capacity estimates). Uses native Python ProDOS builder (no external tools required).
+- **`exod glyph view/export/import`**: Glyph table editor for the column-reveal animation at file offset $0400-$1AFF. Two-level pointer chain: 5-entry main table (indices 0-3 drawn, 4 is sentinel) → 7 sub-pointers per glyph (column variants) → 208-byte pixel data blocks (16 rows x 13 bytes HGR). `view` shows pointer table with sub-pointer details (`--json`). `export` renders each variant as PNG (`--scale`). `import` reads a 91x16 PNG and patches glyph data (`--glyph N --variant V --dither --backup --dry-run`).
+- **`disk info/list/extract/audit/build`**: ProDOS disk image operations — show volume info, list files, extract all files, audit disk space (free blocks, alignment waste, capacity estimates), build a new ProDOS image from a directory of files (`build <output.po> <input_dir> --boot-from --vol-name`). `build_prodos_image()` is a reusable library function supporting seedling/sapling/tree storage, subdirectories, volume bitmap, and boot block preservation. Uses native Python (no external tools required).
 - **`TILE_CHARS_REVERSE` / `DUNGEON_TILE_CHARS_REVERSE`**: Reverse lookups in `constants.py` for char→tile-byte conversion (used by import commands). **`TILE_NAMES_REVERSE` / `DUNGEON_TILE_NAMES_REVERSE`**: Full name→tile-byte reverse lookups for JSON round-trip (e.g., "Grass"→0x04).
 - **CON file layout** (fully resolved via engine code tracing): 0x79-0x7F = unused padding, 0x90-0x9F = runtime monster arrays (saved-tile + status, overwritten at init), 0xA8-0xAF = runtime PC arrays (saved-tile + appearance, overwritten at init), 0xB0-0xBF = unused tail padding. Preserved for round-trip fidelity.
 - **PRTY file layout** (verified against zero-page $E0-$EF): $E0=transport, $E1=party_size, $E2=location_type, $E3=saved_x, $E4=saved_y, $E5=sentinel, $E6-$E9=slot_ids. Constants in `PRTY_OFF_*`.

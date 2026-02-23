@@ -49,6 +49,8 @@ from ult3edit.exod import (
     frame_to_pixels,
     glyph_ptr_to_file_offset,
     glyph_to_pixels,
+    patch_glyph_data,
+    pixels_to_glyph,
     hgr_scanline_offset,
     insert_frame,
     patch_hgr_page,
@@ -1127,6 +1129,225 @@ class TestGlyphData:
         glyph = bytes(GLYPH_DATA_SIZE)
         pixels, _, _ = glyph_to_pixels(glyph)
         assert all(p == (0, 0, 0) for p in pixels)
+
+
+class TestPixelsToGlyph:
+    """Test RGB pixel encoding to glyph HGR data."""
+
+    def test_output_size(self):
+        """Encoded glyph is exactly GLYPH_DATA_SIZE bytes."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE  # 91
+        height = GLYPH_ROWS  # 16
+        pixels = [(0, 0, 0)] * (width * height)
+        result = pixels_to_glyph(pixels, width, height)
+        assert len(result) == GLYPH_DATA_SIZE
+
+    def test_all_black_encodes_to_zeros(self):
+        """All-black image encodes to all-zero HGR bytes (bit 7 may vary)."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE
+        height = GLYPH_ROWS
+        pixels = [(0, 0, 0)] * (width * height)
+        result = pixels_to_glyph(pixels, width, height)
+        # Each byte should have only palette bit set (0x00 or 0x80), no pixel bits
+        for b in result:
+            assert b & 0x7F == 0, f"Expected no pixel bits, got 0x{b:02X}"
+
+    def test_all_white_encodes_to_ones(self):
+        """All-white image encodes to HGR bytes with all pixel bits set."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE
+        height = GLYPH_ROWS
+        pixels = [(255, 255, 255)] * (width * height)
+        result = pixels_to_glyph(pixels, width, height)
+        for b in result:
+            assert b & 0x7F == 0x7F, f"Expected all pixel bits, got 0x{b:02X}"
+
+    def test_wrong_width_raises(self):
+        """Non-91 width raises ValueError."""
+        pixels = [(0, 0, 0)] * (100 * 16)
+        with pytest.raises(ValueError, match="91x16"):
+            pixels_to_glyph(pixels, 100, 16)
+
+    def test_wrong_height_raises(self):
+        """Non-16 height raises ValueError."""
+        pixels = [(0, 0, 0)] * (91 * 20)
+        with pytest.raises(ValueError, match="91x16"):
+            pixels_to_glyph(pixels, 91, 20)
+
+    def test_dither_mode_output_size(self):
+        """Dithered encoding also produces GLYPH_DATA_SIZE bytes."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE
+        height = GLYPH_ROWS
+        pixels = [(128, 128, 128)] * (width * height)
+        result = pixels_to_glyph(pixels, width, height, dither=True)
+        assert len(result) == GLYPH_DATA_SIZE
+
+    def test_roundtrip_black(self):
+        """Encode black pixels, decode back — all pixels are black."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE
+        height = GLYPH_ROWS
+        pixels = [(0, 0, 0)] * (width * height)
+        glyph_bytes = pixels_to_glyph(pixels, width, height)
+        decoded, dw, dh = glyph_to_pixels(glyph_bytes)
+        assert dw == width
+        assert dh == height
+        assert all(p == (0, 0, 0) for p in decoded)
+
+    def test_roundtrip_white(self):
+        """Encode white pixels, decode back — all pixels are white."""
+        width = GLYPH_COLS * HGR_PIXELS_PER_BYTE
+        height = GLYPH_ROWS
+        pixels = [(255, 255, 255)] * (width * height)
+        glyph_bytes = pixels_to_glyph(pixels, width, height)
+        decoded, dw, dh = glyph_to_pixels(glyph_bytes)
+        assert dw == width
+        assert dh == height
+        assert all(p == (255, 255, 255) for p in decoded)
+
+
+class TestPatchGlyphData:
+    """Test patching glyph data into EXOD binary."""
+
+    def _setup_pointer_chain(self, data, glyph_idx=0, variant_idx=0):
+        """Set up a valid two-level pointer chain in synthesized data."""
+        # Main pointer table at $0400: glyph_idx -> sub-pointer table
+        sub_table_addr = 0x0500 + glyph_idx * 0x100
+        struct.pack_into('<H', data, GLYPH_TABLE_OFFSET + glyph_idx * 2,
+                         sub_table_addr)
+        # Sub-pointer table: variant_idx -> data block
+        data_addr = sub_table_addr + GLYPH_VARIANTS * 2 + variant_idx * GLYPH_DATA_SIZE
+        struct.pack_into('<H', data, sub_table_addr + variant_idx * 2,
+                         data_addr)
+        return data_addr
+
+    def test_patch_writes_correct_data(self):
+        """Patched data appears at the resolved file offset."""
+        data = bytearray(EXOD_SIZE)
+        data_addr = self._setup_pointer_chain(data, 0, 0)
+        glyph_bytes = bytes(range(GLYPH_DATA_SIZE))
+        result = patch_glyph_data(data, 0, 0, glyph_bytes)
+        assert result[data_addr:data_addr + GLYPH_DATA_SIZE] == glyph_bytes
+
+    def test_patch_preserves_other_data(self):
+        """Patching doesn't modify data outside the glyph region."""
+        data = bytearray(EXOD_SIZE)
+        data_addr = self._setup_pointer_chain(data, 0, 0)
+        # Write a marker before and after the patch region
+        data[data_addr - 1] = 0xAA
+        data[data_addr + GLYPH_DATA_SIZE] = 0xBB
+        glyph_bytes = bytes([0x42] * GLYPH_DATA_SIZE)
+        result = patch_glyph_data(data, 0, 0, glyph_bytes)
+        assert result[data_addr - 1] == 0xAA
+        assert result[data_addr + GLYPH_DATA_SIZE] == 0xBB
+
+    def test_invalid_glyph_index_raises(self):
+        """Glyph index out of range raises ValueError."""
+        data = bytearray(EXOD_SIZE)
+        glyph_bytes = bytes(GLYPH_DATA_SIZE)
+        with pytest.raises(ValueError, match="Glyph index"):
+            patch_glyph_data(data, 5, 0, glyph_bytes)
+        with pytest.raises(ValueError, match="Glyph index"):
+            patch_glyph_data(data, -1, 0, glyph_bytes)
+
+    def test_invalid_variant_index_raises(self):
+        """Variant index out of range raises ValueError."""
+        data = bytearray(EXOD_SIZE)
+        glyph_bytes = bytes(GLYPH_DATA_SIZE)
+        with pytest.raises(ValueError, match="Variant index"):
+            patch_glyph_data(data, 0, 7, glyph_bytes)
+
+    def test_bad_main_pointer_raises(self):
+        """Zero main pointer (outside $0400-$3FFF) raises ValueError."""
+        data = bytearray(EXOD_SIZE)
+        # Main pointer at $0400 is 0x0000 (default zeros) — out of range
+        glyph_bytes = bytes(GLYPH_DATA_SIZE)
+        with pytest.raises(ValueError, match="out of valid range"):
+            patch_glyph_data(data, 0, 0, glyph_bytes)
+
+    def test_bad_sub_pointer_raises(self):
+        """Valid main pointer but zero sub-pointer raises ValueError."""
+        data = bytearray(EXOD_SIZE)
+        # Set main pointer to a valid address but leave sub-pointers as zero
+        struct.pack_into('<H', data, GLYPH_TABLE_OFFSET, 0x0500)
+        # Sub-pointers at $0500 are all zeros — out of range
+        glyph_bytes = bytes(GLYPH_DATA_SIZE)
+        with pytest.raises(ValueError, match="out of valid range"):
+            patch_glyph_data(data, 0, 0, glyph_bytes)
+
+    def test_wrong_data_size_raises(self):
+        """Glyph bytes of wrong length raises ValueError."""
+        data = bytearray(EXOD_SIZE)
+        self._setup_pointer_chain(data, 0, 0)
+        with pytest.raises(ValueError, match="208 bytes"):
+            patch_glyph_data(data, 0, 0, bytes(100))
+
+    def test_roundtrip_export_import(self):
+        """Export glyph data, patch it back — data is identical."""
+        data = bytearray(EXOD_SIZE)
+        data_addr = self._setup_pointer_chain(data, 0, 0)
+        # Write known pattern
+        for i in range(GLYPH_DATA_SIZE):
+            data[data_addr + i] = (i * 7) & 0xFF
+        # Extract
+        original = extract_glyph_data(data, data_addr)
+        # Patch back
+        result = patch_glyph_data(data, 0, 0, original)
+        assert result[data_addr:data_addr + GLYPH_DATA_SIZE] == original
+
+
+class TestGlyphImportCLI:
+    """Test glyph import subcommand argument parsing."""
+
+    def test_glyph_import_parse(self):
+        """Parse 'exod glyph import <file> <png> --glyph 0 --variant 2'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'glyph', 'import', 'EXOD',
+                                  'glyph.png', '--glyph', '0',
+                                  '--variant', '2'])
+        assert args.glyph_cmd == 'import'
+        assert args.file == 'EXOD'
+        assert args.png == 'glyph.png'
+        assert args.glyph == 0
+        assert args.variant == 2
+
+    def test_glyph_import_flags(self):
+        """Parse glyph import with --backup --dry-run --dither."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'glyph', 'import', 'EXOD',
+                                  'g.png', '--glyph', '1', '--variant', '3',
+                                  '--backup', '--dry-run', '--dither'])
+        assert args.backup is True
+        assert args.dry_run is True
+        assert args.dither is True
+
+    def test_glyph_import_requires_glyph(self):
+        """Glyph import requires --glyph flag."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        with pytest.raises(SystemExit):
+            parser.parse_args(['exod', 'glyph', 'import', 'EXOD', 'g.png',
+                               '--variant', '0'])
+
+    def test_glyph_import_requires_variant(self):
+        """Glyph import requires --variant flag."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        with pytest.raises(SystemExit):
+            parser.parse_args(['exod', 'glyph', 'import', 'EXOD', 'g.png',
+                               '--glyph', '0'])
 
 
 # ============================================================================

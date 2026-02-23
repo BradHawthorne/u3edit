@@ -84,6 +84,13 @@ class UnifiedApp:
                 tab = make_party_tab(data, session.make_save_callback('PRTY'))
                 self.tabs.append(tab)
 
+        # EXOD tab (title screen sub-editors)
+        if session.has_category('exod'):
+            self.tabs.append(DrillDownTab(
+                'EXOD', session.files_in('exod'),
+                self._make_exod_editor, session,
+            ))
+
     def _make_map_editor(self, fname, data, save_cb):
         """Factory for MapEditor wrapped as a tab."""
         from .map_editor import MapEditor
@@ -114,6 +121,28 @@ class UnifiedApp:
         letter = fname[-1] if fname.startswith('MON') else '?'
         from .bestiary_editor import make_bestiary_tab
         return make_bestiary_tab(data, letter, save_cb)
+
+    def _make_exod_editor(self, fname, data, save_cb):
+        """Factory for EXOD sub-editors (crawl, glyphs, frames).
+
+        fname is 'EXOD:crawl', 'EXOD:glyphs', or 'EXOD:frames'.
+        All read from the same EXOD binary via session.
+        """
+        exod_data = self.session.read('EXOD')
+        if exod_data is None:
+            return None
+        sub = fname.split(':')[1] if ':' in fname else fname
+        if sub == 'crawl':
+            from .exod_editor import ExodCrawlEditor
+            return ExodCrawlEditor(exod_data,
+                                   save_callback=self.session.make_save_callback('EXOD'))
+        elif sub == 'glyphs':
+            from .exod_editor import ExodGlyphViewer
+            return ExodGlyphViewer(exod_data)
+        elif sub == 'frames':
+            from .exod_editor import ExodFrameViewer
+            return ExodFrameViewer(exod_data)
+        return None
 
     def run(self):
         """Run the unified tabbed editor."""

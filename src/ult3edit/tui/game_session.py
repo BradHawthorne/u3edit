@@ -115,10 +115,23 @@ class GameSession:
         if party:
             self.catalog['party'] = party
 
+        # EXOD (title screen / boot loader)
+        if 'EXOD' in available:
+            self.catalog['exod'] = [
+                ('EXOD:crawl', 'Text Crawl'),
+                ('EXOD:glyphs', 'Glyph Table'),
+                ('EXOD:frames', 'HGR Frames'),
+            ]
+
     def read(self, name: str) -> bytes | None:
-        """Read a file from the disk image (cached)."""
+        """Read a file from the disk image (cached).
+
+        Handles virtual names like 'EXOD:crawl' by reading the base file.
+        """
         if self.ctx:
-            return self.ctx.read(name)
+            # Virtual names: 'FILE:sub' reads the base FILE
+            base = name.split(':')[0] if ':' in name else name
+            return self.ctx.read(base)
         return None
 
     def write(self, name: str, data: bytes) -> None:
@@ -127,9 +140,13 @@ class GameSession:
             self.ctx.write(name, data)
 
     def make_save_callback(self, file_name: str):
-        """Return a callable that writes data to this file in the session."""
+        """Return a callable that writes data to this file in the session.
+
+        Handles virtual names like 'EXOD:crawl' by writing to the base file.
+        """
+        base = file_name.split(':')[0] if ':' in file_name else file_name
         def callback(data: bytes):
-            self.write(file_name, data)
+            self.write(base, data)
         return callback
 
     def has_category(self, category: str) -> bool:
