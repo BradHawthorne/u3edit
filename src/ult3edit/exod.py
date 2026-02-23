@@ -2,17 +2,23 @@
 
 EXOD is the boot loader and title sequence (26,208 bytes at $2000).
 87% animation data (HGR frames), 13% code. This module provides
-view/export/import tools for the HGR animation frames that make up
-the intro sequence.
+view/export/import tools for the HGR animation frames, text crawl
+coordinate data, and glyph table that make up the intro sequence.
 
 Memory layout:
   $2000-$2003  Entry — JMP to init code at $8220+
-  $2003-$81FF  Data — HGR animation frames (~25 KB)
+  $2003-$81FF  Data — HGR animation frames, text crawl, glyph table (~25 KB)
   $8220-$86FF  Code — Title sequence, animation engine, audio
 
 The blit engine reads all source frames from HGR page 2 ($4000-$5FFF),
 which corresponds to EXOD file offsets $2000-$3FFF. The 6 animation
 frames occupy non-overlapping scanline ranges within this 8KB page.
+
+Text crawl data at file offset $6000 (memory $8000): stream of (X, Y)
+byte pairs plotting "BY LORD BRITISH" over the castle scene.
+
+Glyph table at file offset $0400 (memory $2400): pointer table and
+pixel data for the column-reveal animation.
 """
 
 import argparse
@@ -39,6 +45,19 @@ HGR_WIDTH = HGR_BYTES_PER_ROW * HGR_PIXELS_PER_BYTE  # 280 pixels
 
 # HGR page 2 in EXOD: memory $4000-$5FFF = file offsets $2000-$3FFF
 HGR_PAGE2_FILE_OFFSET = 0x2000
+
+# Text crawl: (X, Y) byte pairs at file offset $6000 (memory $8000)
+# Y is inverted: screen_row = $BF - Y_byte. Terminated by $00.
+TEXT_CRAWL_OFFSET = 0x6000
+
+# Glyph table: pointer table at file offset $0400 (memory $2400)
+# 5 entries x 2 bytes = 10 bytes of 16-bit LE pointers
+GLYPH_TABLE_OFFSET = 0x0400
+GLYPH_COUNT = 5         # 5 pointer entries (indices 0-4, only 0-3 drawn)
+GLYPH_VARIANTS = 7      # 7 sub-entries per glyph (column variants)
+GLYPH_ROWS = 16         # 16 scanlines per glyph column
+GLYPH_COLS = 13         # 13 bytes per glyph row
+GLYPH_DATA_SIZE = GLYPH_ROWS * GLYPH_COLS  # 208 bytes per glyph variant
 
 # Frame definitions: (name, start_scanline, num_rows, col_bytes, col_offset, description)
 FRAMES = {
@@ -589,6 +608,168 @@ def pixels_to_frame_rows(pixels: list, width: int, height: int,
 
 
 # ============================================================================
+# Text crawl extraction / building
+# ============================================================================
+
+def extract_text_crawl(exod_data: bytes) -> list:
+    """Extract text crawl coordinate pairs from EXOD binary.
+
+    Reads (X, Y) byte pairs from file offset $6000 until a $00 byte.
+    Y is inverted: screen_row = $BF - Y_byte.
+
+    Returns list of (x, screen_y) tuples.
+    """
+    coords = []
+    pos = TEXT_CRAWL_OFFSET
+    while pos + 1 < len(exod_data):
+        x = exod_data[pos]
+        if x == 0:
+            break
+        pos += 1
+        y_raw = exod_data[pos]
+        pos += 1
+        screen_y = 0xBF - y_raw
+        coords.append((x, screen_y))
+    return coords
+
+
+def build_text_crawl(coords: list) -> bytes:
+    """Build text crawl byte stream from coordinate pairs.
+
+    coords: list of (x, screen_y) tuples.
+    Returns bytes: (X, Y_raw) pairs + $00 terminator.
+    Y_raw = $BF - screen_y (invert back to storage format).
+    """
+    result = bytearray()
+    for x, screen_y in coords:
+        y_raw = 0xBF - screen_y
+        if x < 0 or x > 255:
+            raise ValueError(f"X coordinate {x} out of byte range (0-255)")
+        if y_raw < 0 or y_raw > 255:
+            raise ValueError(f"Screen Y {screen_y} produces invalid raw Y "
+                             f"(0xBF - {screen_y} = {y_raw})")
+        if x == 0:
+            raise ValueError("X coordinate 0 is reserved as the terminator")
+        result.append(x)
+        result.append(y_raw)
+    result.append(0x00)  # terminator
+    return bytes(result)
+
+
+def patch_text_crawl(exod_data: bytearray, crawl_bytes: bytes) -> None:
+    """Write text crawl byte stream back into EXOD binary."""
+    end = TEXT_CRAWL_OFFSET + len(crawl_bytes)
+    exod_data[TEXT_CRAWL_OFFSET:end] = crawl_bytes
+
+
+def render_text_crawl(coords: list) -> list:
+    """Render text crawl coordinates as RGB pixel data on a 280x192 canvas.
+
+    Each point is rendered as a double-wide white pixel (matching
+    intro_plot_pair: plots at column X+1 and column X).
+
+    Returns flat list of (r,g,b) tuples, 280*192 entries.
+    """
+    white = (255, 255, 255)
+    black = (0, 0, 0)
+    pixels = [black] * (HGR_WIDTH * HGR_ROWS)
+
+    for x, screen_y in coords:
+        if 0 <= screen_y < HGR_ROWS:
+            # Plot at (x, screen_y) — same as intro_plot_pixel
+            if 0 <= x < HGR_WIDTH:
+                pixels[screen_y * HGR_WIDTH + x] = white
+            # Plot at (x+1, screen_y) — intro_plot_pair plots x+1 first
+            if 0 <= x + 1 < HGR_WIDTH:
+                pixels[screen_y * HGR_WIDTH + x + 1] = white
+
+    return pixels
+
+
+# ============================================================================
+# Glyph table extraction
+# ============================================================================
+
+def extract_glyph_pointers(exod_data: bytes) -> list:
+    """Extract the 5-entry glyph pointer table from file offset $0400.
+
+    Returns list of 5 raw 16-bit LE pointer values (runtime memory addresses).
+    """
+    pointers = []
+    for i in range(GLYPH_COUNT):
+        offset = GLYPH_TABLE_OFFSET + i * 2
+        ptr = struct.unpack_from('<H', exod_data, offset)[0]
+        pointers.append(ptr)
+    return pointers
+
+
+def extract_glyph_subpointers(exod_data: bytes, base_ptr: int) -> list:
+    """Extract the 7-entry sub-pointer table for one glyph.
+
+    Each glyph's main pointer leads to a sub-table of 7 x 16-bit LE
+    pointers, one per column variant. Each sub-pointer addresses a
+    208-byte pixel data block.
+
+    Args:
+        exod_data: Full EXOD binary data.
+        base_ptr: Runtime memory address of the sub-pointer table
+                  (from the main glyph pointer table).
+
+    Returns list of 7 raw 16-bit LE pointer values.
+    """
+    file_off = glyph_ptr_to_file_offset(base_ptr)
+    if file_off < 0:
+        return [0] * GLYPH_VARIANTS
+    subptrs = []
+    for i in range(GLYPH_VARIANTS):
+        offset = file_off + i * 2
+        if offset + 2 <= len(exod_data):
+            ptr = struct.unpack_from('<H', exod_data, offset)[0]
+        else:
+            ptr = 0
+        subptrs.append(ptr)
+    return subptrs
+
+
+def glyph_ptr_to_file_offset(ptr: int) -> int:
+    """Convert a glyph runtime memory pointer to EXOD file offset.
+
+    At runtime, memory $0800-$3FFF contains data from file offsets
+    $0800-$3FFF (via memcpy $2800→$0800). Memory $0400-$07FF contains
+    data from file offsets $0400-$07FF (via memcpy $2400→$8800 + memswap).
+
+    So for pointers in the $0400-$3FFF range, file offset = pointer value.
+    """
+    if 0x0400 <= ptr <= 0x3FFF:
+        return ptr
+    return -1  # pointer outside known data region
+
+
+def extract_glyph_data(exod_data: bytes, file_offset: int) -> bytes:
+    """Extract one glyph's pixel data (208 bytes) from a file offset."""
+    if file_offset < 0 or file_offset + GLYPH_DATA_SIZE > len(exod_data):
+        return b'\x00' * GLYPH_DATA_SIZE
+    return bytes(exod_data[file_offset:file_offset + GLYPH_DATA_SIZE])
+
+
+def glyph_to_pixels(glyph_data: bytes) -> tuple:
+    """Render glyph pixel data (16 rows x 13 bytes) to RGB pixels.
+
+    Returns (pixels, width, height) where width = 91, height = 16.
+    """
+    width = GLYPH_COLS * HGR_PIXELS_PER_BYTE  # 91 pixels
+    height = GLYPH_ROWS
+    pixels = []
+    for row in range(height):
+        row_start = row * GLYPH_COLS
+        row_data = glyph_data[row_start:row_start + GLYPH_COLS]
+        if len(row_data) < GLYPH_COLS:
+            row_data = row_data + b'\x00' * (GLYPH_COLS - len(row_data))
+        pixels.extend(render_hgr_row(row_data))
+    return pixels, width, height
+
+
+# ============================================================================
 # CLI commands
 # ============================================================================
 
@@ -785,8 +966,315 @@ def cmd_import(args) -> None:
 
 
 # ============================================================================
+# Text crawl CLI commands
+# ============================================================================
+
+def cmd_crawl_view(args) -> None:
+    """Display text crawl coordinate pairs."""
+    filepath = args.file
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    coords = extract_text_crawl(data)
+
+    print(f"=== EXOD Text Crawl: {os.path.basename(filepath)} ===")
+    print(f"  Offset: ${TEXT_CRAWL_OFFSET:04X} (memory $8000)")
+    print(f"  Points: {len(coords)}")
+    print(f"  Data bytes: {len(coords) * 2 + 1} (pairs + terminator)")
+    print()
+
+    if getattr(args, 'json', False):
+        result = {
+            'description': 'EXOD text crawl coordinate data',
+            'offset': f'0x{TEXT_CRAWL_OFFSET:04X}',
+            'points': [[x, y] for x, y in coords],
+        }
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"  {'Index':>5}  {'X':>3}  {'Y':>3}   {'Hex':>12}")
+        print(f"  {'-----':>5}  {'---':>3}  {'---':>3}   {'------------':>12}")
+        for i, (x, y) in enumerate(coords):
+            print(f"  {i:>5}  {x:>3}  {y:>3}   "
+                  f"(${x:02X}, ${y:02X})")
+
+
+def cmd_crawl_export(args) -> None:
+    """Export text crawl as JSON."""
+    filepath = args.file
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    coords = extract_text_crawl(data)
+
+    result = {
+        'description': 'EXOD text crawl coordinate data',
+        'offset': f'0x{TEXT_CRAWL_OFFSET:04X}',
+        'points': [[x, y] for x, y in coords],
+    }
+
+    output_path = getattr(args, 'output', None)
+    json_str = json.dumps(result, indent=2) + '\n'
+
+    if output_path:
+        with open(output_path, 'w') as f:
+            f.write(json_str)
+        print(f"  Exported {len(coords)} points -> {output_path}")
+    else:
+        print(json_str)
+
+
+def cmd_crawl_import(args) -> None:
+    """Import text crawl from JSON."""
+    filepath = args.file
+    json_path = args.json_file
+
+    if not os.path.isfile(filepath):
+        print(f"Error: EXOD file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+    if not os.path.isfile(json_path):
+        print(f"Error: JSON file not found: {json_path}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(json_path, 'r') as f:
+        json_data = json.load(f)
+
+    points = json_data.get('points', [])
+    coords = [(p[0], p[1]) for p in points]
+
+    crawl_bytes = build_text_crawl(coords)
+
+    with open(filepath, 'rb') as f:
+        exod_data = bytearray(f.read())
+
+    print(f"  Importing {len(coords)} points ({len(crawl_bytes)} bytes)")
+
+    if getattr(args, 'dry_run', False):
+        print("  (dry run — no file written)")
+        return
+
+    from .fileutil import backup_file
+    if getattr(args, 'backup', False):
+        backup_file(filepath)
+
+    patch_text_crawl(exod_data, crawl_bytes)
+    with open(filepath, 'wb') as f:
+        f.write(exod_data)
+    print(f"  Written: {filepath}")
+
+
+def cmd_crawl_render(args) -> None:
+    """Render text crawl coordinates as a PNG image."""
+    filepath = args.file
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    coords = extract_text_crawl(data)
+    pixels = render_text_crawl(coords)
+
+    render_scale = getattr(args, 'scale', 2)
+    width, height = HGR_WIDTH, HGR_ROWS
+    if render_scale > 1:
+        pixels, width, height = scale_pixels(pixels, width, height, render_scale)
+
+    output_path = getattr(args, 'output', None) or 'crawl.png'
+    write_png(output_path, pixels, width, height)
+    print(f"  Rendered {len(coords)} points ({HGR_WIDTH}x{HGR_ROWS}) "
+          f"-> {output_path}")
+
+
+# ============================================================================
+# Glyph table CLI commands
+# ============================================================================
+
+def cmd_glyph_view(args) -> None:
+    """Display glyph pointer table structure."""
+    filepath = args.file
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    pointers = extract_glyph_pointers(data)
+
+    print(f"=== EXOD Glyph Table: {os.path.basename(filepath)} ===")
+    print(f"  Offset: ${GLYPH_TABLE_OFFSET:04X} (memory $2400)")
+    print(f"  Entries: {GLYPH_COUNT} (indices 0-3 drawn, 4 is sentinel)")
+    print(f"  Variants: {GLYPH_VARIANTS} column variants per glyph")
+    print(f"  Variant size: {GLYPH_ROWS} rows x {GLYPH_COLS} bytes "
+          f"= {GLYPH_DATA_SIZE} bytes ({GLYPH_COLS * HGR_PIXELS_PER_BYTE}x"
+          f"{GLYPH_ROWS} pixels)")
+    print()
+
+    print(f"  {'Index':>5}  {'Pointer':>8}  {'File Offset':>12}  {'Status'}")
+    print(f"  {'-----':>5}  {'--------':>8}  {'------------':>12}  {'------'}")
+    for i, ptr in enumerate(pointers):
+        file_off = glyph_ptr_to_file_offset(ptr)
+        if file_off >= 0:
+            status = 'OK'
+            off_str = f"${file_off:04X}"
+        else:
+            status = 'out of range'
+            off_str = '???'
+        used = 'drawn' if i < 4 else 'sentinel'
+        print(f"  {i:>5}  ${ptr:04X}    {off_str:>12}  {status} ({used})")
+
+        # Show sub-pointer table for valid glyphs
+        if file_off >= 0:
+            subptrs = extract_glyph_subpointers(data, ptr)
+            for j, sp in enumerate(subptrs):
+                sp_off = glyph_ptr_to_file_offset(sp)
+                sp_status = 'OK' if sp_off >= 0 and sp_off + GLYPH_DATA_SIZE <= len(data) else '?'
+                sp_off_str = f"${sp_off:04X}" if sp_off >= 0 else '???'
+                print(f"         var {j}: ${sp:04X} -> {sp_off_str}  {sp_status}")
+
+    if getattr(args, 'json', False):
+        result = {
+            'description': 'EXOD glyph pointer table',
+            'offset': f'0x{GLYPH_TABLE_OFFSET:04X}',
+            'variants_per_glyph': GLYPH_VARIANTS,
+            'variant_size': {'rows': GLYPH_ROWS, 'cols': GLYPH_COLS,
+                             'bytes': GLYPH_DATA_SIZE},
+            'glyphs': [],
+        }
+        for i, ptr in enumerate(pointers):
+            glyph_info = {
+                'index': i,
+                'pointer': f'0x{ptr:04X}',
+                'file_offset': (f'0x{glyph_ptr_to_file_offset(ptr):04X}'
+                                if glyph_ptr_to_file_offset(ptr) >= 0 else None),
+                'variants': [],
+            }
+            if glyph_ptr_to_file_offset(ptr) >= 0:
+                subptrs = extract_glyph_subpointers(data, ptr)
+                for j, sp in enumerate(subptrs):
+                    sp_off = glyph_ptr_to_file_offset(sp)
+                    glyph_info['variants'].append({
+                        'variant': j,
+                        'pointer': f'0x{sp:04X}',
+                        'file_offset': (f'0x{sp_off:04X}'
+                                        if sp_off >= 0 else None),
+                    })
+            result['glyphs'].append(glyph_info)
+        print()
+        print(json.dumps(result, indent=2))
+
+
+def cmd_glyph_export(args) -> None:
+    """Export glyph pixel data as PNG images.
+
+    Each glyph has 7 column variants. Exports each variant as a
+    separate PNG: glyph_0_v0.png through glyph_0_v6.png.
+    """
+    filepath = args.file
+    if not os.path.isfile(filepath):
+        print(f"Error: File not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    output_dir = getattr(args, 'output', None) or '.'
+    os.makedirs(output_dir, exist_ok=True)
+    render_scale = getattr(args, 'scale', 2)
+
+    pointers = extract_glyph_pointers(data)
+
+    for i, ptr in enumerate(pointers):
+        file_off = glyph_ptr_to_file_offset(ptr)
+        if file_off < 0:
+            print(f"  Glyph {i}: pointer ${ptr:04X} out of range, skipped")
+            continue
+
+        subptrs = extract_glyph_subpointers(data, ptr)
+        for j, sp in enumerate(subptrs):
+            sp_off = glyph_ptr_to_file_offset(sp)
+            if sp_off < 0:
+                print(f"  Glyph {i} var {j}: pointer ${sp:04X} "
+                      f"out of range, skipped")
+                continue
+
+            glyph_data = extract_glyph_data(data, sp_off)
+            pixels, width, height = glyph_to_pixels(glyph_data)
+
+            if render_scale > 1:
+                pixels, width, height = scale_pixels(pixels, width, height,
+                                                     render_scale)
+
+            out_path = os.path.join(output_dir, f'glyph_{i}_v{j}.png')
+            write_png(out_path, pixels, width, height)
+            print(f"  Exported glyph {i} var {j}: ${sp:04X} -> {out_path} "
+                  f"({GLYPH_COLS * HGR_PIXELS_PER_BYTE}x{GLYPH_ROWS})")
+
+
+# ============================================================================
 # CLI registration
 # ============================================================================
+
+def _add_crawl_parsers(parent_sub) -> None:
+    """Add text crawl subcommands to a subparser group."""
+    crawl_parser = parent_sub.add_parser(
+        'crawl', help='Text crawl coordinate data editor')
+    crawl_sub = crawl_parser.add_subparsers(dest='crawl_cmd',
+                                            help='Crawl command')
+
+    # crawl view
+    cv = crawl_sub.add_parser('view', help='Show text crawl coordinates')
+    cv.add_argument('file', help='Path to EXOD binary')
+    cv.add_argument('--json', action='store_true', help='JSON output')
+
+    # crawl export
+    ce = crawl_sub.add_parser('export', help='Export crawl as JSON')
+    ce.add_argument('file', help='Path to EXOD binary')
+    ce.add_argument('-o', '--output', help='Output JSON file')
+
+    # crawl import
+    ci = crawl_sub.add_parser('import', help='Import crawl from JSON')
+    ci.add_argument('file', help='Path to EXOD binary')
+    ci.add_argument('json_file', help='Path to JSON file')
+    ci.add_argument('--backup', action='store_true', help='Create .bak backup')
+    ci.add_argument('--dry-run', action='store_true', help='Show changes only')
+
+    # crawl render
+    cr = crawl_sub.add_parser('render', help='Render crawl as PNG')
+    cr.add_argument('file', help='Path to EXOD binary')
+    cr.add_argument('-o', '--output', help='Output PNG file')
+    cr.add_argument('--scale', type=int, default=2,
+                    help='Scale factor (default: 2)')
+
+
+def _add_glyph_parsers(parent_sub) -> None:
+    """Add glyph table subcommands to a subparser group."""
+    glyph_parser = parent_sub.add_parser(
+        'glyph', help='Glyph table viewer')
+    glyph_sub = glyph_parser.add_subparsers(dest='glyph_cmd',
+                                            help='Glyph command')
+
+    # glyph view
+    gv = glyph_sub.add_parser('view', help='Show glyph pointer table')
+    gv.add_argument('file', help='Path to EXOD binary')
+    gv.add_argument('--json', action='store_true', help='JSON output')
+
+    # glyph export
+    ge = glyph_sub.add_parser('export', help='Export glyph data as PNG')
+    ge.add_argument('file', help='Path to EXOD binary')
+    ge.add_argument('-o', '--output', help='Output directory')
+    ge.add_argument('--scale', type=int, default=2,
+                    help='Scale factor (default: 2)')
+
 
 def register_parser(subparsers) -> None:
     """Register EXOD subcommands with the CLI parser."""
@@ -820,6 +1308,40 @@ def register_parser(subparsers) -> None:
     import_parser.add_argument('--dither', action='store_true',
                                help='Floyd-Steinberg error diffusion dithering')
 
+    # crawl / glyph nested subcommands
+    _add_crawl_parsers(exod_sub)
+    _add_glyph_parsers(exod_sub)
+
+
+def _dispatch_crawl(args) -> None:
+    """Route to the correct crawl subcommand."""
+    cmd = getattr(args, 'crawl_cmd', None)
+    if cmd == 'view':
+        cmd_crawl_view(args)
+    elif cmd == 'export':
+        cmd_crawl_export(args)
+    elif cmd == 'import':
+        cmd_crawl_import(args)
+    elif cmd == 'render':
+        cmd_crawl_render(args)
+    else:
+        print("Usage: ult3edit exod crawl {view|export|import|render} ...",
+              file=sys.stderr)
+        sys.exit(1)
+
+
+def _dispatch_glyph(args) -> None:
+    """Route to the correct glyph subcommand."""
+    cmd = getattr(args, 'glyph_cmd', None)
+    if cmd == 'view':
+        cmd_glyph_view(args)
+    elif cmd == 'export':
+        cmd_glyph_export(args)
+    else:
+        print("Usage: ult3edit exod glyph {view|export} ...",
+              file=sys.stderr)
+        sys.exit(1)
+
 
 def dispatch(args) -> None:
     """Route to the correct EXOD subcommand."""
@@ -830,8 +1352,13 @@ def dispatch(args) -> None:
         cmd_export(args)
     elif cmd == 'import':
         cmd_import(args)
+    elif cmd == 'crawl':
+        _dispatch_crawl(args)
+    elif cmd == 'glyph':
+        _dispatch_glyph(args)
     else:
-        print("Usage: ult3edit exod {view|export|import} ...", file=sys.stderr)
+        print("Usage: ult3edit exod {view|export|import|crawl|glyph} ...",
+              file=sys.stderr)
         sys.exit(1)
 
 
@@ -863,6 +1390,10 @@ def main() -> None:
     import_p.add_argument('--dry-run', action='store_true', help='Show changes only')
     import_p.add_argument('--dither', action='store_true',
                           help='Floyd-Steinberg error diffusion dithering')
+
+    # crawl / glyph nested subcommands
+    _add_crawl_parsers(sub)
+    _add_glyph_parsers(sub)
 
     args = parser.parse_args()
     if not args.exod_cmd:

@@ -9,6 +9,12 @@ import pytest
 from ult3edit.exod import (
     EXOD_SIZE,
     FRAMES,
+    GLYPH_COLS,
+    GLYPH_COUNT,
+    GLYPH_DATA_SIZE,
+    GLYPH_ROWS,
+    GLYPH_TABLE_OFFSET,
+    GLYPH_VARIANTS,
     HGR_BYTES_PER_ROW,
     HGR_PAGE2_FILE_OFFSET,
     HGR_PAGE_SIZE,
@@ -19,20 +25,30 @@ from ult3edit.exod import (
     LUMA_R, LUMA_G, LUMA_B,
     PALETTE_0_COLORS,
     PALETTE_1_COLORS,
+    TEXT_CRAWL_OFFSET,
     _color_distance,
     _match_color_error,
     build_scanline_table,
+    build_text_crawl,
     canvas_to_pixels,
     encode_hgr_image,
     encode_hgr_row,
     extract_frame,
+    extract_glyph_data,
+    extract_glyph_pointers,
+    extract_glyph_subpointers,
     extract_hgr_page,
+    extract_text_crawl,
     frame_to_pixels,
+    glyph_ptr_to_file_offset,
+    glyph_to_pixels,
     hgr_scanline_offset,
     insert_frame,
     patch_hgr_page,
+    patch_text_crawl,
     read_hgr_scanline,
     read_png,
+    render_text_crawl,
     write_hgr_scanline,
     pixels_to_frame_rows,
     _nearest_hgr_color,
@@ -793,3 +809,412 @@ class TestDithering:
         # Even and odd rows should differ (serpentine changes scan direction)
         # With non-trivial content, rows won't all be identical
         assert len(rows) == 4
+
+
+# ============================================================================
+# Text crawl extraction / building
+# ============================================================================
+
+class TestTextCrawlExtract:
+    """Test text crawl coordinate extraction from binary data."""
+
+    def test_empty_stream(self):
+        """$00 at start produces empty result."""
+        data = bytearray(EXOD_SIZE)
+        data[TEXT_CRAWL_OFFSET] = 0x00
+        coords = extract_text_crawl(data)
+        assert coords == []
+
+    def test_single_pair(self):
+        """One (X, Y) pair followed by $00."""
+        data = bytearray(EXOD_SIZE)
+        data[TEXT_CRAWL_OFFSET] = 0x5E      # X = 94
+        data[TEXT_CRAWL_OFFSET + 1] = 0x3D  # Y_raw = 61, screen = 0xBF-0x3D = 130
+        data[TEXT_CRAWL_OFFSET + 2] = 0x00  # terminator
+        coords = extract_text_crawl(data)
+        assert len(coords) == 1
+        assert coords[0] == (94, 130)
+
+    def test_multiple_pairs(self):
+        """Multiple pairs extracted correctly."""
+        data = bytearray(EXOD_SIZE)
+        # Three pairs: (10, 0x10), (20, 0x20), (30, 0x30)
+        pairs = [(10, 0x10), (20, 0x20), (30, 0x30)]
+        pos = TEXT_CRAWL_OFFSET
+        for x, y_raw in pairs:
+            data[pos] = x
+            data[pos + 1] = y_raw
+            pos += 2
+        data[pos] = 0x00  # terminator
+        coords = extract_text_crawl(data)
+        assert len(coords) == 3
+        assert coords[0] == (10, 0xBF - 0x10)
+        assert coords[1] == (20, 0xBF - 0x20)
+        assert coords[2] == (30, 0xBF - 0x30)
+
+    def test_y_inversion(self):
+        """Y coordinate is inverted via 0xBF - raw_byte."""
+        data = bytearray(EXOD_SIZE)
+        data[TEXT_CRAWL_OFFSET] = 0x01      # X = 1
+        data[TEXT_CRAWL_OFFSET + 1] = 0x00  # Y_raw = 0, screen = 0xBF = 191
+        data[TEXT_CRAWL_OFFSET + 2] = 0x00  # terminator
+        coords = extract_text_crawl(data)
+        assert coords[0] == (1, 0xBF)  # 191
+
+    def test_max_y(self):
+        """Y raw 0xBF gives screen Y = 0."""
+        data = bytearray(EXOD_SIZE)
+        data[TEXT_CRAWL_OFFSET] = 0x01
+        data[TEXT_CRAWL_OFFSET + 1] = 0xBF  # screen = 0xBF-0xBF = 0
+        data[TEXT_CRAWL_OFFSET + 2] = 0x00
+        coords = extract_text_crawl(data)
+        assert coords[0] == (1, 0)
+
+
+class TestTextCrawlBuild:
+    """Test text crawl byte stream building from coordinates."""
+
+    def test_empty(self):
+        """Empty coords produce just a terminator."""
+        result = build_text_crawl([])
+        assert result == b'\x00'
+
+    def test_single_pair(self):
+        """Single coordinate pair."""
+        result = build_text_crawl([(94, 130)])
+        # X=94, Y_raw = 0xBF-130 = 0x3D
+        assert result == bytes([94, 0x3D, 0x00])
+
+    def test_roundtrip(self):
+        """Build from coords, write to binary, extract back, compare."""
+        coords = [(50, 100), (60, 80), (70, 60)]
+        crawl_bytes = build_text_crawl(coords)
+
+        data = bytearray(EXOD_SIZE)
+        patch_text_crawl(data, crawl_bytes)
+        extracted = extract_text_crawl(data)
+        assert extracted == coords
+
+    def test_x_zero_raises(self):
+        """X=0 is the terminator and should be rejected."""
+        with pytest.raises(ValueError, match="X coordinate 0"):
+            build_text_crawl([(0, 100)])
+
+    def test_x_out_of_range_raises(self):
+        """X > 255 should be rejected."""
+        with pytest.raises(ValueError, match="X coordinate"):
+            build_text_crawl([(256, 100)])
+
+    def test_y_produces_valid_raw(self):
+        """Screen Y that produces negative raw Y should be rejected."""
+        # screen_y = 200, y_raw = 0xBF - 200 = -9 → invalid
+        with pytest.raises(ValueError):
+            build_text_crawl([(1, 200)])
+
+    def test_terminator_present(self):
+        """Output always ends with $00."""
+        result = build_text_crawl([(10, 50), (20, 60)])
+        assert result[-1] == 0x00
+
+    def test_many_pairs(self):
+        """Build with many pairs preserves all data."""
+        coords = [(x, x % 192) for x in range(1, 100)]
+        result = build_text_crawl(coords)
+        assert len(result) == 99 * 2 + 1  # pairs + terminator
+
+
+class TestTextCrawlRender:
+    """Test text crawl rendering to pixel data."""
+
+    def test_empty_is_all_black(self):
+        """No coords produces a black canvas."""
+        pixels = render_text_crawl([])
+        assert len(pixels) == HGR_WIDTH * HGR_ROWS
+        assert all(p == (0, 0, 0) for p in pixels)
+
+    def test_single_point_double_wide(self):
+        """Single point plots at (x, y) and (x+1, y)."""
+        pixels = render_text_crawl([(50, 100)])
+        white = (255, 255, 255)
+        assert pixels[100 * HGR_WIDTH + 50] == white
+        assert pixels[100 * HGR_WIDTH + 51] == white
+        # Adjacent pixels should be black
+        assert pixels[100 * HGR_WIDTH + 49] == (0, 0, 0)
+        assert pixels[100 * HGR_WIDTH + 52] == (0, 0, 0)
+
+    def test_point_at_right_edge(self):
+        """Point at x=279 only plots one pixel (x+1=280 is out of bounds)."""
+        pixels = render_text_crawl([(279, 50)])
+        white = (255, 255, 255)
+        assert pixels[50 * HGR_WIDTH + 279] == white
+        # x+1=280 is out of range, should not crash
+
+    def test_point_out_of_y_range_ignored(self):
+        """Points with Y >= 192 or Y < 0 are silently ignored."""
+        # Should not crash
+        pixels = render_text_crawl([(50, 192)])
+        pixels2 = render_text_crawl([(50, -1)])
+        assert len(pixels) == HGR_WIDTH * HGR_ROWS
+        assert len(pixels2) == HGR_WIDTH * HGR_ROWS
+
+    def test_multiple_points(self):
+        """Multiple points are all rendered."""
+        coords = [(10, 10), (20, 20), (30, 30)]
+        pixels = render_text_crawl(coords)
+        white = (255, 255, 255)
+        for x, y in coords:
+            assert pixels[y * HGR_WIDTH + x] == white
+            assert pixels[y * HGR_WIDTH + x + 1] == white
+
+
+class TestPatchTextCrawl:
+    """Test writing text crawl data back to EXOD binary."""
+
+    def test_patch_and_extract(self):
+        """Write crawl bytes and extract them back."""
+        data = bytearray(EXOD_SIZE)
+        crawl = bytes([0x5E, 0x3D, 0x5F, 0x3C, 0x00])
+        patch_text_crawl(data, crawl)
+        assert data[TEXT_CRAWL_OFFSET:TEXT_CRAWL_OFFSET + 5] == crawl
+
+    def test_does_not_clobber_other_data(self):
+        """Patching crawl data doesn't affect other regions."""
+        data = bytearray(EXOD_SIZE)
+        data[0] = 0xAA
+        data[TEXT_CRAWL_OFFSET - 1] = 0xBB
+        crawl = bytes([0x01, 0x02, 0x00])
+        patch_text_crawl(data, crawl)
+        assert data[0] == 0xAA
+        assert data[TEXT_CRAWL_OFFSET - 1] == 0xBB
+
+
+# ============================================================================
+# Glyph table extraction
+# ============================================================================
+
+class TestGlyphPointers:
+    """Test glyph pointer table extraction."""
+
+    def test_extract_count(self):
+        """Extracts exactly 5 pointers."""
+        data = bytearray(EXOD_SIZE)
+        pointers = extract_glyph_pointers(data)
+        assert len(pointers) == GLYPH_COUNT
+
+    def test_known_pointers(self):
+        """Verify pointer values from synthesized data."""
+        data = bytearray(EXOD_SIZE)
+        # Write 5 known 16-bit LE pointers at offset $0400
+        test_ptrs = [0x0500, 0x0600, 0x0700, 0x0450, 0x0460]
+        for i, ptr in enumerate(test_ptrs):
+            struct.pack_into('<H', data, GLYPH_TABLE_OFFSET + i * 2, ptr)
+        pointers = extract_glyph_pointers(data)
+        assert pointers == test_ptrs
+
+    def test_ptr_to_file_offset_valid(self):
+        """Pointers in $0400-$3FFF map to same file offset."""
+        assert glyph_ptr_to_file_offset(0x0400) == 0x0400
+        assert glyph_ptr_to_file_offset(0x0500) == 0x0500
+        assert glyph_ptr_to_file_offset(0x3FFF) == 0x3FFF
+
+    def test_ptr_to_file_offset_out_of_range(self):
+        """Pointers outside $0400-$3FFF return -1."""
+        assert glyph_ptr_to_file_offset(0x03FF) == -1
+        assert glyph_ptr_to_file_offset(0x4000) == -1
+        assert glyph_ptr_to_file_offset(0x8000) == -1
+
+
+class TestGlyphSubpointers:
+    """Test glyph sub-pointer table extraction."""
+
+    def test_extract_count(self):
+        """Extracts exactly 7 sub-pointers."""
+        data = bytearray(EXOD_SIZE)
+        # Set up main pointer at $0400 -> $0500
+        struct.pack_into('<H', data, GLYPH_TABLE_OFFSET, 0x0500)
+        # Write 7 sub-pointers at $0500
+        for i in range(GLYPH_VARIANTS):
+            struct.pack_into('<H', data, 0x0500 + i * 2, 0x0600 + i * GLYPH_DATA_SIZE)
+        subptrs = extract_glyph_subpointers(data, 0x0500)
+        assert len(subptrs) == GLYPH_VARIANTS
+
+    def test_known_subpointers(self):
+        """Verify sub-pointer values from synthesized data."""
+        data = bytearray(EXOD_SIZE)
+        # Write 7 known sub-pointers at file offset $0500
+        expected = [0x050E, 0x05DE, 0x06AE, 0x077E, 0x084E, 0x091E, 0x09EE]
+        for i, ptr in enumerate(expected):
+            struct.pack_into('<H', data, 0x0500 + i * 2, ptr)
+        subptrs = extract_glyph_subpointers(data, 0x0500)
+        assert subptrs == expected
+
+    def test_subpointers_are_208_apart(self):
+        """Sub-pointers should be GLYPH_DATA_SIZE apart in real data."""
+        data = bytearray(EXOD_SIZE)
+        # Simulate real layout: sub-table at $0500, data blocks at $050E+
+        base_data = 0x050E  # first data block after 7*2=14 bytes of pointers
+        for i in range(GLYPH_VARIANTS):
+            struct.pack_into('<H', data, 0x0500 + i * 2,
+                             base_data + i * GLYPH_DATA_SIZE)
+        subptrs = extract_glyph_subpointers(data, 0x0500)
+        for i in range(1, GLYPH_VARIANTS):
+            assert subptrs[i] - subptrs[i - 1] == GLYPH_DATA_SIZE
+
+    def test_out_of_range_base_returns_zeros(self):
+        """Out-of-range base pointer returns all-zero sub-pointers."""
+        data = bytearray(EXOD_SIZE)
+        subptrs = extract_glyph_subpointers(data, 0x0100)  # below $0400
+        assert subptrs == [0] * GLYPH_VARIANTS
+
+    def test_subpointer_to_pixel_data(self):
+        """Sub-pointer resolves to correct pixel data."""
+        data = bytearray(EXOD_SIZE)
+        # Sub-table at $0500 with one pointer to $0600
+        struct.pack_into('<H', data, 0x0500, 0x0600)
+        # Write known pixel data at $0600
+        for i in range(GLYPH_DATA_SIZE):
+            data[0x0600 + i] = (i * 3) & 0xFF
+        subptrs = extract_glyph_subpointers(data, 0x0500)
+        sp_off = glyph_ptr_to_file_offset(subptrs[0])
+        glyph = extract_glyph_data(data, sp_off)
+        for i in range(GLYPH_DATA_SIZE):
+            assert glyph[i] == (i * 3) & 0xFF
+
+
+class TestGlyphData:
+    """Test glyph pixel data extraction and rendering."""
+
+    def test_extract_size(self):
+        """Extracted glyph data is 208 bytes."""
+        data = bytearray(EXOD_SIZE)
+        glyph = extract_glyph_data(data, 0x0500)
+        assert len(glyph) == GLYPH_DATA_SIZE
+
+    def test_extract_content(self):
+        """Extracted data matches what was written."""
+        data = bytearray(EXOD_SIZE)
+        # Write a known pattern at file offset $0500
+        for i in range(GLYPH_DATA_SIZE):
+            data[0x0500 + i] = i & 0xFF
+        glyph = extract_glyph_data(data, 0x0500)
+        for i in range(GLYPH_DATA_SIZE):
+            assert glyph[i] == i & 0xFF
+
+    def test_extract_out_of_range_returns_zeros(self):
+        """Out-of-range offset returns zero-filled data."""
+        data = bytearray(100)  # too small
+        glyph = extract_glyph_data(data, 0x0500)
+        assert len(glyph) == GLYPH_DATA_SIZE
+        assert all(b == 0 for b in glyph)
+
+    def test_glyph_to_pixels_dimensions(self):
+        """Glyph renders to 91x16 pixels."""
+        glyph = bytes(GLYPH_DATA_SIZE)
+        pixels, width, height = glyph_to_pixels(glyph)
+        assert width == GLYPH_COLS * HGR_PIXELS_PER_BYTE  # 91
+        assert height == GLYPH_ROWS  # 16
+        assert len(pixels) == width * height
+
+    def test_glyph_to_pixels_all_black(self):
+        """All-zero glyph data renders as all black."""
+        glyph = bytes(GLYPH_DATA_SIZE)
+        pixels, _, _ = glyph_to_pixels(glyph)
+        assert all(p == (0, 0, 0) for p in pixels)
+
+
+# ============================================================================
+# Text crawl / glyph CLI argument parsing
+# ============================================================================
+
+class TestCrawlCLI:
+    """Test crawl subcommand argument parsing."""
+
+    def test_crawl_view_parse(self):
+        """Parse 'exod crawl view <file>'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'view', 'test.bin'])
+        assert args.exod_cmd == 'crawl'
+        assert args.crawl_cmd == 'view'
+        assert args.file == 'test.bin'
+
+    def test_crawl_export_parse(self):
+        """Parse 'exod crawl export <file> -o out.json'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'export', 'EXOD',
+                                  '-o', 'crawl.json'])
+        assert args.crawl_cmd == 'export'
+        assert args.output == 'crawl.json'
+
+    def test_crawl_import_parse(self):
+        """Parse 'exod crawl import <file> <json> --backup --dry-run'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'import', 'EXOD',
+                                  'crawl.json', '--backup', '--dry-run'])
+        assert args.crawl_cmd == 'import'
+        assert args.json_file == 'crawl.json'
+        assert args.backup is True
+        assert args.dry_run is True
+
+    def test_crawl_render_parse(self):
+        """Parse 'exod crawl render <file> -o crawl.png --scale 3'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'render', 'EXOD',
+                                  '-o', 'crawl.png', '--scale', '3'])
+        assert args.crawl_cmd == 'render'
+        assert args.output == 'crawl.png'
+        assert args.scale == 3
+
+
+class TestGlyphCLI:
+    """Test glyph subcommand argument parsing."""
+
+    def test_glyph_view_parse(self):
+        """Parse 'exod glyph view <file>'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'glyph', 'view', 'test.bin'])
+        assert args.exod_cmd == 'glyph'
+        assert args.glyph_cmd == 'view'
+        assert args.file == 'test.bin'
+
+    def test_glyph_export_parse(self):
+        """Parse 'exod glyph export <file> -o dir/ --scale 1'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'glyph', 'export', 'EXOD',
+                                  '-o', 'glyph_dir', '--scale', '1'])
+        assert args.glyph_cmd == 'export'
+        assert args.output == 'glyph_dir'
+        assert args.scale == 1
+
+    def test_glyph_view_json(self):
+        """Parse 'exod glyph view <file> --json'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'glyph', 'view', 'EXOD', '--json'])
+        assert args.json is True
