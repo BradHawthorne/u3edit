@@ -7,6 +7,11 @@ import zlib
 import pytest
 
 from ult3edit.exod import (
+    CRAWL_FONT,
+    CRAWL_FONT_HEIGHT,
+    CRAWL_FONT_SPACING,
+    CRAWL_FONT_WIDTH,
+    CRAWL_WORD_SPACING,
     EXOD_SIZE,
     FRAMES,
     GLYPH_COLS,
@@ -27,10 +32,12 @@ from ult3edit.exod import (
     PALETTE_1_COLORS,
     TEXT_CRAWL_OFFSET,
     _color_distance,
+    _crawl_text_width,
     _match_color_error,
     build_scanline_table,
     build_text_crawl,
     canvas_to_pixels,
+    compose_text_crawl,
     encode_hgr_image,
     encode_hgr_row,
     extract_frame,
@@ -1218,3 +1225,286 @@ class TestGlyphCLI:
         register_parser(subs)
         args = parser.parse_args(['exod', 'glyph', 'view', 'EXOD', '--json'])
         assert args.json is True
+
+
+# ============================================================================
+# Crawl font tests
+# ============================================================================
+
+class TestCrawlFont:
+    """Test the 5x7 bitmap font definition."""
+
+    def test_has_uppercase_letters(self):
+        """Font contains all 26 uppercase letters."""
+        for ch in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+            assert ch in CRAWL_FONT, f"Missing letter: {ch}"
+
+    def test_has_digits(self):
+        """Font contains all 10 digits."""
+        for ch in '0123456789':
+            assert ch in CRAWL_FONT, f"Missing digit: {ch}"
+
+    def test_has_punctuation(self):
+        """Font contains basic punctuation."""
+        for ch in ".,:'!-":
+            assert ch in CRAWL_FONT, f"Missing punctuation: {ch}"
+
+    def test_glyphs_fit_in_cell(self):
+        """All glyph pixels fit within 5x7 cell."""
+        for ch, pixels in CRAWL_FONT.items():
+            for dx, dy in pixels:
+                assert 0 <= dx < CRAWL_FONT_WIDTH, \
+                    f"'{ch}' dx={dx} out of 0..{CRAWL_FONT_WIDTH - 1}"
+                assert 0 <= dy < CRAWL_FONT_HEIGHT, \
+                    f"'{ch}' dy={dy} out of 0..{CRAWL_FONT_HEIGHT - 1}"
+
+    def test_no_duplicate_pixels(self):
+        """No glyph has duplicate pixel positions."""
+        for ch, pixels in CRAWL_FONT.items():
+            assert len(pixels) == len(set(pixels)), \
+                f"'{ch}' has duplicate pixel positions"
+
+    def test_glyphs_nonempty(self):
+        """Every glyph has at least one pixel."""
+        for ch, pixels in CRAWL_FONT.items():
+            assert len(pixels) > 0, f"'{ch}' has no pixels"
+
+    def test_font_constants(self):
+        """Font dimension constants are correct."""
+        assert CRAWL_FONT_WIDTH == 5
+        assert CRAWL_FONT_HEIGHT == 7
+        assert CRAWL_FONT_SPACING == 1
+        assert CRAWL_WORD_SPACING == 3
+
+
+# ============================================================================
+# Crawl text width tests
+# ============================================================================
+
+class TestCrawlTextWidth:
+    """Test the _crawl_text_width helper."""
+
+    def test_empty_string(self):
+        """Empty string has zero width."""
+        assert _crawl_text_width('') == 0
+
+    def test_single_char(self):
+        """Single character is just cell width."""
+        assert _crawl_text_width('A') == CRAWL_FONT_WIDTH
+
+    def test_two_chars(self):
+        """Two characters with default spacing."""
+        expected = CRAWL_FONT_WIDTH + CRAWL_FONT_SPACING + CRAWL_FONT_WIDTH
+        assert _crawl_text_width('AB') == expected
+
+    def test_space_adds_word_spacing(self):
+        """Space character adds CRAWL_WORD_SPACING extra pixels."""
+        # "A B" = A(5) + spacing(1) + space_cell(5+3) + spacing(1) + B(5)
+        expected = (CRAWL_FONT_WIDTH + CRAWL_FONT_SPACING +
+                    CRAWL_FONT_WIDTH + CRAWL_WORD_SPACING + CRAWL_FONT_SPACING +
+                    CRAWL_FONT_WIDTH)
+        assert _crawl_text_width('A B') == expected
+
+    def test_custom_spacing(self):
+        """Custom spacing overrides default."""
+        expected = CRAWL_FONT_WIDTH + 3 + CRAWL_FONT_WIDTH
+        assert _crawl_text_width('AB', spacing=3) == expected
+
+
+# ============================================================================
+# Compose text crawl tests
+# ============================================================================
+
+class TestComposeCrawl:
+    """Test compose_text_crawl() coordinate generation."""
+
+    def test_single_char_points(self):
+        """Single character 'I' produces known pixel coordinates."""
+        # 'I' at position (100, 132): top row = 5 pixels, then center col
+        coords = compose_text_crawl('I', x=100, y=132)
+        # 'I' has 5 pixels on row 0, 1 center pixel on rows 1-5, 5 on row 6
+        font_i = CRAWL_FONT['I']
+        expected = [(100 + dx, 132 + dy) for dx, dy in font_i]
+        assert coords == expected
+
+    def test_auto_uppercase(self):
+        """Lowercase input produces same output as uppercase."""
+        lower = compose_text_crawl('hi', x=100, y=100)
+        upper = compose_text_crawl('HI', x=100, y=100)
+        assert lower == upper
+
+    def test_auto_center_x(self):
+        """Default x centers the text on 280-pixel screen."""
+        coords = compose_text_crawl('A')  # Single char, auto-centered
+        width = _crawl_text_width('A')
+        expected_x = (HGR_WIDTH - width) // 2
+        # 'A' has pixels at dx=0 (rows 1-6), so min_x = expected_x
+        xs = [c[0] for c in coords]
+        min_x = min(xs)
+        assert min_x == expected_x
+
+    def test_default_y(self):
+        """Default Y is 132 (vanilla crawl region center)."""
+        coords = compose_text_crawl('A')
+        ys = [c[1] for c in coords]
+        min_y = min(ys)
+        # 'A' has pixels starting at dy=0, so min_y = 132
+        assert min_y == 132
+
+    def test_two_chars_spacing(self):
+        """Two characters have correct horizontal separation."""
+        coords = compose_text_crawl('AB', x=10, y=100)
+        # 'A' starts at x=10, 'B' starts at x=10+5+1=16
+        b_pixels = [(16 + dx, 100 + dy) for dx, dy in CRAWL_FONT['B']]
+        for pt in b_pixels:
+            assert pt in coords
+
+    def test_space_advances_cursor(self):
+        """Space character advances cursor without adding points."""
+        # "A B" — the 'B' should start after space width
+        coords_ab = compose_text_crawl('A B', x=10, y=100)
+        # After 'A'(5) + spacing(1) + space_cell(5+3) + spacing(1) = 15
+        b_start_x = 10 + CRAWL_FONT_WIDTH + CRAWL_FONT_SPACING + \
+            CRAWL_FONT_WIDTH + CRAWL_WORD_SPACING + CRAWL_FONT_SPACING
+        b_pixels = [(b_start_x + dx, 100 + dy) for dx, dy in CRAWL_FONT['B']]
+        for pt in b_pixels:
+            assert pt in coords_ab
+
+    def test_custom_spacing(self):
+        """Custom character spacing is applied between characters."""
+        coords = compose_text_crawl('AB', x=10, y=100, spacing=5)
+        # 'B' starts at 10 + 5 + 5 = 20
+        b_pixels = [(20 + dx, 100 + dy) for dx, dy in CRAWL_FONT['B']]
+        for pt in b_pixels:
+            assert pt in coords
+
+    def test_point_count(self):
+        """Total points equals sum of glyph pixel counts."""
+        text = 'BY VOIDBORN'
+        coords = compose_text_crawl(text, x=10, y=100)
+        expected_points = sum(len(CRAWL_FONT[ch]) for ch in text.upper()
+                             if ch in CRAWL_FONT)
+        assert len(coords) == expected_points
+
+    def test_all_coordinates_valid(self):
+        """All generated coordinates are within valid screen bounds."""
+        coords = compose_text_crawl('ABCDEFGHIJ', x=10, y=100)
+        for px, py in coords:
+            assert 1 <= px <= 255, f"X={px} out of range"
+            assert 0 <= py < HGR_ROWS, f"Y={py} out of range"
+
+    def test_compose_render_roundtrip(self):
+        """Composed coordinates can be rendered without error."""
+        coords = compose_text_crawl('TEST', x=100, y=100)
+        pixels = render_text_crawl(coords)
+        assert len(pixels) == HGR_WIDTH * HGR_ROWS  # list of (r,g,b) tuples
+
+
+class TestComposeCrawlValidation:
+    """Test edge cases and validation in compose_text_crawl()."""
+
+    def test_empty_text(self):
+        """Empty text returns no coordinates."""
+        coords = compose_text_crawl('')
+        assert coords == []
+
+    def test_space_only(self):
+        """Space-only text returns no coordinates."""
+        coords = compose_text_crawl('   ')
+        assert coords == []
+
+    def test_unknown_char_skipped(self):
+        """Unknown characters are silently skipped."""
+        # '@' is not in the font
+        coords_a = compose_text_crawl('A', x=10, y=100)
+        coords_at = compose_text_crawl('@', x=10, y=100)
+        assert coords_at == []
+        assert len(coords_a) > 0
+
+    def test_x_overflow_clipped(self):
+        """Points with X < 1 or X > 255 are omitted."""
+        # Place text at x=254 — most pixels will overflow
+        coords = compose_text_crawl('A', x=254, y=100)
+        for px, py in coords:
+            assert 1 <= px <= 255
+
+    def test_y_overflow_clipped(self):
+        """Points with Y >= 192 are omitted."""
+        # Place text at y=190 — lower rows will overflow
+        coords = compose_text_crawl('A', x=100, y=190)
+        for px, py in coords:
+            assert 0 <= py < HGR_ROWS
+        # Should have fewer points than normal since bottom rows clipped
+        all_coords = compose_text_crawl('A', x=100, y=100)
+        assert len(coords) < len(all_coords)
+
+    def test_x_underflow_clipped(self):
+        """Points with X < 1 are omitted."""
+        # 'A' has pixels at dx=0, which at x=0 would be 0 (invalid)
+        coords = compose_text_crawl('A', x=0, y=100)
+        for px, py in coords:
+            assert px >= 1
+
+
+class TestComposeCLI:
+    """Test crawl compose CLI argument parsing."""
+
+    def test_compose_parse_basic(self):
+        """Parse 'exod crawl compose "TEXT" -o out.json'."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'compose', 'HELLO',
+                                  '-o', 'crawl.json'])
+        assert args.crawl_cmd == 'compose'
+        assert args.text == 'HELLO'
+        assert args.output == 'crawl.json'
+
+    def test_compose_parse_all_options(self):
+        """Parse compose with all optional arguments."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'compose', 'BY VOIDBORN',
+                                  '-o', 'crawl.json', '--x', '50', '--y', '140',
+                                  '--spacing', '2', '--render', 'preview.png',
+                                  '--scale', '3'])
+        assert args.text == 'BY VOIDBORN'
+        assert args.x == 50
+        assert args.y == 140
+        assert args.spacing == 2
+        assert args.render == 'preview.png'
+        assert args.scale == 3
+
+    def test_compose_parse_defaults(self):
+        """Compose defaults: x=None, y=None, spacing=1, scale=2."""
+        import argparse
+        from ult3edit.exod import register_parser
+        parser = argparse.ArgumentParser()
+        subs = parser.add_subparsers(dest='tool')
+        register_parser(subs)
+        args = parser.parse_args(['exod', 'crawl', 'compose', 'TEST'])
+        assert args.x is None
+        assert args.y is None
+        assert args.spacing == 1
+        assert args.scale == 2
+        assert args.render is None
+        assert args.output is None
+
+    def test_compose_main_parity(self):
+        """Compose subcommand also works via main() parser."""
+        import argparse
+        from ult3edit.exod import main
+        # main() creates its own parser — test that compose is registered
+        # by importing and building the same parser structure
+        from ult3edit.exod import _add_crawl_parsers
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers(dest='exod_cmd')
+        _add_crawl_parsers(sub)
+        args = parser.parse_args(['crawl', 'compose', 'HI'])
+        assert args.crawl_cmd == 'compose'
+        assert args.text == 'HI'

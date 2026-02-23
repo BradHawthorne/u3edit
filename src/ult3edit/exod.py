@@ -687,6 +687,338 @@ def render_text_crawl(coords: list) -> list:
 
 
 # ============================================================================
+# Text crawl compose (bitmap font → coordinate pairs)
+# ============================================================================
+
+CRAWL_FONT_WIDTH = 5     # pixels per character cell
+CRAWL_FONT_HEIGHT = 7    # pixels per character cell
+CRAWL_FONT_SPACING = 1   # pixels between characters
+CRAWL_WORD_SPACING = 3   # extra pixels for space character
+
+# 5x7 bitmap font — each entry is a list of (dx, dy) pixel offsets
+# within the character cell. Origin is top-left of each cell.
+CRAWL_FONT = {
+    'A': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(4,6)],
+    'B': [(0,0),(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(1,6),(2,6),(3,6)],
+    'C': [(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),
+          (0,3),
+          (0,4),
+          (0,5),
+          (1,6),(2,6),(3,6),(4,6)],
+    'D': [(0,0),(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(1,6),(2,6),(3,6)],
+    'E': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),
+          (0,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    'F': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),
+          (0,5),
+          (0,6)],
+    'G': [(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),
+          (0,3),(2,3),(3,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6),(4,6)],
+    'H': [(0,0),(4,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(4,6)],
+    'I': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (2,1),
+          (2,2),
+          (2,3),
+          (2,4),
+          (2,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    'J': [(3,0),(4,0),
+          (4,1),
+          (4,2),
+          (4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    'K': [(0,0),(4,0),
+          (0,1),(3,1),
+          (0,2),(2,2),
+          (0,3),(1,3),
+          (0,4),(2,4),
+          (0,5),(3,5),
+          (0,6),(4,6)],
+    'L': [(0,0),
+          (0,1),
+          (0,2),
+          (0,3),
+          (0,4),
+          (0,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    'M': [(0,0),(4,0),
+          (0,1),(1,1),(3,1),(4,1),
+          (0,2),(2,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(4,6)],
+    'N': [(0,0),(4,0),
+          (0,1),(1,1),(4,1),
+          (0,2),(2,2),(4,2),
+          (0,3),(3,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (0,6),(4,6)],
+    'O': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    'P': [(0,0),(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),
+          (0,5),
+          (0,6)],
+    'Q': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(2,4),(4,4),
+          (0,5),(3,5),
+          (1,6),(2,6),(4,6)],
+    'R': [(0,0),(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),(2,4),
+          (0,5),(3,5),
+          (0,6),(4,6)],
+    'S': [(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),
+          (1,3),(2,3),(3,3),
+          (4,4),
+          (4,5),
+          (0,6),(1,6),(2,6),(3,6)],
+    'T': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (2,1),
+          (2,2),
+          (2,3),
+          (2,4),
+          (2,5),
+          (2,6)],
+    'U': [(0,0),(4,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    'V': [(0,0),(4,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (1,3),(3,3),
+          (1,4),(3,4),
+          (2,5),
+          (2,6)],
+    'W': [(0,0),(4,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(4,3),
+          (0,4),(2,4),(4,4),
+          (0,5),(1,5),(3,5),(4,5),
+          (0,6),(4,6)],
+    'X': [(0,0),(4,0),
+          (0,1),(4,1),
+          (1,2),(3,2),
+          (2,3),
+          (1,4),(3,4),
+          (0,5),(4,5),
+          (0,6),(4,6)],
+    'Y': [(0,0),(4,0),
+          (0,1),(4,1),
+          (1,2),(3,2),
+          (2,3),
+          (2,4),
+          (2,5),
+          (2,6)],
+    'Z': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (4,1),
+          (3,2),
+          (2,3),
+          (1,4),
+          (0,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    '0': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(3,2),(4,2),
+          (0,3),(2,3),(4,3),
+          (0,4),(1,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    '1': [(2,0),
+          (1,1),(2,1),
+          (2,2),
+          (2,3),
+          (2,4),
+          (2,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    '2': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (4,2),
+          (3,3),
+          (2,4),
+          (1,5),
+          (0,6),(1,6),(2,6),(3,6),(4,6)],
+    '3': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (4,2),
+          (2,3),(3,3),
+          (4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    '4': [(0,0),(4,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (0,3),(1,3),(2,3),(3,3),(4,3),
+          (4,4),
+          (4,5),
+          (4,6)],
+    '5': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (0,1),
+          (0,2),(1,2),(2,2),(3,2),
+          (4,3),
+          (4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    '6': [(1,0),(2,0),(3,0),
+          (0,1),
+          (0,2),
+          (0,3),(1,3),(2,3),(3,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    '7': [(0,0),(1,0),(2,0),(3,0),(4,0),
+          (4,1),
+          (3,2),
+          (2,3),
+          (2,4),
+          (2,5),
+          (2,6)],
+    '8': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (1,3),(2,3),(3,3),
+          (0,4),(4,4),
+          (0,5),(4,5),
+          (1,6),(2,6),(3,6)],
+    '9': [(1,0),(2,0),(3,0),
+          (0,1),(4,1),
+          (0,2),(4,2),
+          (1,3),(2,3),(3,3),(4,3),
+          (4,4),
+          (4,5),
+          (1,6),(2,6),(3,6)],
+    '.': [(2,5),(2,6)],
+    ',': [(2,5),(1,6)],
+    ':': [(2,1),(2,2),(2,4),(2,5)],
+    '!': [(2,0),(2,1),(2,2),(2,3),(2,4),(2,6)],
+    "'": [(2,0),(2,1)],
+    '-': [(1,3),(2,3),(3,3)],
+}
+
+
+def _crawl_text_width(text: str, spacing: int = CRAWL_FONT_SPACING) -> int:
+    """Calculate the total pixel width of composed text."""
+    if not text:
+        return 0
+    width = 0
+    for i, ch in enumerate(text):
+        if ch == ' ':
+            width += CRAWL_FONT_WIDTH + CRAWL_WORD_SPACING
+        else:
+            width += CRAWL_FONT_WIDTH
+        if i < len(text) - 1:
+            width += spacing
+    return width
+
+
+def compose_text_crawl(text: str, x: int = None, y: int = None,
+                       spacing: int = CRAWL_FONT_SPACING) -> list:
+    """Convert a text string to crawl coordinate pairs.
+
+    Uses the built-in 5x7 bitmap font. Auto-centers horizontally if x
+    is not specified. Default Y places text at scanline 132 (vertically
+    centered in the vanilla 128-143 crawl region).
+
+    Args:
+        text: Text string to compose (auto-uppercased).
+        x: X origin pixel. None = auto-center on 280-pixel screen.
+        y: Y origin pixel. None = 132 (vanilla region center).
+        spacing: Pixels between characters (default 1).
+
+    Returns list of (x, screen_y) tuples.
+    """
+    text = text.upper()
+    total_width = _crawl_text_width(text, spacing)
+
+    if x is None:
+        x = (HGR_WIDTH - total_width) // 2
+    if y is None:
+        y = 132
+
+    coords = []
+    cursor_x = x
+    for ch in text:
+        if ch == ' ':
+            cursor_x += CRAWL_FONT_WIDTH + CRAWL_WORD_SPACING + spacing
+            continue
+        glyph = CRAWL_FONT.get(ch)
+        if glyph is None:
+            # Unknown character — skip with standard width
+            cursor_x += CRAWL_FONT_WIDTH + spacing
+            continue
+        for dx, dy in glyph:
+            px = cursor_x + dx
+            py = y + dy
+            if 1 <= px <= 255 and 0 <= py < HGR_ROWS:
+                coords.append((px, py))
+        cursor_x += CRAWL_FONT_WIDTH + spacing
+    return coords
+
+
+# ============================================================================
 # Glyph table extraction
 # ============================================================================
 
@@ -1094,6 +1426,63 @@ def cmd_crawl_render(args) -> None:
           f"-> {output_path}")
 
 
+def cmd_crawl_compose(args) -> None:
+    """Generate text crawl coordinates from a text string."""
+    text = args.text
+    x_origin = getattr(args, 'x', None)
+    y_origin = getattr(args, 'y', None)
+    char_spacing = getattr(args, 'spacing', CRAWL_FONT_SPACING)
+
+    coords = compose_text_crawl(text, x=x_origin, y=y_origin,
+                                spacing=char_spacing)
+
+    if not coords:
+        print("Warning: No coordinates generated (empty or invalid text)",
+              file=sys.stderr)
+
+    # Calculate bounding box
+    if coords:
+        xs = [c[0] for c in coords]
+        ys = [c[1] for c in coords]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        bbox = f"X {min_x}-{max_x}, Y {min_y}-{max_y}"
+    else:
+        bbox = "(empty)"
+
+    print(f"  Text: \"{text}\"")
+    print(f"  Points: {len(coords)}")
+    print(f"  Bounding box: {bbox}")
+
+    result = {
+        'description': 'EXOD text crawl coordinate data',
+        'offset': f'0x{TEXT_CRAWL_OFFSET:04X}',
+        'points': [[x, y] for x, y in coords],
+    }
+
+    output_path = getattr(args, 'output', None)
+    json_str = json.dumps(result, indent=2) + '\n'
+
+    if output_path:
+        with open(output_path, 'w') as f:
+            f.write(json_str)
+        print(f"  Written: {output_path}")
+    else:
+        print(json_str)
+
+    # Optional render
+    render_path = getattr(args, 'render', None)
+    if render_path and coords:
+        pixels = render_text_crawl(coords)
+        render_scale = getattr(args, 'scale', 2)
+        width, height = HGR_WIDTH, HGR_ROWS
+        if render_scale > 1:
+            pixels, width, height = scale_pixels(pixels, width, height,
+                                                 render_scale)
+        write_png(render_path, pixels, width, height)
+        print(f"  Rendered: {render_path}")
+
+
 # ============================================================================
 # Glyph table CLI commands
 # ============================================================================
@@ -1255,6 +1644,21 @@ def _add_crawl_parsers(parent_sub) -> None:
     cr.add_argument('--scale', type=int, default=2,
                     help='Scale factor (default: 2)')
 
+    # crawl compose
+    cc = crawl_sub.add_parser('compose',
+                              help='Generate crawl from text string')
+    cc.add_argument('text', help='Text string to compose')
+    cc.add_argument('-o', '--output', help='Output JSON file')
+    cc.add_argument('--x', type=int, default=None,
+                    help='X origin (default: center)')
+    cc.add_argument('--y', type=int, default=None,
+                    help='Y origin (default: 132)')
+    cc.add_argument('--spacing', type=int, default=1,
+                    help='Character spacing in pixels (default: 1)')
+    cc.add_argument('--render', help='Also render preview PNG')
+    cc.add_argument('--scale', type=int, default=2,
+                    help='Render scale factor (default: 2)')
+
 
 def _add_glyph_parsers(parent_sub) -> None:
     """Add glyph table subcommands to a subparser group."""
@@ -1324,8 +1728,10 @@ def _dispatch_crawl(args) -> None:
         cmd_crawl_import(args)
     elif cmd == 'render':
         cmd_crawl_render(args)
+    elif cmd == 'compose':
+        cmd_crawl_compose(args)
     else:
-        print("Usage: ult3edit exod crawl {view|export|import|render} ...",
+        print("Usage: ult3edit exod crawl {view|export|import|render|compose} ...",
               file=sys.stderr)
         sys.exit(1)
 
