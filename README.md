@@ -2,7 +2,6 @@
 
 [![Tests](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml/badge.svg)](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml)
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/BradHawthorne/ult3edit)
-[![PyPI](https://img.shields.io/pypi/v/ult3edit)](https://pypi.org/project/ult3edit/)
 
 A complete data toolkit for **Ultima III: Exodus** (Apple II, 1983).
 
