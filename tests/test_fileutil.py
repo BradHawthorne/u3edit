@@ -1,7 +1,6 @@
 """Tests for file utilities."""
 
 import os
-import pytest
 
 from ult3edit.fileutil import (
     resolve_game_file, find_game_files, decode_high_ascii, encode_high_ascii,

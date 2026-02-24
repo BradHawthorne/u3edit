@@ -7,16 +7,13 @@ Provides three sub-editors for use within a DrillDownTab:
 """
 
 from ..exod import (
-    EXOD_SIZE,
     FRAMES,
     GLYPH_COLS,
     GLYPH_COUNT,
     GLYPH_DATA_SIZE,
     GLYPH_ROWS,
-    GLYPH_TABLE_OFFSET,
     GLYPH_VARIANTS,
     HGR_PIXELS_PER_BYTE,
-    TEXT_CRAWL_OFFSET,
     build_text_crawl,
     extract_glyph_pointers,
     extract_glyph_subpointers,
@@ -85,7 +82,7 @@ class ExodCrawlEditor:
             if editor.coords:
                 x, y = editor.coords[editor.selected_index]
                 return [
-                    ('class:status', f' Crawl Editor'),
+                    ('class:status', ' Crawl Editor'),
                     ('class:status-dirty' if editor.dirty else 'class:status', dirty),
                     ('class:status', f' | Point {editor.selected_index}/{len(editor.coords)} '
                                      f'  X={x} Y={y}'),
@@ -258,8 +255,6 @@ class ExodFrameViewer:
         from prompt_toolkit.layout.controls import UIControl, UIContent
         from prompt_toolkit.key_binding import KeyBindings
 
-        viewer = self
-
         class FrameTableControl(UIControl):
             def create_content(self, width, height):
                 lines = []
@@ -282,7 +277,7 @@ class ExodFrameViewer:
                                    f'{data_size:>6d}B  {desc}'.ljust(width))])
                 lines.append([('', '')])
                 lines.append([('class:palette-normal',
-                               f'  HGR page: $2000-$3FFF (8,192 bytes)'.ljust(width))])
+                               '  HGR page: $2000-$3FFF (8,192 bytes)'.ljust(width))])
                 return UIContent(
                     get_line=lambda i: lines[i] if i < len(lines) else [],
                     line_count=len(lines),

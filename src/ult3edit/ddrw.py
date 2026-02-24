@@ -165,7 +165,7 @@ def cmd_edit(args) -> None:
         sys.exit(1)
 
     if offset + len(new_bytes) > len(data):
-        print(f"Error: Patch extends past end of file", file=sys.stderr)
+        print("Error: Patch extends past end of file", file=sys.stderr)
         sys.exit(1)
 
     old_bytes = bytes(data[offset:offset + len(new_bytes)])

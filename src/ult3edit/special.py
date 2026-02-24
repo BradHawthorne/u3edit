@@ -14,9 +14,7 @@ import os
 import sys
 
 from .constants import (
-    SPECIAL_NAMES, SPECIAL_FILE_SIZE,
-    SPECIAL_MAP_WIDTH, SPECIAL_MAP_HEIGHT, SPECIAL_MAP_TILES,
-    SPECIAL_META_OFFSET, SPECIAL_META_SIZE,
+    SPECIAL_NAMES, SPECIAL_MAP_WIDTH, SPECIAL_MAP_HEIGHT, SPECIAL_META_OFFSET, SPECIAL_META_SIZE,
     tile_char, TILE_CHARS_REVERSE,
 )
 from .fileutil import resolve_single_file, backup_file, hex_int

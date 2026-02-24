@@ -1,6 +1,6 @@
 """Tests for TextEditor record parsing and rebuilding (no terminal needed)."""
 
-from ult3edit.tui.text_editor import parse_text_records, rebuild_text_data, TextRecord
+from ult3edit.tui.text_editor import parse_text_records, rebuild_text_data
 
 
 class TestParseRecords:

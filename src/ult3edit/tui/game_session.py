@@ -7,8 +7,7 @@ Wraps DiskContext for read/write and catalogs available files by category
 import os
 
 from ..constants import (
-    MAP_LETTERS, MAP_NAMES, MAP_DUNGEON_SIZE,
-    CON_LETTERS, CON_NAMES,
+    MAP_LETTERS, MAP_NAMES, CON_LETTERS, CON_NAMES,
     TLK_LETTERS, TLK_NAMES,
     MON_LETTERS, MON_GROUP_NAMES,
     SPECIAL_NAMES,

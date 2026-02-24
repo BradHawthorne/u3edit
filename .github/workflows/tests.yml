@@ -7,6 +7,22 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check src/ tests/
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -26,3 +42,7 @@ jobs:
 
       - name: Run tests
         run: pytest -v
+
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.13'
+        run: pytest -v --cov=ult3edit --cov-report=xml --cov-report=term-missing

@@ -183,7 +183,7 @@ def cmd_overview(args) -> None:
         if mapa:
             with open(mapa, 'rb') as f:
                 data = f.read()
-            print(f"\n  --- Sosaria Overworld (scaled 4:1) ---\n")
+            print("\n  --- Sosaria Overworld (scaled 4:1) ---\n")
             for y in range(0, 64, 4):
                 row = '  '
                 for x in range(0, 64, 2):

@@ -19,19 +19,18 @@ from typing import Any
 
 from .constants import (
     ROSTER_FILE_SIZE, CHAR_RECORD_SIZE,
-    MON_FILE_SIZE, MON_LETTERS, MON_TERRAIN,
-    CON_FILE_SIZE, CON_NAMES, CON_LETTERS,
-    SPECIAL_FILE_SIZE, SPECIAL_NAMES,
+    MON_FILE_SIZE, MON_LETTERS, CON_FILE_SIZE, CON_NAMES, CON_LETTERS,
+    SPECIAL_NAMES,
     PRTY_FILE_SIZE, PLRS_FILE_SIZE,
     SOSA_FILE_SIZE, SOSM_FILE_SIZE, MBS_FILE_SIZE,
     TEXT_FILE_SIZE, DDRW_FILE_SIZE, SHPS_FILE_SIZE,
-    MAP_OVERWORLD_SIZE, MAP_DUNGEON_SIZE, MAP_LETTERS,
+    MAP_DUNGEON_SIZE, MAP_LETTERS,
     TLK_LETTERS,
 )
 from .fileutil import resolve_game_file, resolve_single_file
 from .json_export import export_json
 from .roster import Character, load_roster
-from .bestiary import Monster, load_mon_file
+from .bestiary import load_mon_file
 from .combat import CombatMap
 from .save import PartyState
 from .tlk import load_tlk_records

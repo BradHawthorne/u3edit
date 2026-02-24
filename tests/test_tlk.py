@@ -2,7 +2,6 @@
 
 import argparse
 import os
-import pytest
 
 from ult3edit.tlk import (decode_record, encode_record, load_tlk_records,
                          is_text_record, cmd_edit)
@@ -126,8 +125,6 @@ class TestCmdFindReplace:
 
     def test_no_match(self, sample_tlk_file, tmp_dir):
         """No matches should leave file unchanged."""
-        with open(sample_tlk_file, 'rb') as f:
-            original = f.read()
         out = os.path.join(tmp_dir, 'TLKA_OUT')
         args = argparse.Namespace(
             file=sample_tlk_file, record=None, text=None,
@@ -154,8 +151,6 @@ class TestCmdFindReplace:
 
     def test_case_sensitive_default(self, sample_tlk_file, tmp_dir):
         """Default is case-sensitive: 'hello' should not match 'HELLO'."""
-        with open(sample_tlk_file, 'rb') as f:
-            original = f.read()
         out = os.path.join(tmp_dir, 'TLKA_OUT')
         args = argparse.Namespace(
             file=sample_tlk_file, record=None, text=None,

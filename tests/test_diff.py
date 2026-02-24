@@ -7,19 +7,14 @@ import pytest
 
 from ult3edit.diff import (
     FieldDiff, EntityDiff, FileDiff, GameDiff,
-    diff_dicts, _diff_lists, _diff_tile_grid,
-    diff_roster, diff_bestiary, diff_map, diff_special,
-    _diff_prty, _diff_plrs,
-    detect_file_type, diff_file, diff_directories,
+    diff_dicts, diff_roster, diff_bestiary, diff_map, diff_special,
+    _diff_prty, detect_file_type, diff_directories,
     format_text, format_summary, to_json, cmd_diff,
 )
 from ult3edit.constants import (
-    CHAR_RECORD_SIZE, ROSTER_FILE_SIZE, CHAR_STR, CHAR_HP_HI, CHAR_HP_LO,
-    MON_FILE_SIZE, MON_MONSTERS_PER_FILE,
-    PRTY_FILE_SIZE, PLRS_FILE_SIZE,
-    SPECIAL_FILE_SIZE,
+    CHAR_RECORD_SIZE, ROSTER_FILE_SIZE, CHAR_STR, MON_FILE_SIZE, PRTY_FILE_SIZE, SPECIAL_FILE_SIZE,
 )
-from ult3edit.bcd import int_to_bcd, int_to_bcd16
+from ult3edit.bcd import int_to_bcd
 
 
 # =============================================================================

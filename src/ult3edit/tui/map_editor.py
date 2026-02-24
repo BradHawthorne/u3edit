@@ -1,6 +1,5 @@
 """TUI editor for MAP files (overworld 64x64, town, dungeon 16x16 x 8 levels)."""
 
-from ..constants import MAP_OVERWORLD_SIZE, MAP_DUNGEON_SIZE, TILES, DUNGEON_TILES
 from .base import EditorState, BaseTileEditor
 
 

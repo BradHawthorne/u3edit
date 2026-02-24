@@ -2,15 +2,13 @@
 
 import argparse
 import os
-import struct
-import tempfile
 import pytest
 from unittest.mock import patch, MagicMock
 
 from ult3edit.disk import (
     find_diskiigs, disk_info, disk_list, DiskContext,
     build_prodos_image, collect_build_files, _parse_hash_filename,
-    PRODOS_BLOCK_SIZE, PRODOS_ENTRY_LENGTH,
+    PRODOS_ENTRY_LENGTH,
 )
 
 
@@ -86,7 +84,7 @@ class TestDiskContext:
         """DiskContext should raise FileNotFoundError when diskiigs not found."""
         with patch('ult3edit.disk.find_diskiigs', return_value=None):
             with pytest.raises(FileNotFoundError):
-                with DiskContext('fake.po') as ctx:
+                with DiskContext('fake.po') as _ctx:
                     pass
 
     def test_write_stages_data(self):
@@ -286,7 +284,7 @@ class TestBuildRoundtrip:
         test_data = bytes(range(256))
         files = [{'name': 'TEST', 'data': test_data,
                   'file_type': 0x06, 'aux_type': 0x0000, 'subdir': None}]
-        result = build_prodos_image(out, files)
+        build_prodos_image(out, files)
 
         # Read back: file is at block 7 (first allocated), seedling
         with open(out, 'rb') as f:

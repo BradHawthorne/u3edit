@@ -8,7 +8,6 @@ import argparse
 import math
 import os
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -666,7 +665,7 @@ def cmd_list(args) -> None:
     """List files on disk image."""
     entries = disk_list(args.image, args.path)
     if not entries:
-        print(f"No files found (or diskiigs error).", file=sys.stderr)
+        print("No files found (or diskiigs error).", file=sys.stderr)
         sys.exit(1)
 
     if args.json:

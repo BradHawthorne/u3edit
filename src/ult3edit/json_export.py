@@ -1,7 +1,6 @@
 """Shared JSON export utility for ult3edit tools."""
 
 import json
-import sys
 
 
 def export_json(data, path: str | None = None) -> None:

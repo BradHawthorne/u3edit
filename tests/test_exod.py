@@ -2,7 +2,6 @@
 import os
 import struct
 import tempfile
-import zlib
 
 import pytest
 
@@ -27,7 +26,6 @@ from ult3edit.exod import (
     HGR_PIXELS_PER_BYTE,
     HGR_ROWS,
     HGR_WIDTH,
-    LUMA_R, LUMA_G, LUMA_B,
     PALETTE_0_COLORS,
     PALETTE_1_COLORS,
     TEXT_CRAWL_OFFSET,
@@ -608,7 +606,6 @@ class TestMainParser:
 
     def test_main_view_parse(self):
         """Standalone parser should accept same args as register_parser."""
-        import argparse
         from ult3edit.exod import main
         # We test by importing the module and checking it has main()
         assert callable(main)
@@ -1719,7 +1716,6 @@ class TestComposeCLI:
     def test_compose_main_parity(self):
         """Compose subcommand also works via main() parser."""
         import argparse
-        from ult3edit.exod import main
         # main() creates its own parser — test that compose is registered
         # by importing and building the same parser structure
         from ult3edit.exod import _add_crawl_parsers

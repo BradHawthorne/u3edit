@@ -1,6 +1,6 @@
 """TUI dialog editor for TLK files (multi-record string list editing)."""
 
-from ..tlk import load_tlk_records, encode_record, decode_record, is_text_record
+from ..tlk import encode_record, decode_record, is_text_record
 from ..constants import TLK_RECORD_END
 
 

@@ -23,13 +23,12 @@ pixel data for the column-reveal animation.
 
 import argparse
 import json
-import math
 import os
 import struct
 import sys
 import zlib
 
-from .shapes import HGR_COLORS, render_hgr_row, write_png, scale_pixels
+from .shapes import render_hgr_row, write_png, scale_pixels
 
 # ============================================================================
 # Constants
@@ -1199,8 +1198,8 @@ def cmd_view(args) -> None:
     print(f"  File size: {size} bytes (expected {EXOD_SIZE})")
     print(f"  Load address: ${EXOD_ORG:04X}")
     print(f"  Data region: $2003-$81FF ({size - 0x04E0} bytes, HGR frames)")
-    print(f"  Code region: $8220-$86FF (~1,248 bytes)")
-    print(f"  HGR page 2: file offsets $2000-$3FFF (8,192 bytes)")
+    print("  Code region: $8220-$86FF (~1,248 bytes)")
+    print("  HGR page 2: file offsets $2000-$3FFF (8,192 bytes)")
     print()
 
     print("  Animation Frames (HGR page 2):")

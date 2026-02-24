@@ -1,0 +1,37 @@
+name: Engine Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: 'Only verify originals exist (skip assembly — requires asmiigs)'
+        type: boolean
+        default: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Verify OMF header size
+        run: python engine/verify.py --omf-header-size
+
+      - name: Check original binaries exist
+        run: |
+          ls -la engine/originals/SUBS.bin
+          ls -la engine/originals/ULT3.bin
+          ls -la engine/originals/EXOD.bin
+          echo "All 3 original binaries present."
+
+      - name: Note on full verification
+        if: inputs.verify_only
+        run: |
+          echo "Verify-only mode — skipping assembly."
+          echo "Full verification requires asmiigs (Project Rosetta v2.2.0)."
+          echo "Run 'bash engine/build.sh' locally with asmiigs on PATH."

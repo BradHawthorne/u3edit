@@ -2,7 +2,6 @@
 
 import json
 import os
-import pytest
 
 from ult3edit.json_export import export_json
 

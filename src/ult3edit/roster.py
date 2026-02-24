@@ -17,11 +17,10 @@ import sys
 
 from .bcd import bcd_to_int, bcd16_to_int, int_to_bcd, int_to_bcd16, is_valid_bcd
 from .constants import (
-    CHAR_RECORD_SIZE, CHAR_MAX_SLOTS, ROSTER_FILE_SIZE,
-    RACES, RACE_CODES, CLASSES, CLASS_CODES, GENDERS, STATUS_CODES,
+    CHAR_RECORD_SIZE, RACES, RACE_CODES, CLASSES, CLASS_CODES, GENDERS, STATUS_CODES,
     WEAPONS, ARMORS, MARKS_BITS, CARDS_BITS, RACE_MAX_STATS,
     CLASS_MAX_WEAPON, CLASS_MAX_ARMOR,
-    CHAR_NAME_OFFSET, CHAR_NAME_LENGTH, CHAR_NAME_MAX, CHAR_NAME_FIELD,
+    CHAR_NAME_OFFSET, CHAR_NAME_MAX, CHAR_NAME_FIELD,
     CHAR_MARKS_CARDS, CHAR_TORCHES,
     CHAR_IN_PARTY, CHAR_STATUS, CHAR_STR, CHAR_DEX, CHAR_INT, CHAR_WIS,
     CHAR_RACE, CHAR_CLASS, CHAR_GENDER, CHAR_MP,
@@ -928,7 +927,7 @@ def cmd_check_progress(args) -> None:
         export_json(progress, getattr(args, 'output', None))
         return
 
-    print(f"\n=== Exodus Endgame Readiness ===\n")
+    print("\n=== Exodus Endgame Readiness ===\n")
 
     # Party status
     status = "READY" if progress['party_ready'] else "NOT READY"

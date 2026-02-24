@@ -1,9 +1,7 @@
 """Tests for map tool."""
 
-import os
-import pytest
 
-from ult3edit.constants import tile_char, tile_name, MAP_OVERWORLD_SIZE
+from ult3edit.constants import tile_char
 from ult3edit.map import render_map, map_to_grid
 
 

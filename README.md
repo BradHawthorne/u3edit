@@ -1,5 +1,8 @@
 # ult3edit
 
+[![Tests](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml/badge.svg)](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/ult3edit)](https://pypi.org/project/ult3edit/)
+
 A complete data toolkit for **Ultima III: Exodus** (Apple II, 1983).
 
 View, edit, and export all game data formats: character rosters, monster bestiaries, overworld and dungeon maps, NPC dialog, combat battlefields, save states, spells, equipment stats, and more. Works with extracted files or directly with ProDOS disk images.

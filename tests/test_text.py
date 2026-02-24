@@ -1,7 +1,6 @@
 """Tests for game text tool."""
 
 import os
-import pytest
 
 from ult3edit.text import load_text_records
 from ult3edit.tui.text_editor import parse_text_records, rebuild_text_data
@@ -70,7 +69,8 @@ class TestParseAndRebuild:
 
     def test_consistent_with_cli(self, sample_text_bytes):
         """TUI parser and CLI parser should return same text content."""
-        import os, tempfile
+        import os
+        import tempfile
         tui_records = parse_text_records(sample_text_bytes)
         tui_texts = [r.text for r in tui_records]
         with tempfile.NamedTemporaryFile(delete=False, suffix='.bin') as f:

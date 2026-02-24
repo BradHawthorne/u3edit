@@ -1,7 +1,7 @@
 """TUI bestiary editor: form-based monster list with field editing."""
 
-from ..constants import MON_FILE_SIZE, MON_MONSTERS_PER_FILE, MON_ATTR_COUNT
-from ..bestiary import Monster, load_mon_file, save_mon_file
+from ..constants import MON_MONSTERS_PER_FILE, MON_ATTR_COUNT
+from ..bestiary import Monster
 from .form_editor import FormField, FormEditorTab
 
 

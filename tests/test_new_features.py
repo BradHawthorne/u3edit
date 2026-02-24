@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import shutil
 import sys
 import tempfile
 
@@ -14,12 +13,10 @@ from ult3edit.constants import (
     CHAR_RECORD_SIZE, ROSTER_FILE_SIZE, MON_FILE_SIZE, MON_MONSTERS_PER_FILE,
     MAP_OVERWORLD_SIZE, MAP_DUNGEON_SIZE, CON_FILE_SIZE, SPECIAL_FILE_SIZE,
     TEXT_FILE_SIZE, PRTY_FILE_SIZE, PLRS_FILE_SIZE,
-    CHAR_STR, CHAR_DEX, CHAR_INT, CHAR_WIS,
-    CHAR_RACE, CHAR_CLASS, CHAR_STATUS, CHAR_GENDER,
+    CHAR_STR, CHAR_RACE, CHAR_CLASS, CHAR_STATUS, CHAR_GENDER,
     CHAR_NAME_OFFSET, CHAR_READIED_WEAPON, CHAR_WORN_ARMOR,
     CHAR_HP_HI, CHAR_HP_LO, CHAR_MARKS_CARDS,
-    CHAR_IN_PARTY, CHAR_SUB_MORSELS,
-    TILE_CHARS_REVERSE, DUNGEON_TILE_CHARS_REVERSE,
+    CHAR_IN_PARTY, TILE_CHARS_REVERSE, DUNGEON_TILE_CHARS_REVERSE,
     PRTY_OFF_SENTINEL, PRTY_OFF_TRANSPORT, PRTY_OFF_LOCATION,
     PRTY_OFF_SAVED_X, PRTY_OFF_SAVED_Y,
     PRTY_LOCATION_CODES,
@@ -253,8 +250,6 @@ class TestRosterImport:
         json_path = os.path.join(tmp_dir, 'roster.json')
         with open(json_path, 'w') as f:
             json.dump(roster_json, f)
-        with open(sample_roster_file, 'rb') as f:
-            original = f.read()
         args = types.SimpleNamespace(
             file=sample_roster_file, json_file=json_path,
             output=None, backup=False, dry_run=False,
@@ -308,7 +303,6 @@ class TestBestiaryImport:
             f.write(sample_mon_bytes)
 
         monsters = load_mon_file(path)
-        old_hp = monsters[0].hp
 
         # Modify via JSON-style update
         monsters[0].hp = 99
@@ -489,7 +483,6 @@ class TestTlkImport:
         json_data = [{'lines': rec} for rec in records]
 
         # Re-encode from JSON
-        from ult3edit.tlk import encode_record
         out = bytearray()
         for entry in json_data:
             out.extend(encode_record(entry['lines']))
@@ -1251,458 +1244,24 @@ class TestCheckProgress:
 # Shapes module tests
 # =============================================================================
 
-from ult3edit.shapes import (
-    render_glyph_ascii, render_glyph_grid, glyph_to_dict, tile_to_dict,
-    detect_format, glyph_to_pixels, render_hgr_row, write_png,
-    GLYPH_SIZE, GLYPH_WIDTH, GLYPH_HEIGHT, SHPS_FILE_SIZE,
-)
-
-
-class TestShapesGlyphRendering:
-    def _make_shps(self, glyphs=256):
-        """Create a synthetic SHPS file."""
-        data = bytearray(glyphs * GLYPH_SIZE)
-        # Put a recognizable pattern in glyph 0: checkerboard
-        data[0] = 0x55  # .#.#.#.
-        data[1] = 0x2A  # .#.#.#. (inverted)
-        data[2] = 0x55
-        data[3] = 0x2A
-        data[4] = 0x55
-        data[5] = 0x2A
-        data[6] = 0x55
-        data[7] = 0x2A
-        # Put a solid block in glyph 1
-        for i in range(8, 16):
-            data[i] = 0x7F  # #######
-        return bytes(data)
-
-    def test_render_glyph_ascii(self):
-        data = self._make_shps()
-        lines = render_glyph_ascii(data, 0)
-        assert len(lines) == GLYPH_HEIGHT
-        assert all(len(line) == GLYPH_WIDTH for line in lines)
-        # Glyph 0 has alternating pattern
-        assert '#' in lines[0]
-        assert '.' in lines[0]
-
-    def test_render_solid_glyph(self):
-        data = self._make_shps()
-        lines = render_glyph_ascii(data, GLYPH_SIZE)  # glyph 1
-        assert all(line == '#######' for line in lines)
-
-    def test_render_glyph_grid(self):
-        data = self._make_shps()
-        grid = render_glyph_grid(data, 0)
-        assert len(grid) == GLYPH_HEIGHT
-        assert all(len(row) == GLYPH_WIDTH for row in grid)
-
-    def test_glyph_to_dict(self):
-        data = self._make_shps()
-        d = glyph_to_dict(data, 0)
-        assert d['index'] == 0
-        assert len(d['raw']) == GLYPH_SIZE
-        assert '55' in d['hex'].upper()
-
-    def test_tile_to_dict(self):
-        data = self._make_shps()
-        d = tile_to_dict(data, 0)
-        assert d['tile_id'] == 0
-        assert d['name'] == 'Water'
-        assert len(d['frames']) == 4
-
-    def test_detect_charset(self):
-        data = self._make_shps()
-        fmt = detect_format(data, 'SHPS#060800')
-        assert fmt['type'] == 'charset'
-        assert fmt['glyphs'] == 256
-        assert fmt['tiles'] == 64
-
-    def test_detect_overlay(self):
-        data = bytes(960)
-        fmt = detect_format(data, 'SHP0#069400')
-        assert fmt['type'] == 'overlay'
-
-    def test_glyph_to_pixels(self):
-        data = self._make_shps()
-        pixels = glyph_to_pixels(data, GLYPH_SIZE)  # solid glyph 1
-        assert len(pixels) == GLYPH_WIDTH * GLYPH_HEIGHT
-        # All pixels should be white (fg) for a solid glyph
-        assert all(p == (255, 255, 255) for p in pixels)
-
-
-class TestShapesHGR:
-    def test_render_hgr_row_all_black(self):
-        row = bytes([0x00, 0x00])
-        pixels = render_hgr_row(row)
-        assert len(pixels) == 14  # 2 bytes x 7 pixels
-        assert all(p == (0, 0, 0) for p in pixels)
-
-    def test_render_hgr_row_all_white(self):
-        row = bytes([0x7F, 0x7F])
-        pixels = render_hgr_row(row)
-        assert len(pixels) == 14
-        assert all(p == (255, 255, 255) for p in pixels)
-
-    def test_render_hgr_row_palette_colors(self):
-        # Single isolated bit at position 0, palette 0 -> purple
-        row = bytes([0x01])
-        pixels = render_hgr_row(row)
-        assert pixels[0] == (255, 68, 253)  # purple (even col, palette 0)
-
-    def test_render_hgr_row_palette_1(self):
-        # Bit 7 set = palette 1, single bit at position 0 -> blue
-        row = bytes([0x81])
-        pixels = render_hgr_row(row)
-        assert pixels[0] == (20, 207, 253)  # blue (even col, palette 1)
-
-
-class TestShapesFileOps:
-    def test_edit_glyph(self, tmp_path):
-        data = bytearray(SHPS_FILE_SIZE)
-        path = str(tmp_path / 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Simulate editing glyph 0
-        with open(path, 'rb') as f:
-            data = bytearray(f.read())
-        new_bytes = bytes([0xFF] * 8)
-        data[0:8] = new_bytes
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0:8] == new_bytes
-
-    def test_json_round_trip(self, tmp_path):
-        data = bytearray(SHPS_FILE_SIZE)
-        data[0] = 0x55  # pattern in glyph 0
-        path = str(tmp_path / 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Export to dict
-        d = glyph_to_dict(data, 0)
-        assert d['raw'][0] == 0x55
-
-        # Import back
-        import_data = bytearray(SHPS_FILE_SIZE)
-        import_data[0:8] = bytes(d['raw'])
-        assert import_data[0] == 0x55
-
-    def test_write_png(self, tmp_path):
-        pixels = [(255, 0, 0)] * (7 * 8)  # red
-        out = str(tmp_path / 'test.png')
-        write_png(out, pixels, 7, 8)
-        assert os.path.exists(out)
-        with open(out, 'rb') as f:
-            header = f.read(8)
-        assert header[:4] == b'\x89PNG'
 
 
 # =============================================================================
 # Sound module tests
 # =============================================================================
 
-from ult3edit.sound import (
-    identify_sound_file, hex_dump, analyze_mbs, SOUND_FILES,
-)
-
-
-class TestSound:
-    def test_identify_sosa(self):
-        data = bytes(4096)
-        info = identify_sound_file(data, 'SOSA#061000')
-        assert info is not None
-        assert info['name'] == 'SOSA'
-
-    def test_identify_sosm(self):
-        data = bytes(256)
-        info = identify_sound_file(data, 'SOSM#064f00')
-        assert info is not None
-        assert info['name'] == 'SOSM'
-
-    def test_identify_mbs(self):
-        data = bytes(5456)
-        info = identify_sound_file(data, 'MBS#069a00')
-        assert info is not None
-        assert info['name'] == 'MBS'
-
-    def test_identify_unknown(self):
-        data = bytes(100)
-        info = identify_sound_file(data, 'UNKNOWN')
-        assert info is None
-
-    def test_hex_dump(self):
-        data = bytes(range(32))
-        lines = hex_dump(data, 0, 32, 0x1000)
-        assert len(lines) == 2
-        assert '1000:' in lines[0]
-
-    def test_analyze_mbs_valid(self):
-        # Simulate AY register writes: register 0 = 0x42, register 8 = 0x0F
-        data = bytes([0, 0x42, 8, 0x0F])
-        events = analyze_mbs(data)
-        assert len(events) == 2
-        assert events[0]['register'] == 0
-        assert events[0]['value'] == 0x42
-        assert events[1]['register'] == 8
-        assert events[1]['value'] == 0x0F
-
-    def test_analyze_mbs_invalid_stops(self):
-        # Invalid register (> 13) should stop parsing
-        data = bytes([0, 0x42, 0xFF, 0x00])
-        events = analyze_mbs(data)
-        assert len(events) == 1
-
-    def test_sound_edit_round_trip(self, tmp_path):
-        data = bytearray(4096)
-        data[0x10] = 0xAB
-        path = str(tmp_path / 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Read back
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0x10] == 0xAB
 
 
 # =============================================================================
 # Patch module tests
 # =============================================================================
 
-from ult3edit.patch import (
-    identify_binary, get_regions, parse_text_region,
-    parse_coord_region, encode_text_region, encode_coord_region,
-    cmd_import as patch_cmd_import, PATCHABLE_REGIONS,
-)
-
-
-class TestPatch:
-    def _make_ult3(self):
-        """Create a synthetic ULT3 binary."""
-        data = bytearray(17408)
-        # Put some name table text at the CIDAR-verified offset
-        offset = 0x397A
-        text = b'\x00\xD7\xC1\xD4\xC5\xD2\x00'  # null + "WATER" + null
-        text += b'\xC7\xD2\xC1\xD3\xD3\x00'  # "GRASS" + null
-        data[offset:offset + len(text)] = text
-        # Put moongate X coords at $29A7
-        for i in range(8):
-            data[0x29A7 + i] = i * 8
-        # Put moongate Y coords at $29AF
-        for i in range(8):
-            data[0x29AF + i] = i * 4
-        # Set food rate at $272C
-        data[0x272C] = 0x04
-        return bytes(data)
-
-    def test_identify_ult3(self):
-        data = self._make_ult3()
-        info = identify_binary(data, 'ULT3#065000')
-        assert info is not None
-        assert info['name'] == 'ULT3'
-        assert info['load_addr'] == 0x5000
-
-    def test_identify_exod(self):
-        data = bytes(26208)
-        info = identify_binary(data, 'EXOD#062000')
-        assert info is not None
-        assert info['name'] == 'EXOD'
-
-    def test_identify_subs(self):
-        data = bytes(3584)
-        info = identify_binary(data, 'SUBS#064100')
-        assert info is not None
-        assert info['name'] == 'SUBS'
-        assert info['load_addr'] == 0x4100
-
-    def test_subs_no_regions(self):
-        """SUBS is a subroutine library with no patchable data regions."""
-        regions = get_regions('SUBS')
-        assert regions == {}
-
-    def test_identify_unknown(self):
-        data = bytes(100)
-        info = identify_binary(data, 'UNKNOWN')
-        assert info is None
-
-    def test_get_regions_ult3(self):
-        regions = get_regions('ULT3')
-        assert 'name-table' in regions
-        assert regions['name-table']['data_type'] == 'text'
-        assert regions['name-table']['max_length'] == 921
-
-    def test_get_regions_ult3_moongate(self):
-        regions = get_regions('ULT3')
-        assert 'moongate-x' in regions
-        assert 'moongate-y' in regions
-        assert regions['moongate-x']['max_length'] == 8
-        assert regions['moongate-y']['max_length'] == 8
-
-    def test_get_regions_ult3_food_rate(self):
-        regions = get_regions('ULT3')
-        assert 'food-rate' in regions
-        assert regions['food-rate']['max_length'] == 1
-        assert regions['food-rate']['offset'] == 0x272C
-
-    def test_get_regions_exod(self):
-        regions = get_regions('EXOD')
-        assert regions == {}  # EXOD has no verified patchable regions
-
-    def test_parse_text_region(self):
-        data = self._make_ult3()
-        # Skip leading null byte
-        strings = parse_text_region(data, 0x397A, 20)
-        assert 'WATER' in strings
-        assert 'GRASS' in strings
-
-    def test_parse_coord_region(self):
-        data = bytes([10, 20, 30, 40, 50, 60])
-        coords = parse_coord_region(data, 0, 6)
-        assert len(coords) == 3
-        assert coords[0] == {'x': 10, 'y': 20}
-        assert coords[2] == {'x': 50, 'y': 60}
-
-    def test_parse_moongate_coords(self):
-        data = self._make_ult3()
-        # Read moongate X coordinates
-        x_vals = list(data[0x29A7:0x29A7 + 8])
-        assert x_vals == [i * 8 for i in range(8)]
-        # Read moongate Y coordinates
-        y_vals = list(data[0x29AF:0x29AF + 8])
-        assert y_vals == [i * 4 for i in range(8)]
-
-    def test_parse_food_rate(self):
-        data = self._make_ult3()
-        assert data[0x272C] == 0x04
-
-    def test_encode_text_region(self):
-        strings = ['WATER', 'GRASS']
-        encoded = encode_text_region(strings, 20)
-        assert len(encoded) == 20
-        # Should contain high-ASCII "WATER" + null
-        assert encoded[0] == 0xD7  # W | 0x80
-        assert encoded[5] == 0x00  # null terminator
-
-    def test_encode_text_too_long(self):
-        strings = ['A' * 100]
-        with pytest.raises(ValueError):
-            encode_text_region(strings, 10)
-
-    def test_patch_dry_run(self, tmp_path):
-        data = bytearray(17408)
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Read and verify original
-        with open(path, 'rb') as f:
-            original = f.read()
-
-        # Simulate edit + dry run: data should not change
-        assert original[0x397A] == 0
-
-    def test_all_regions_within_file_bounds(self):
-        """Verify all patchable region offsets fit within their binaries."""
-        from ult3edit.patch import ENGINE_BINARIES
-        for binary, regions in PATCHABLE_REGIONS.items():
-            size = ENGINE_BINARIES[binary]['size']
-            for name, reg in regions.items():
-                end = reg['offset'] + reg['max_length']
-                assert end <= size, (
-                    f"{binary}.{name}: offset 0x{reg['offset']:X} + "
-                    f"length {reg['max_length']} = 0x{end:X} > "
-                    f"file size 0x{size:X}"
-                )
 
 
 # =============================================================================
 # DDRW module tests
 # =============================================================================
 
-from ult3edit.ddrw import (
-    DDRW_FILE_SIZE, parse_vectors, parse_tile_records,
-    DDRW_VECTOR_OFFSET, DDRW_VECTOR_COUNT,
-    DDRW_TILE_OFFSET, DDRW_TILE_RECORD_SIZE, DDRW_TILE_RECORD_FIELDS,
-)
-
-
-class TestDDRW:
-    def test_ddrw_constants(self):
-        assert DDRW_FILE_SIZE == 1792
-
-    def test_ddrw_json_round_trip(self, tmp_path):
-        data = bytearray(DDRW_FILE_SIZE)
-        data[0] = 0xAB
-        data[100] = 0xCD
-        path = str(tmp_path / 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Export as JSON
-        raw = list(data)
-        jdata = {'raw': raw, 'size': len(data)}
-
-        json_path = str(tmp_path / 'ddrw.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        # Import back
-        with open(json_path, 'r') as f:
-            imported = json.load(f)
-        result = bytes(imported['raw'])
-        assert result[0] == 0xAB
-        assert result[100] == 0xCD
-        assert len(result) == DDRW_FILE_SIZE
-
-    def test_ddrw_edit_round_trip(self, tmp_path):
-        data = bytearray(DDRW_FILE_SIZE)
-        path = str(tmp_path / 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Patch offset 0x10
-        with open(path, 'rb') as f:
-            edit_data = bytearray(f.read())
-        edit_data[0x10] = 0xFF
-        with open(path, 'wb') as f:
-            f.write(edit_data)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0x10] == 0xFF
-
-    def test_parse_vectors(self):
-        data = bytearray(DDRW_FILE_SIZE)
-        for i in range(DDRW_VECTOR_COUNT):
-            data[DDRW_VECTOR_OFFSET + i] = i * 3
-        vectors = parse_vectors(data)
-        assert len(vectors) == DDRW_VECTOR_COUNT
-        assert vectors[0] == 0
-        assert vectors[1] == 3
-        assert vectors[10] == 30
-
-    def test_parse_tile_records(self):
-        data = bytearray(DDRW_FILE_SIZE)
-        # Write a tile record at offset $400
-        data[DDRW_TILE_OFFSET + 0] = 0x10  # col_start
-        data[DDRW_TILE_OFFSET + 1] = 0x20  # col_end
-        data[DDRW_TILE_OFFSET + 2] = 0x02  # step
-        data[DDRW_TILE_OFFSET + 3] = 0x01  # flags
-        data[DDRW_TILE_OFFSET + 4] = 0x80  # bright_lo
-        data[DDRW_TILE_OFFSET + 5] = 0xFF  # bright_hi
-        data[DDRW_TILE_OFFSET + 6] = 0x00  # reserved
-        records = parse_tile_records(data)
-        assert len(records) > 0
-        assert records[0]['col_start'] == 0x10
-        assert records[0]['col_end'] == 0x20
-        assert records[0]['bright_hi'] == 0xFF
-
-    def test_tile_record_field_names(self):
-        assert len(DDRW_TILE_RECORD_FIELDS) == DDRW_TILE_RECORD_SIZE
 
 
 # =============================================================================
@@ -1755,59 +1314,6 @@ class TestCombatLayout:
 # Sound MBS music stream tests
 # =============================================================================
 
-class TestMBSStream:
-    def test_parse_note(self):
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x10, 0x20, 0x00])  # Two notes then REST
-        events = parse_mbs_stream(data)
-        assert len(events) == 3
-        assert events[0]['type'] == 'NOTE'
-        assert events[0]['value'] == 0x10
-        assert events[2]['type'] == 'NOTE'
-        assert events[2]['name'] == 'REST'
-
-    def test_parse_end(self):
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x10, 0x82])  # Note then END
-        events = parse_mbs_stream(data)
-        assert len(events) == 2
-        assert events[1]['type'] == 'END'
-
-    def test_parse_tempo(self):
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x84, 0x20, 0x82])  # TEMPO $20 then END
-        events = parse_mbs_stream(data)
-        assert events[0]['type'] == 'TEMPO'
-        assert events[0]['operand'] == 0x20
-
-    def test_parse_write_register(self):
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x83, 0x08, 0x0F, 0x82])  # WRITE R8=$0F then END
-        events = parse_mbs_stream(data)
-        assert events[0]['type'] == 'WRITE'
-        assert events[0]['register'] == 8
-        assert events[0]['reg_value'] == 0x0F
-
-    def test_parse_jump(self):
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x81, 0x00, 0x9A, 0x82])  # JUMP $9A00 then END
-        events = parse_mbs_stream(data)
-        assert events[0]['type'] == 'JUMP'
-        assert events[0]['target'] == 0x9A00
-
-    def test_note_names(self):
-        from ult3edit.sound import mbs_note_name
-        assert mbs_note_name(0) == 'REST'
-        assert mbs_note_name(1) == 'C1'
-        assert mbs_note_name(13) == 'C2'
-
-    def test_unknown_byte_stops_parsing(self):
-        from ult3edit.sound import parse_mbs_stream
-        # $40-$7F are not notes or opcodes
-        data = bytes([0x10, 0x50, 0x82])
-        events = parse_mbs_stream(data)
-        assert len(events) == 1  # Only the first note
-
 
 # =============================================================================
 # Special location trailing bytes tests (unused padding, verified via engine)
@@ -1851,91 +1357,10 @@ class TestSpecialTrailingBytes:
 # Shapes overlay string extraction tests
 # =============================================================================
 
-class TestShapesOverlay:
-    def test_extract_overlay_strings(self):
-        from ult3edit.shapes import extract_overlay_strings
-        # Build a fake overlay with JSR $46BA + inline text
-        data = bytearray(64)
-        # JSR $46BA at offset 0
-        data[0] = 0x20
-        data[1] = 0xBA
-        data[2] = 0x46
-        # Inline high-ASCII text "HELLO" + null
-        for i, ch in enumerate('HELLO'):
-            data[3 + i] = ord(ch) | 0x80
-        data[8] = 0x00  # terminator
-        strings = extract_overlay_strings(data)
-        assert len(strings) == 1
-        assert strings[0]['text'] == 'HELLO'
-        assert strings[0]['text_offset'] == 3
-
-    def test_extract_multiple_strings(self):
-        from ult3edit.shapes import extract_overlay_strings
-        data = bytearray(64)
-        # First string at offset 0
-        data[0:3] = bytes([0x20, 0xBA, 0x46])
-        data[3] = ord('A') | 0x80
-        data[4] = 0x00
-        # Some code bytes
-        data[5] = 0xA9
-        data[6] = 0x00
-        # Second string at offset 7
-        data[7:10] = bytes([0x20, 0xBA, 0x46])
-        data[10] = ord('B') | 0x80
-        data[11] = ord('C') | 0x80
-        data[12] = 0x00
-        strings = extract_overlay_strings(data)
-        assert len(strings) == 2
-        assert strings[0]['text'] == 'A'
-        assert strings[1]['text'] == 'BC'
-
-    def test_overlay_with_newline(self):
-        from ult3edit.shapes import extract_overlay_strings
-        data = bytearray(32)
-        data[0:3] = bytes([0x20, 0xBA, 0x46])
-        data[3] = ord('H') | 0x80
-        data[4] = ord('I') | 0x80
-        data[5] = 0xFF  # line break
-        data[6] = ord('!') | 0x80
-        data[7] = 0x00
-        strings = extract_overlay_strings(data)
-        assert len(strings) == 1
-        assert strings[0]['text'] == 'HI\n!'
-
-    def test_detect_overlay_shop_type(self):
-        from ult3edit.shapes import detect_format, SHP_SHOP_TYPES
-        data = bytes(960)
-        fmt = detect_format(data, 'SHP3#069400')
-        assert fmt['type'] == 'overlay'
-        assert fmt['shop_type'] == 'Pub/Tavern'
-
-    def test_detect_text_as_hgr_bitmap(self):
-        from ult3edit.shapes import detect_format
-        data = bytes(1024)
-        fmt = detect_format(data, 'TEXT#061000')
-        assert fmt['type'] == 'hgr_bitmap'
-        assert 'title screen' in fmt['description']
-
 
 # =============================================================================
 # SHPS code guard tests
 # =============================================================================
-
-class TestShpsCodeGuard:
-    def test_check_code_region_empty(self):
-        from ult3edit.shapes import check_shps_code_region, SHPS_FILE_SIZE
-        data = bytearray(SHPS_FILE_SIZE)
-        assert not check_shps_code_region(data)
-
-    def test_check_code_region_populated(self):
-        from ult3edit.shapes import (
-            check_shps_code_region, SHPS_CODE_OFFSET, SHPS_FILE_SIZE,
-        )
-        data = bytearray(SHPS_FILE_SIZE)
-        data[SHPS_CODE_OFFSET] = 0x4C  # JMP instruction
-        data[SHPS_CODE_OFFSET + 1] = 0x00
-        data[SHPS_CODE_OFFSET + 2] = 0x08
-        assert check_shps_code_region(data)
 
 
 # =============================================================================
@@ -1955,7 +1380,6 @@ class TestDiskAudit:
 # =============================================================================
 
 import subprocess
-import sys
 
 
 def _help_output(module: str, subcmd: str) -> str:
@@ -2155,6 +1579,37 @@ class TestCliParity:
         out = _help_output('patch', 'strings-import')
         assert '--backup' in out
         assert '--dry-run' in out
+
+    def test_exod_main_view_help(self):
+        out = _help_output('exod', 'view')
+        assert '--json' in out
+
+    def test_exod_main_export_help(self):
+        out = _help_output('exod', 'export')
+        assert '--frame' in out
+        assert '--scale' in out
+
+    def test_exod_main_import_help(self):
+        out = _help_output('exod', 'import')
+        assert '--frame' in out
+        assert '--backup' in out
+        assert '--dry-run' in out
+
+    def test_exod_main_glyph_help(self):
+        out = _help_output('exod', 'glyph')
+        assert 'view' in out
+        assert 'export' in out
+        assert 'import' in out
+
+    def test_exod_main_crawl_help(self):
+        out = _help_output('exod', 'crawl')
+        assert 'view' in out
+        assert 'compose' in out
+
+    def test_disk_main_build_help(self):
+        out = _help_output('disk', 'build')
+        assert '--vol-name' in out
+        assert '--boot-from' in out
 
 
 class TestDiskContextParseHash:
@@ -2423,103 +1878,15 @@ class TestSaveImportSentinel:
 # =============================================================================
 
 from ult3edit.shapes import (
-    encode_overlay_string, replace_overlay_string,
-    extract_overlay_strings,
+    encode_overlay_string, extract_overlay_strings,
 )
 
 _JSR_46BA_BYTES = bytes([0x20, 0xBA, 0x46])
 
 
-class TestEncodeOverlayString:
-    def test_basic(self):
-        encoded = encode_overlay_string('HI')
-        assert encoded == bytearray([ord('H') | 0x80, ord('I') | 0x80, 0x00])
-
-    def test_newline(self):
-        encoded = encode_overlay_string('A\nB')
-        assert encoded == bytearray([ord('A') | 0x80, 0xFF, ord('B') | 0x80, 0x00])
-
-
-class TestReplaceOverlayString:
-    def _make_shp(self, text_bytes):
-        """Build minimal SHP-like data with one inline string."""
-        # JSR $46BA + text + $00 + padding code byte
-        data = bytearray(b'\x00\x00')  # prefix
-        data += _JSR_46BA_BYTES
-        data += text_bytes
-        data += bytearray(b'\x00')  # terminator
-        data += bytearray(b'\xEA\xEA')  # NOP code after string
-        return data
-
-    def test_exact_fit(self):
-        original_text = bytearray([ord('H') | 0x80, ord('I') | 0x80])
-        data = self._make_shp(original_text)
-        strings = extract_overlay_strings(data)
-        assert len(strings) == 1
-        s = strings[0]
-        result = replace_overlay_string(data, s['text_offset'], s['text_end'], 'AB')
-        new_strings = extract_overlay_strings(result)
-        assert new_strings[0]['text'] == 'AB'
-
-    def test_shorter_pads_with_null(self):
-        original_text = bytearray([ord('H') | 0x80, ord('E') | 0x80,
-                                   ord('L') | 0x80])
-        data = self._make_shp(original_text)
-        strings = extract_overlay_strings(data)
-        s = strings[0]
-        result = replace_overlay_string(data, s['text_offset'], s['text_end'], 'A')
-        # The original region should have A + nulls, code bytes preserved
-        assert result[s['text_offset']] == ord('A') | 0x80
-        assert result[s['text_offset'] + 1] == 0x00
-        # Code bytes after string region should be untouched
-        assert result[-2:] == bytearray(b'\xEA\xEA')
-
-    def test_too_long_raises(self):
-        original_text = bytearray([ord('H') | 0x80, ord('I') | 0x80])
-        data = self._make_shp(original_text)
-        strings = extract_overlay_strings(data)
-        s = strings[0]
-        with pytest.raises(ValueError, match='exceeds available space'):
-            replace_overlay_string(
-                data, s['text_offset'], s['text_end'], 'TOOLONGTEXT')
-
-
-class TestOverlayStringRoundTrip:
-    def test_extract_replace_extract(self):
-        # Build SHP with "SHOP" inline string
-        data = bytearray(b'\xEA')  # prefix
-        data += _JSR_46BA_BYTES
-        for ch in 'SHOP':
-            data.append(ord(ch) | 0x80)
-        data.append(0x00)  # terminator
-        data += bytearray(b'\x60')  # RTS after
-
-        strings = extract_overlay_strings(data)
-        assert strings[0]['text'] == 'SHOP'
-
-        s = strings[0]
-        data = replace_overlay_string(data, s['text_offset'], s['text_end'], 'ARMS')
-        strings2 = extract_overlay_strings(data)
-        assert strings2[0]['text'] == 'ARMS'
-        # RTS preserved
-        assert data[-1] == 0x60
-
-
 # =============================================================================
 # Fix 3: CLI parity for edit-string
 # =============================================================================
-
-class TestCliParityShapesEditString:
-    def test_help_shows_edit_string(self):
-        import subprocess
-        import sys
-        result = subprocess.run(
-            [sys.executable, '-m', 'ult3edit.shapes', 'edit-string', '--help'],
-            capture_output=True, text=True, timeout=10,
-        )
-        assert result.returncode == 0
-        assert '--offset' in result.stdout
-        assert '--text' in result.stdout
 
 
 # =============================================================================
@@ -2996,7 +2363,7 @@ class TestSaveOutputConflict:
     def test_dual_file_output_rejected(self, tmp_dir, sample_prty_bytes):
         """Editing both PRTY and PLRS with --output should fail."""
         from ult3edit.save import cmd_edit
-        from ult3edit.constants import PLRS_FILE_SIZE, CHAR_RECORD_SIZE
+        from ult3edit.constants import PLRS_FILE_SIZE
         # Create PRTY file in game dir
         prty_file = os.path.join(tmp_dir, 'PRTY#069500')
         with open(prty_file, 'wb') as f:
@@ -3148,320 +2515,6 @@ class TestSpecialJsonKeyConsistency:
 # =============================================================================
 # Patch import + round-trip tests
 # =============================================================================
-
-class TestPatchImport:
-    """Tests for patch import command and encode_coord_region."""
-
-    def _make_ult3(self):
-        """Create a synthetic ULT3 binary with known region data."""
-        data = bytearray(17408)
-        # Name table: empty + "WATER" + "GRASS"
-        offset = 0x397A
-        text = b'\x00\xD7\xC1\xD4\xC5\xD2\x00\xC7\xD2\xC1\xD3\xD3\x00'
-        data[offset:offset + len(text)] = text
-        # Moongate X/Y
-        for i in range(8):
-            data[0x29A7 + i] = i * 8
-            data[0x29AF + i] = i * 4
-        # Food rate
-        data[0x272C] = 0x04
-        return data
-
-    def test_encode_coord_region(self):
-        coords = [{'x': 10, 'y': 20}, {'x': 30, 'y': 40}]
-        encoded = encode_coord_region(coords, 8)
-        assert len(encoded) == 8
-        assert encoded[0] == 10
-        assert encoded[1] == 20
-        assert encoded[2] == 30
-        assert encoded[3] == 40
-        # Padding
-        assert encoded[4:] == b'\x00\x00\x00\x00'
-
-    def test_encode_coord_too_long(self):
-        coords = [{'x': i, 'y': i} for i in range(10)]
-        with pytest.raises(ValueError):
-            encode_coord_region(coords, 4)
-
-    def test_text_round_trip(self, tmp_path):
-        """parse_text_region → encode_text_region preserves content."""
-        data = self._make_ult3()
-        strings = parse_text_region(bytes(data), 0x397A, 921)
-        encoded = encode_text_region(strings, 921)
-        reparsed = parse_text_region(encoded, 0, 921)
-        assert reparsed == strings
-
-    def test_text_round_trip_preserves_empty(self):
-        """Empty strings (consecutive nulls) survive round-trip."""
-        # Build: "" + "HELLO" + "" + "WORLD"
-        raw = bytearray(50)
-        raw[0] = 0x00  # empty string
-        hello = b'\xC8\xC5\xCC\xCC\xCF\x00'  # "HELLO" + null
-        raw[1:1 + len(hello)] = hello
-        pos = 1 + len(hello)
-        raw[pos] = 0x00  # empty string
-        pos += 1
-        world = b'\xD7\xCF\xD2\xCC\xC4\x00'  # "WORLD" + null
-        raw[pos:pos + len(world)] = world
-
-        strings = parse_text_region(bytes(raw), 0, 50)
-        assert strings == ['', 'HELLO', '', 'WORLD']
-
-        encoded = encode_text_region(strings, 50)
-        reparsed = parse_text_region(encoded, 0, 50)
-        assert reparsed == strings
-
-    def test_coord_round_trip(self):
-        """parse_coord_region → encode_coord_region preserves content."""
-        raw = bytes([10, 20, 30, 40, 50, 60, 0, 0])
-        coords = parse_coord_region(raw, 0, 8)
-        encoded = encode_coord_region(coords, 8)
-        assert encoded == raw
-
-    def test_import_text_region(self, tmp_path):
-        """Import name-table from JSON file."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Build JSON with replacement names
-        jdata = {
-            'regions': {
-                'name-table': {
-                    'data': ['', 'BRINE', 'ASH'],
-                }
-            }
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': None,
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(args)
-
-        # Verify the name-table was patched
-        with open(path, 'rb') as f:
-            result = f.read()
-        strings = parse_text_region(result, 0x397A, 921)
-        assert '' in strings
-        assert 'BRINE' in strings
-        assert 'ASH' in strings
-        # Old names should be gone
-        assert 'WATER' not in strings
-        assert 'GRASS' not in strings
-
-    def test_import_bytes_region(self, tmp_path):
-        """Import moongate-x and food-rate byte regions."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        jdata = {
-            'regions': {
-                'moongate-x': {'data': [10, 20, 30, 40, 50, 30, 20, 10]},
-                'food-rate': {'data': [2]},
-            }
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': None,
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result[0x29A7:0x29A7 + 8]) == [10, 20, 30, 40, 50, 30, 20, 10]
-        assert result[0x272C] == 2
-
-    def test_import_dry_run(self, tmp_path):
-        """Dry run does not modify file."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        jdata = {
-            'regions': {
-                'food-rate': {'data': [1]},
-            }
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': None,
-            'output': None,
-            'backup': False,
-            'dry_run': True,
-        })()
-        patch_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0x272C] == 0x04  # Unchanged
-
-    def test_import_region_filter(self, tmp_path):
-        """--region flag limits which regions are imported."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        jdata = {
-            'regions': {
-                'food-rate': {'data': [1]},
-                'moongate-x': {'data': [99, 99, 99, 99, 99, 99, 99, 99]},
-            }
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': 'food-rate',
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0x272C] == 1  # Updated
-        # moongate-x should be unchanged (filtered out)
-        assert list(result[0x29A7:0x29A7 + 8]) == [i * 8 for i in range(8)]
-
-    def test_import_output_file(self, tmp_path):
-        """--output writes to separate file."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        out_path = str(tmp_path / 'ULT3_patched')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        jdata = {
-            'regions': {
-                'food-rate': {'data': [3]},
-            }
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': None,
-            'output': out_path,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(args)
-
-        # Original unchanged
-        with open(path, 'rb') as f:
-            assert f.read()[0x272C] == 0x04
-        # Output has new value
-        with open(out_path, 'rb') as f:
-            assert f.read()[0x272C] == 3
-
-    def test_import_flat_json_format(self, tmp_path):
-        """Accept flat JSON without 'regions' wrapper."""
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Flat format: region name → data list directly
-        jdata = {
-            'food-rate': [2],
-        }
-        json_path = str(tmp_path / 'patch.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path,
-            'json_file': json_path,
-            'region': None,
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[0x272C] == 2
-
-    def test_import_full_view_json_round_trip(self, tmp_path):
-        """view --json output can be fed directly back into import."""
-        from ult3edit.patch import cmd_view
-        data = self._make_ult3()
-        path = str(tmp_path / 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        # Export via cmd_view --json
-        json_path = str(tmp_path / 'export.json')
-        view_args = type('Args', (), {
-            'file': path,
-            'region': None,
-            'json': True,
-            'output': json_path,
-        })()
-        cmd_view(view_args)
-
-        # Modify a value in the exported JSON
-        with open(json_path, 'r') as f:
-            jdata = json.load(f)
-        jdata['regions']['food-rate']['data'] = [2]
-
-        modified_json = str(tmp_path / 'modified.json')
-        with open(modified_json, 'w') as f:
-            json.dump(jdata, f)
-
-        # Import back
-        out_path = str(tmp_path / 'ULT3_new')
-        import_args = type('Args', (), {
-            'file': path,
-            'json_file': modified_json,
-            'region': None,
-            'output': out_path,
-            'backup': False,
-            'dry_run': False,
-        })()
-        patch_cmd_import(import_args)
-
-        # Verify food rate changed, name table preserved
-        with open(out_path, 'rb') as f:
-            result = f.read()
-        assert result[0x272C] == 2
-        strings = parse_text_region(result, 0x397A, 921)
-        assert 'WATER' in strings
-        assert 'GRASS' in strings
 
 
 # =============================================================================
@@ -3644,123 +2697,6 @@ class TestRosterCreateExtendedArgs:
 # =============================================================================
 # Functional tests for cmd_edit_string (shapes) and cmd_search (tlk)
 # =============================================================================
-
-class TestCmdEditStringFunctional:
-    """Functional tests for shapes edit-string on synthesized SHP overlay."""
-
-    def _make_shp_overlay(self):
-        """Create a synthetic SHP overlay with a JSR $46BA inline string."""
-        data = bytearray(256)
-        # Put JSR $46BA at offset 10
-        data[10] = 0x20  # JSR
-        data[11] = 0xBA
-        data[12] = 0x46
-        # Inline high-ASCII string "HELLO" + null terminator at offset 13
-        hello = [0xC8, 0xC5, 0xCC, 0xCC, 0xCF, 0x00]
-        data[13:13 + len(hello)] = hello
-        # Another JSR $46BA at offset 30
-        data[30] = 0x20
-        data[31] = 0xBA
-        data[32] = 0x46
-        # Inline "BYE" + null at offset 33
-        bye = [0xC2, 0xD9, 0xC5, 0x00]
-        data[33:33 + len(bye)] = bye
-        return data
-
-    def test_edit_string_replaces_text(self, tmp_path):
-        from ult3edit.shapes import cmd_edit_string
-        data = self._make_shp_overlay()
-        path = str(tmp_path / 'SHP0')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        args = type('Args', (), {
-            'file': path,
-            'offset': 13,  # text_offset of "HELLO"
-            'text': 'HI',
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        cmd_edit_string(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        # "HI" encoded as high-ASCII: 0xC8 0xC9 + null
-        assert result[13] == 0xC8  # H
-        assert result[14] == 0xC9  # I
-        assert result[15] == 0x00  # null terminator
-        # Remaining bytes null-padded
-        assert result[16] == 0x00
-        assert result[17] == 0x00
-
-    def test_edit_string_dry_run(self, tmp_path):
-        from ult3edit.shapes import cmd_edit_string
-        data = self._make_shp_overlay()
-        path = str(tmp_path / 'SHP0')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        args = type('Args', (), {
-            'file': path,
-            'offset': 13,
-            'text': 'HI',
-            'output': None,
-            'backup': False,
-            'dry_run': True,
-        })()
-        cmd_edit_string(args)
-
-        # File unchanged
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result[13] == 0xC8  # Still 'H' from HELLO
-        assert result[14] == 0xC5  # Still 'E' from HELLO
-
-    def test_edit_string_output_file(self, tmp_path):
-        from ult3edit.shapes import cmd_edit_string
-        data = self._make_shp_overlay()
-        path = str(tmp_path / 'SHP0')
-        out_path = str(tmp_path / 'SHP0_out')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        args = type('Args', (), {
-            'file': path,
-            'offset': 33,  # text_offset of "BYE"
-            'text': 'NO',
-            'output': out_path,
-            'backup': False,
-            'dry_run': False,
-        })()
-        cmd_edit_string(args)
-
-        # Original unchanged
-        with open(path, 'rb') as f:
-            assert f.read()[33] == 0xC2  # B
-        # Output has new value
-        with open(out_path, 'rb') as f:
-            result = f.read()
-        assert result[33] == 0xCE  # N
-        assert result[34] == 0xCF  # O
-
-    def test_edit_string_bad_offset_exits(self, tmp_path):
-        from ult3edit.shapes import cmd_edit_string
-        data = self._make_shp_overlay()
-        path = str(tmp_path / 'SHP0')
-        with open(path, 'wb') as f:
-            f.write(data)
-
-        args = type('Args', (), {
-            'file': path,
-            'offset': 99,  # No string here
-            'text': 'X',
-            'output': None,
-            'backup': False,
-            'dry_run': False,
-        })()
-        with pytest.raises(SystemExit):
-            cmd_edit_string(args)
 
 
 class TestCmdSearchFunctional:
@@ -3993,301 +2929,10 @@ class TestHexIntArgParsing:
 # Sound and DDRW import integration tests
 # =============================================================================
 
-class TestSoundImportIntegration:
-    """Integration tests for sound cmd_import()."""
-
-    def test_import_sound_raw(self, tmp_path):
-        """cmd_import() writes raw byte array from JSON."""
-        from ult3edit.sound import cmd_import as sound_cmd_import
-        path = str(tmp_path / 'SOSA')
-        original = bytes(range(256)) * 4  # 1024 bytes
-        with open(path, 'wb') as f:
-            f.write(original)
-
-        new_data = list(range(255, -1, -1)) * 4  # Reversed pattern
-        jdata = {'raw': new_data}
-        json_path = str(tmp_path / 'sound.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        sound_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result) == new_data
-
-    def test_import_sound_dry_run(self, tmp_path):
-        """cmd_import() with dry_run does not modify file."""
-        from ult3edit.sound import cmd_import as sound_cmd_import
-        path = str(tmp_path / 'SOSA')
-        original = bytes(64)
-        with open(path, 'wb') as f:
-            f.write(original)
-
-        jdata = {'raw': [0xFF] * 64}
-        json_path = str(tmp_path / 'sound.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': True,
-        })()
-        sound_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result == original
-
-    def test_import_sound_output_file(self, tmp_path):
-        """cmd_import() writes to --output file."""
-        from ult3edit.sound import cmd_import as sound_cmd_import
-        path = str(tmp_path / 'SOSA')
-        out_path = str(tmp_path / 'SOSA_OUT')
-        with open(path, 'wb') as f:
-            f.write(bytes(64))
-
-        jdata = {'raw': [0xAB] * 32}
-        json_path = str(tmp_path / 'sound.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': out_path, 'backup': False, 'dry_run': False,
-        })()
-        sound_cmd_import(args)
-
-        with open(out_path, 'rb') as f:
-            result = f.read()
-        assert list(result) == [0xAB] * 32
-
-
-class TestDdrwImportIntegration:
-    """Integration tests for ddrw cmd_import()."""
-
-    def test_import_ddrw_raw(self, tmp_path):
-        """cmd_import() writes raw byte array from JSON."""
-        from ult3edit.ddrw import cmd_import as ddrw_cmd_import
-        path = str(tmp_path / 'DDRW')
-        original = bytes(256)
-        with open(path, 'wb') as f:
-            f.write(original)
-
-        new_data = list(range(256))
-        jdata = {'raw': new_data}
-        json_path = str(tmp_path / 'ddrw.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        ddrw_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result) == new_data
-
-    def test_import_ddrw_dry_run(self, tmp_path):
-        """cmd_import() with dry_run does not modify file."""
-        from ult3edit.ddrw import cmd_import as ddrw_cmd_import
-        path = str(tmp_path / 'DDRW')
-        original = bytes(128)
-        with open(path, 'wb') as f:
-            f.write(original)
-
-        jdata = {'raw': [0xFF] * 128}
-        json_path = str(tmp_path / 'ddrw.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': True,
-        })()
-        ddrw_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result == original
-
 
 # =============================================================================
 # Shapes cmd_edit and cmd_import integration tests
 # =============================================================================
-
-class TestShapesEditIntegration:
-    """Integration tests for shapes cmd_edit()."""
-
-    def _make_shps(self, tmp_path):
-        """Create a synthetic 2048-byte SHPS file."""
-        data = bytearray(2048)
-        # Fill glyph 0 with a known pattern
-        for i in range(8):
-            data[i] = 0x55
-        path = str(tmp_path / 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path, data
-
-    def test_edit_glyph(self, tmp_path):
-        """cmd_edit() updates a glyph's raw bytes."""
-        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
-        path, original = self._make_shps(tmp_path)
-
-        args = type('Args', (), {
-            'file': path, 'glyph': 0,
-            'data': 'FF FF FF FF FF FF FF FF',
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_edit(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result[0:8]) == [0xFF] * 8
-
-    def test_edit_glyph_dry_run(self, tmp_path):
-        """cmd_edit() with dry_run does not modify file."""
-        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
-        path, original = self._make_shps(tmp_path)
-
-        args = type('Args', (), {
-            'file': path, 'glyph': 0,
-            'data': 'AA AA AA AA AA AA AA AA',
-            'output': None, 'backup': False, 'dry_run': True,
-        })()
-        shapes_cmd_edit(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result == bytes(original)
-
-    def test_edit_glyph_output_file(self, tmp_path):
-        """cmd_edit() writes to --output file."""
-        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
-        path, _ = self._make_shps(tmp_path)
-        out_path = str(tmp_path / 'SHPS_OUT')
-
-        args = type('Args', (), {
-            'file': path, 'glyph': 1,
-            'data': '01 02 03 04 05 06 07 08',
-            'output': out_path, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_edit(args)
-
-        with open(out_path, 'rb') as f:
-            result = f.read()
-        assert list(result[8:16]) == [1, 2, 3, 4, 5, 6, 7, 8]
-
-    def test_edit_backup_skipped_with_output(self, tmp_path):
-        """cmd_edit() with --output and --backup should NOT create .bak of input."""
-        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
-        path, _ = self._make_shps(tmp_path)
-        out_path = str(tmp_path / 'SHPS_OUT')
-
-        args = type('Args', (), {
-            'file': path, 'glyph': 0,
-            'data': 'FF FF FF FF FF FF FF FF',
-            'output': out_path, 'backup': True, 'dry_run': False,
-        })()
-        shapes_cmd_edit(args)
-
-        assert os.path.exists(out_path), "output file should exist"
-        assert not os.path.exists(path + '.bak'), \
-            "backup should not be created when --output is a different file"
-
-
-class TestShapesImportIntegration:
-    """Integration tests for shapes cmd_import()."""
-
-    def _make_shps(self, tmp_path):
-        """Create a synthetic 2048-byte SHPS file."""
-        data = bytearray(2048)
-        path = str(tmp_path / 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path, data
-
-    def test_import_glyph_list(self, tmp_path):
-        """cmd_import() updates glyphs from flat list format."""
-        from ult3edit.shapes import cmd_import as shapes_cmd_import
-        path, _ = self._make_shps(tmp_path)
-
-        jdata = [
-            {'index': 0, 'raw': [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]},
-            {'index': 2, 'raw': [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]},
-        ]
-        json_path = str(tmp_path / 'glyphs.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result[0:8]) == [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
-        assert list(result[16:24]) == [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11]
-        # Glyph 1 should be unchanged (zeros)
-        assert list(result[8:16]) == [0] * 8
-
-    def test_import_tiles_format(self, tmp_path):
-        """cmd_import() updates glyphs from tiles dict format."""
-        from ult3edit.shapes import cmd_import as shapes_cmd_import
-        path, _ = self._make_shps(tmp_path)
-
-        jdata = {
-            'tiles': [{
-                'tile_id': 0,
-                'frames': [
-                    {'index': 0, 'raw': [0xFF] * 8},
-                    {'index': 1, 'raw': [0xAA] * 8},
-                ]
-            }]
-        }
-        json_path = str(tmp_path / 'tiles.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result[0:8]) == [0xFF] * 8
-        assert list(result[8:16]) == [0xAA] * 8
-
-    def test_import_dry_run(self, tmp_path):
-        """cmd_import() with dry_run does not modify file."""
-        from ult3edit.shapes import cmd_import as shapes_cmd_import
-        path, original = self._make_shps(tmp_path)
-
-        jdata = [{'index': 0, 'raw': [0xFF] * 8}]
-        json_path = str(tmp_path / 'glyphs.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': True,
-        })()
-        shapes_cmd_import(args)
-
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert result == bytes(original)
 
 
 # =============================================================================
@@ -4376,63 +3021,6 @@ class TestHpMaxHpOrdering:
 # =============================================================================
 # Fix: shapes cmd_import() KeyError on malformed JSON
 # =============================================================================
-
-class TestShapesImportMalformedJson:
-    """Verify shapes cmd_import() handles missing keys gracefully."""
-
-    def _make_shps(self, tmp_path):
-        data = bytearray(2048)
-        path = str(tmp_path / 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path, data
-
-    def test_missing_index_in_list(self, tmp_path):
-        """Entries missing 'index' key should be skipped, not crash."""
-        from ult3edit.shapes import cmd_import as shapes_cmd_import
-        path, _ = self._make_shps(tmp_path)
-        jdata = [
-            {'raw': [0xFF] * 8},  # missing 'index'
-            {'index': 1, 'raw': [0xAA] * 8},  # valid
-        ]
-        json_path = str(tmp_path / 'glyphs.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_import(args)  # should not raise KeyError
-        with open(path, 'rb') as f:
-            result = f.read()
-        # Glyph 0 untouched (missing index skipped), glyph 1 updated
-        assert list(result[0:8]) == [0] * 8
-        assert list(result[8:16]) == [0xAA] * 8
-
-    def test_missing_raw_in_tiles(self, tmp_path):
-        """Frames missing 'raw' key should be skipped, not crash."""
-        from ult3edit.shapes import cmd_import as shapes_cmd_import
-        path, _ = self._make_shps(tmp_path)
-        jdata = {
-            'tiles': [{
-                'frames': [
-                    {'index': 0},  # missing 'raw'
-                    {'index': 1, 'raw': [0xBB] * 8},  # valid
-                ]
-            }]
-        }
-        json_path = str(tmp_path / 'tiles.json')
-        with open(json_path, 'w') as f:
-            json.dump(jdata, f)
-        args = type('Args', (), {
-            'file': path, 'json_file': json_path,
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        shapes_cmd_import(args)  # should not raise KeyError
-        with open(path, 'rb') as f:
-            result = f.read()
-        assert list(result[0:8]) == [0] * 8
-        assert list(result[8:16]) == [0xBB] * 8
 
 
 # =============================================================================
@@ -4553,162 +3141,6 @@ class TestMarksCaseInsensitive:
 # =============================================================================
 # Tile Compiler Tests
 # =============================================================================
-
-class TestTileCompilerParsing:
-    """Test tile_compiler.py text-art parsing."""
-
-    def test_parse_single_tile(self):
-        """Parse a single tile definition."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = (
-            '# Tile 0x00: Test\n'
-            '#######\n'
-            '.......\n'
-            '#.#.#.#\n'
-            '.#.#.#.\n'
-            '#.#.#.#\n'
-            '.......\n'
-            '#######\n'
-            '.......\n'
-        )
-        tiles = parse_tiles_file(text)
-        assert len(tiles) == 1
-        idx, data = tiles[0]
-        assert idx == 0
-        assert len(data) == 8
-        assert data[0] == 0x7F  # All 7 bits set = 1111111 = 0x7F
-
-    def test_parse_multiple_tiles(self):
-        """Parse two tiles separated by blank line."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = ('# Tile 0x00: First\n'
-                + '#######\n' * 8
-                + '\n'
-                + '# Tile 0x01: Second\n'
-                + '.......\n' * 8)
-        tiles = parse_tiles_file(text)
-        assert len(tiles) == 2
-        assert tiles[0][0] == 0
-        assert tiles[1][0] == 1
-
-    def test_parse_hex_index(self):
-        """Parse a tile with hex index."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = '# Tile 0x1A: Test\n' + '.......\n' * 8
-        tiles = parse_tiles_file(text)
-        assert tiles[0][0] == 0x1A
-
-    def test_parse_decimal_index(self):
-        """Parse a tile with decimal index."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = '# Tile 42: Test\n' + '.......\n' * 8
-        tiles = parse_tiles_file(text)
-        assert tiles[0][0] == 42
-
-
-class TestTileCompilerBitEncoding:
-    """Test tile_compiler.py pixel->bit encoding."""
-
-    def test_all_on(self):
-        """All pixels on = 0x7F per row."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = '# Tile 0x00: All on\n' + '#######\n' * 8
-        tiles = parse_tiles_file(text)
-        _, data = tiles[0]
-        for b in data:
-            assert b == 0x7F
-
-    def test_all_off(self):
-        """All pixels off = 0x00 per row."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        text = '# Tile 0x00: All off\n' + '.......\n' * 8
-        tiles = parse_tiles_file(text)
-        _, data = tiles[0]
-        for b in data:
-            assert b == 0x00
-
-    def test_bit_order(self):
-        """First char = bit 0, last char = bit 6."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file
-        # Only leftmost pixel on
-        text = '# Tile 0x00: Bit 0\n' + ('#......\n') * 8
-        tiles = parse_tiles_file(text)
-        _, data = tiles[0]
-        assert data[0] == 0x01  # Bit 0 only
-
-        # Only rightmost pixel on
-        text2 = '# Tile 0x00: Bit 6\n' + ('......#\n') * 8
-        tiles2 = parse_tiles_file(text2)
-        _, data2 = tiles2[0]
-        assert data2[0] == 0x40  # Bit 6 only
-
-
-class TestTileCompilerRoundTrip:
-    """Test tile_compiler.py compile -> decompile round-trip."""
-
-    def test_round_trip(self, tmp_path):
-        """Decompile SHPS data then compile back should reproduce bytes."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import decompile_shps, parse_tiles_file, _rows_to_bytes
-
-        # Create a known SHPS binary (just first 3 tiles)
-        data = bytearray(2048)
-        data[0:8] = bytes([0x7F, 0x41, 0x41, 0x41, 0x41, 0x41, 0x7F, 0x00])
-        data[8:16] = bytes([0x00, 0x3E, 0x22, 0x22, 0x22, 0x3E, 0x00, 0x00])
-
-        # Decompile
-        text = decompile_shps(bytes(data))
-
-        # Parse back
-        tiles = parse_tiles_file(text)
-        assert len(tiles) == 256
-
-        # First tile should match
-        _, recompiled = tiles[0]
-        assert recompiled == bytes(data[0:8])
-
-        # Second tile should match
-        _, recompiled2 = tiles[1]
-        assert recompiled2 == bytes(data[8:16])
-
-    def test_compile_to_json(self):
-        """Compile tiles to JSON format."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file, compile_to_json
-        text = '# Tile 0x05: Test\n' + '#......\n' * 8
-        tiles = parse_tiles_file(text)
-        result = compile_to_json(tiles)
-        assert 'tiles' in result
-        assert result['tiles'][0]['frames'][0]['index'] == 5
-        assert result['tiles'][0]['frames'][0]['raw'] == [1] * 8
-
-    def test_compile_to_script(self):
-        """Compile tiles to shell script format."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from tile_compiler import parse_tiles_file, compile_to_script
-        text = '# Tile 0x00: Test\n' + '.......\n' * 8
-        tiles = parse_tiles_file(text)
-        script = compile_to_script(tiles)
-        assert 'ult3edit shapes edit' in script
-        assert '--glyph 0' in script
-        assert '--backup' in script
 
 
 # =============================================================================
@@ -5134,344 +3566,10 @@ class TestMapCompilerOutputFormat:
 # Name compiler tests
 # =============================================================================
 
-class TestNameCompilerParse:
-    """Test parsing .names text files."""
-
-    def test_parse_simple(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import parse_names_file
-        text = '# Group: Test\nFOO\nBAR\nBAZ\n'
-        names = parse_names_file(text)
-        assert names == ['FOO', 'BAR', 'BAZ']
-
-    def test_parse_empty_string(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import parse_names_file
-        text = '""\nFOO\n""\nBAR\n'
-        names = parse_names_file(text)
-        assert names == ['', 'FOO', '', 'BAR']
-
-    def test_parse_skips_comments_and_blanks(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import parse_names_file
-        text = '# Header\n\n# Group: A\nFOO\n\n# Group: B\nBAR\n'
-        names = parse_names_file(text)
-        assert names == ['FOO', 'BAR']
-
-
-class TestNameCompilerEncode:
-    """Test encoding names to binary."""
-
-    def test_compile_basic(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import compile_names, NAME_TABLE_SIZE
-        names = ['FOO', 'BAR']
-        result = compile_names(names)
-        assert len(result) == NAME_TABLE_SIZE
-        # FOO = C6 CF CF 00, BAR = C2 C1 D2 00
-        assert result[0] == 0xC6  # F | 0x80
-        assert result[1] == 0xCF  # O | 0x80
-        assert result[2] == 0xCF  # O | 0x80
-        assert result[3] == 0x00  # null terminator
-        assert result[4] == 0xC2  # B | 0x80
-        assert result[7] == 0x00  # null terminator
-
-    def test_compile_empty_string(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import compile_names
-        names = ['', 'FOO']
-        result = compile_names(names)
-        # Empty string = just null terminator
-        assert result[0] == 0x00
-        assert result[1] == 0xC6  # F | 0x80
-
-    def test_compile_budget_overflow(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import compile_names
-        # Create names that exceed 891-byte budget
-        names = ['A' * 50] * 20  # 20 x (50+1) = 1020 bytes
-        with pytest.raises(ValueError, match='exceeds budget'):
-            compile_names(names)
-
-    def test_compile_with_tail_data(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import compile_names, NAME_TABLE_SIZE
-        names = ['FOO']
-        tail = b'\xAA\xBB\xCC'
-        result = compile_names(names, tail_data=tail)
-        assert len(result) == NAME_TABLE_SIZE
-        # Names part: F O O \0 = 4 bytes, then tail
-        assert result[4] == 0xAA
-        assert result[5] == 0xBB
-        assert result[6] == 0xCC
-
-
-class TestNameCompilerValidate:
-    """Test budget validation."""
-
-    def test_validate_within_budget(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import validate_names
-        names = ['FOO', 'BAR']
-        size, budget, valid = validate_names(names)
-        assert size == 8  # FOO\0 + BAR\0 = 4 + 4
-        assert budget == 891  # 921 - 30
-        assert valid is True
-
-    def test_validate_over_budget(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import validate_names
-        names = ['A' * 50] * 20
-        size, budget, valid = validate_names(names)
-        assert valid is False
-
-
-class TestNameCompilerRoundTrip:
-    """Test decompile and recompile produce equivalent output."""
-
-    def test_roundtrip(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import (
-            parse_names_file, compile_names, decompile_names,
-            NAME_TABLE_OFFSET, NAME_TABLE_SIZE,
-        )
-        # Build a synthetic ULT3-like binary with a known name table
-        names_in = ['WATER', 'GRASS', '', 'FOREST']
-        encoded = compile_names(names_in)
-        # Create a fake ULT3 binary large enough
-        data = bytearray(NAME_TABLE_OFFSET + NAME_TABLE_SIZE)
-        data[NAME_TABLE_OFFSET:NAME_TABLE_OFFSET + NAME_TABLE_SIZE] = encoded
-
-        # Decompile to text
-        text = decompile_names(bytes(data))
-        # Reparse
-        names_out = parse_names_file(text)
-        assert names_out == names_in
-
-    def test_voidborn_names_validate(self):
-        """Voidborn names.names file fits within budget."""
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        from name_compiler import parse_names_file, validate_names
-        names_path = os.path.join(os.path.dirname(__file__),
-                                   '..', 'conversions', 'voidborn',
-                                   'sources', 'names.names')
-        with open(names_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-        names = parse_names_file(text)
-        size, budget, valid = validate_names(names)
-        assert valid, f"Voidborn names {size}/{budget} bytes — over budget!"
-        assert len(names) > 100, f"Expected 100+ names, got {len(names)}"
-
 
 # =============================================================================
 # Source file validation tests
 # =============================================================================
-
-class TestSourceFileValidation:
-    """Validate Voidborn source files parse correctly."""
-
-    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
-                                '..', 'conversions', 'voidborn', 'sources')
-
-    def test_all_bestiary_valid_json(self):
-        """All bestiary source files are valid JSON with expected structure."""
-        for letter in 'abcdefghijklz':
-            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                data = json.load(f)
-            assert 'monsters' in data, f"bestiary_{letter}.json missing 'monsters'"
-            mons = data['monsters']
-            assert isinstance(mons, dict), f"bestiary_{letter}.json monsters not dict"
-            for key, val in mons.items():
-                assert 'hp' in val, f"bestiary_{letter}.json monster {key} missing hp"
-
-    def test_all_combat_valid_json(self):
-        """All combat source files are valid JSON with expected structure."""
-        for letter in 'abcfgmqrs':
-            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                data = json.load(f)
-            tiles = data.get('tiles', [])
-            assert len(tiles) == 11, f"combat_{letter}.json needs 11 tile rows"
-            for row in tiles:
-                assert len(row) == 11, f"combat_{letter}.json row not 11 chars"
-
-    def test_all_special_valid_json(self):
-        """All special location source files are valid JSON."""
-        for name in ('brnd', 'shrn', 'fntn', 'time'):
-            path = os.path.join(self.SOURCES_DIR, f'special_{name}.json')
-            with open(path, 'r') as f:
-                data = json.load(f)
-            tiles = data.get('tiles', [])
-            assert len(tiles) == 11, f"special_{name}.json needs 11 tile rows"
-
-    def test_title_json_valid(self):
-        """Title text source is valid JSON."""
-        path = os.path.join(self.SOURCES_DIR, 'title.json')
-        with open(path, 'r') as f:
-            data = json.load(f)
-        assert 'records' in data
-        assert len(data['records']) >= 2
-
-    def test_overworld_map_dimensions(self):
-        """Overworld map source is 64x64."""
-        path = os.path.join(self.SOURCES_DIR, 'mapa.map')
-        with open(path, 'r') as f:
-            lines = [l for l in f.read().splitlines()
-                     if l and not l.startswith('#')]
-        assert len(lines) == 64, f"mapa.map has {len(lines)} rows, expected 64"
-        for i, line in enumerate(lines):
-            assert len(line) == 64, f"mapa.map row {i} has {len(line)} chars"
-
-    def test_all_surface_maps_dimensions(self):
-        """All surface map sources are 64x64."""
-        for letter in 'abcdefghijklz':
-            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                lines = [l for l in f.read().splitlines()
-                         if l and not l.startswith('#')]
-            assert len(lines) == 64, \
-                f"map{letter}.map has {len(lines)} rows, expected 64"
-            for i, line in enumerate(lines):
-                assert len(line) == 64, \
-                    f"map{letter}.map row {i} has {len(line)} chars"
-
-    def test_all_dungeon_maps_dimensions(self):
-        """All dungeon map sources have 8 levels of 16x16."""
-        for letter in 'mnopqrs':
-            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                # Filter comments ('# ' with space) but keep tile rows
-                # starting with '#' (wall tile character in dungeons)
-                lines = [l for l in f.read().splitlines()
-                         if l and not l.startswith('# ')]
-            assert len(lines) == 128, \
-                f"map{letter}.map has {len(lines)} rows, expected 128 (8x16)"
-            for i, line in enumerate(lines):
-                assert len(line) == 16, \
-                    f"map{letter}.map row {i} has {len(line)} chars, expected 16"
-
-    def test_all_dialog_files_parseable(self):
-        """All dialog source files are parseable text with --- separators."""
-        for letter in 'abcdefghijklmnopqrs':
-            path = os.path.join(self.SOURCES_DIR, f'tlk{letter}.txt')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                text = f.read()
-            # Should have at least one record separator
-            assert '---' in text, f"tlk{letter}.txt missing --- separators"
-            # Non-comment, non-separator lines should be <= 20 chars
-            for line_num, line in enumerate(text.splitlines(), 1):
-                stripped = line.strip()
-                if stripped.startswith('#') or stripped == '---' or not stripped:
-                    continue
-                assert len(stripped) <= 20, \
-                    f"tlk{letter}.txt line {line_num} too long: {len(stripped)} chars"
-
-    def test_bestiary_stat_ranges(self):
-        """Spot check bestiary stats are in reasonable ranges."""
-        for letter in 'abcdefghijklz':
-            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                data = json.load(f)
-            for key, mon in data['monsters'].items():
-                hp = mon.get('hp', 0)
-                atk = mon.get('attack', 0)
-                assert 0 < hp <= 255, \
-                    f"bestiary_{letter}.json mon {key} hp={hp} out of range"
-                assert 0 < atk <= 255, \
-                    f"bestiary_{letter}.json mon {key} atk={atk} out of range"
-
-    def test_combat_position_bounds(self):
-        """All combat map positions are within 11x11 grid."""
-        for letter in 'abcfgmqrs':
-            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
-            if not os.path.exists(path):
-                continue
-            with open(path, 'r') as f:
-                data = json.load(f)
-            for group in ('monsters', 'pcs'):
-                positions = data.get(group, {})
-                if isinstance(positions, dict):
-                    positions = positions.values()
-                for pos in positions:
-                    assert 0 <= pos['x'] <= 10, \
-                        f"combat_{letter}.json {group} x={pos['x']} out of bounds"
-                    assert 0 <= pos['y'] <= 10, \
-                        f"combat_{letter}.json {group} y={pos['y']} out of bounds"
-
-
-class TestSourceManifest:
-    """Verify every expected source file exists."""
-
-    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
-                                '..', 'conversions', 'voidborn', 'sources')
-
-    def test_bestiary_manifest(self):
-        """All 13 bestiary source files exist."""
-        for letter in 'abcdefghijklz':
-            path = os.path.join(self.SOURCES_DIR, f'bestiary_{letter}.json')
-            assert os.path.exists(path), f"Missing bestiary_{letter}.json"
-
-    def test_combat_manifest(self):
-        """All 9 combat source files exist."""
-        for letter in 'abcfgmqrs':
-            path = os.path.join(self.SOURCES_DIR, f'combat_{letter}.json')
-            assert os.path.exists(path), f"Missing combat_{letter}.json"
-
-    def test_dialog_manifest(self):
-        """All 19 dialog source files exist."""
-        for letter in 'abcdefghijklmnopqrs':
-            path = os.path.join(self.SOURCES_DIR, f'tlk{letter}.txt')
-            assert os.path.exists(path), f"Missing tlk{letter}.txt"
-
-    def test_surface_map_manifest(self):
-        """All 13 surface map source files exist."""
-        for letter in 'abcdefghijklz':
-            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
-            assert os.path.exists(path), f"Missing map{letter}.map"
-
-    def test_dungeon_map_manifest(self):
-        """All 7 dungeon map source files exist."""
-        for letter in 'mnopqrs':
-            path = os.path.join(self.SOURCES_DIR, f'map{letter}.map')
-            assert os.path.exists(path), f"Missing map{letter}.map"
-
-    def test_special_manifest(self):
-        """All 4 special location source files exist."""
-        for name in ('brnd', 'shrn', 'fntn', 'time'):
-            path = os.path.join(self.SOURCES_DIR, f'special_{name}.json')
-            assert os.path.exists(path), f"Missing special_{name}.json"
-
-    def test_ancillary_manifest(self):
-        """Ancillary source files exist."""
-        for filename in ('tiles.tiles', 'names.names', 'title.json',
-                         'shop_strings.json', 'sosa.json', 'sosm.json',
-                         'mbs.json', 'ddrw.json'):
-            path = os.path.join(self.SOURCES_DIR, filename)
-            assert os.path.exists(path), f"Missing {filename}"
 
 
 # =============================================================================
@@ -5787,7 +3885,6 @@ class TestShopApply:
 
     def _build_shp_with_string(self, text):
         """Build a minimal SHP binary containing a JSR $46BA inline string."""
-        from ult3edit.shapes import encode_overlay_string
         # JSR $46BA = 0x20 0xBA 0x46
         jsr = bytes([0x20, 0xBA, 0x46])
         encoded = encode_overlay_string(text)
@@ -5828,7 +3925,6 @@ class TestShopApply:
         # Verify the file was modified
         with open(shp_path, 'rb') as f:
             result = f.read()
-        from ult3edit.shapes import extract_overlay_strings
         strings = extract_overlay_strings(result)
         assert len(strings) == 1
         assert strings[0]['text'] == 'ARMS'
@@ -5930,59 +4026,10 @@ class TestShopApply:
 # Sound source file validation
 # =============================================================================
 
-class TestSoundSources:
-    """Validate sound source JSON files."""
-
-    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
-                                '..', 'conversions', 'voidborn', 'sources')
-
-    def test_sosa_json_valid(self):
-        """SOSA source has correct structure and size."""
-        path = os.path.join(self.SOURCES_DIR, 'sosa.json')
-        with open(path, 'r') as f:
-            data = json.load(f)
-        assert 'raw' in data
-        assert len(data['raw']) == 4096
-        assert all(0 <= b <= 255 for b in data['raw'])
-
-    def test_sosm_json_valid(self):
-        """SOSM source has correct structure and size."""
-        path = os.path.join(self.SOURCES_DIR, 'sosm.json')
-        with open(path, 'r') as f:
-            data = json.load(f)
-        assert 'raw' in data
-        assert len(data['raw']) == 256
-        assert all(0 <= b <= 255 for b in data['raw'])
-
-    def test_mbs_json_valid(self):
-        """MBS source has correct structure, size, and END opcode."""
-        path = os.path.join(self.SOURCES_DIR, 'mbs.json')
-        with open(path, 'r') as f:
-            data = json.load(f)
-        assert 'raw' in data
-        assert len(data['raw']) == 5456
-        assert data['raw'][0] == 0x82, "First byte should be END opcode"
-        assert all(0 <= b <= 255 for b in data['raw'])
-
 
 # =============================================================================
 # DDRW source file validation
 # =============================================================================
-
-class TestDdrwSource:
-    """Validate DDRW source JSON file."""
-
-    SOURCES_DIR = os.path.join(os.path.dirname(__file__),
-                                '..', 'conversions', 'voidborn', 'sources')
-
-    def test_ddrw_json_valid(self):
-        """DDRW source has correct structure and size."""
-        path = os.path.join(self.SOURCES_DIR, 'ddrw.json')
-        with open(path, 'r') as f:
-            data = json.load(f)
-        assert 'raw' in data
-        assert len(data['raw']) == 1792
-        assert all(0 <= b <= 255 for b in data['raw'])
 
 
 # =============================================================================
@@ -6017,62 +4064,6 @@ class TestShopStringsSource:
 # =============================================================================
 # Name compiler edge cases
 # =============================================================================
-
-class TestNameCompilerEdgeCases:
-    """Edge case tests for name_compiler.py."""
-
-    def _get_mod(self):
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__),
-                                         '..', 'conversions', 'tools'))
-        import name_compiler
-        return name_compiler
-
-    def test_decompile_produces_parseable_output(self):
-        """Compile → embed in fake ULT3 → decompile → parse round-trip."""
-        mod = self._get_mod()
-        names = ['GRASS', 'FOREST', '', 'SWORD', 'SHIELD']
-        binary = mod.compile_names(names)
-        # Embed at NAME_TABLE_OFFSET in a fake ULT3
-        ult3 = bytearray(mod.NAME_TABLE_OFFSET + mod.NAME_TABLE_SIZE)
-        ult3[mod.NAME_TABLE_OFFSET:mod.NAME_TABLE_OFFSET + len(binary)] = binary
-        # Decompile returns .names text, parse it back
-        text = mod.decompile_names(bytes(ult3))
-        parsed = mod.parse_names_file(text)
-        assert parsed[:5] == names
-
-    def test_compile_special_characters(self):
-        """Names with spaces and punctuation encode correctly."""
-        mod = self._get_mod()
-        names = ['ICE AXE', "PIRATE'S"]
-        binary = mod.compile_names(names)
-        # Embed and round-trip
-        ult3 = bytearray(mod.NAME_TABLE_OFFSET + mod.NAME_TABLE_SIZE)
-        ult3[mod.NAME_TABLE_OFFSET:mod.NAME_TABLE_OFFSET + len(binary)] = binary
-        text = mod.decompile_names(bytes(ult3))
-        parsed = mod.parse_names_file(text)
-        assert parsed[0] == 'ICE AXE'
-        assert parsed[1] == "PIRATE'S"
-
-    def test_names_file_round_trip(self, tmp_path):
-        """Write .names file → read back → compile → decompile matches."""
-        mod = self._get_mod()
-        original_names = ['GRASS', 'FOREST', 'MOUNTAIN']
-        # Write .names format
-        content = '# Terrain\n' + '\n'.join(original_names) + '\n'
-        names_path = str(tmp_path / 'test.names')
-        with open(names_path, 'w') as f:
-            f.write(content)
-        # Parse
-        with open(names_path, 'r') as f:
-            parsed = mod.parse_names_file(f.read())
-        assert parsed == original_names
-        # Compile → embed → decompile → parse
-        binary = mod.compile_names(parsed)
-        ult3 = bytearray(mod.NAME_TABLE_OFFSET + mod.NAME_TABLE_SIZE)
-        ult3[mod.NAME_TABLE_OFFSET:mod.NAME_TABLE_OFFSET + len(binary)] = binary
-        text = mod.decompile_names(bytes(ult3))
-        reparsed = mod.parse_names_file(text)
-        assert reparsed[:3] == original_names
 
 
 # =============================================================================
@@ -6142,7 +4133,6 @@ class TestShopApplyEdgeCases:
         return mod
 
     def _build_shp_with_string(self, text):
-        from ult3edit.shapes import encode_overlay_string
         jsr = bytes([0x20, 0xBA, 0x46])
         encoded = encode_overlay_string(text)
         return bytearray(b'\x60' * 16 + jsr + encoded + b'\x60' * 16)
@@ -6235,55 +4225,6 @@ class TestShopApplyEdgeCases:
 # Tile compiler edge cases
 # =============================================================================
 
-class TestTileCompilerEdgeCases:
-    """Edge case tests for tile_compiler.py."""
-
-    TOOLS_DIR = os.path.join(os.path.dirname(__file__),
-                              '..', 'conversions', 'tools')
-
-    def _get_mod(self):
-        mod_path = os.path.join(self.TOOLS_DIR, 'tile_compiler.py')
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('tile_compiler', mod_path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def test_parse_tile_dimensions(self):
-        """Tile parser requires exactly 8 rows of 7 columns per glyph."""
-        mod = self._get_mod()
-        # Build a minimal .tiles source for one glyph
-        lines = ['# Tile 0x00: Test']
-        for _ in range(8):
-            lines.append('#' * 7)
-        text = '\n'.join(lines) + '\n'
-        tiles = mod.parse_tiles_file(text)
-        assert len(tiles) >= 1
-        # parse_tiles_file returns list of (index, bytes) tuples
-        assert tiles[0][0] == 0  # index
-        assert len(tiles[0][1]) == 8  # 8 bytes per glyph
-
-    def test_decompile_then_compile_matches(self):
-        """Decompile binary → compile back produces identical bytes."""
-        mod = self._get_mod()
-        # Create a 2048-byte SHPS with one known glyph at index 0
-        shps = bytearray(2048)
-        original = bytes([0b1010101, 0b0101010, 0b1111111, 0b0000000,
-                          0b1100110, 0b0011001, 0b1111000, 0b0001111])
-        shps[0:8] = original
-        # Decompile to text
-        text = mod.decompile_shps(bytes(shps))
-        # Parse the text back
-        tiles = mod.parse_tiles_file(text)
-        # Find tile index 0
-        glyph_bytes = None
-        for idx, data in tiles:
-            if idx == 0:
-                glyph_bytes = data
-                break
-        assert glyph_bytes is not None
-        assert glyph_bytes == original
-
 
 # =============================================================================
 # Bestiary import: shortcut + raw attribute conflict fix
@@ -6295,8 +4236,8 @@ class TestBestiaryShortcutRawConflict:
     def test_shortcut_applied_after_raw(self, tmp_path):
         """Boss shortcut is preserved even when flags1 raw value is 0."""
         from ult3edit.bestiary import (
-            load_mon_file, save_mon_file, cmd_import,
-            MON_FLAG1_BOSS, MON_MONSTERS_PER_FILE
+            load_mon_file, cmd_import,
+            MON_FLAG1_BOSS
         )
         # Create empty MON file
         mon_data = bytearray(256)
@@ -6396,7 +4337,8 @@ class TestDictKeyValidation:
 
     def test_combat_import_skips_bad_keys(self, tmp_path):
         """Combat import skips non-numeric monster keys without crashing."""
-        from ult3edit.combat import cmd_import as combat_import, CON_FILE_SIZE
+        from ult3edit.combat import cmd_import as combat_import
+        from ult3edit.constants import CON_FILE_SIZE
         con_data = bytearray(CON_FILE_SIZE)
         con_path = str(tmp_path / 'CONA')
         with open(con_path, 'wb') as f:
@@ -6523,75 +4465,6 @@ class TestPrtySlotIdsPartialWrite:
         assert party.slot_ids == [1, 3, 7, 15]
 
 
-class TestDdrwImportSizeValidation:
-    """DDRW import should warn on wrong file size."""
-
-    def test_correct_size_no_warning(self, tmp_path, capsys):
-        """Importing 1792 bytes should produce no warning."""
-        from ult3edit.ddrw import cmd_import, DDRW_FILE_SIZE
-        json_file = tmp_path / 'ddrw.json'
-        json_file.write_text(json.dumps({'raw': [0] * DDRW_FILE_SIZE}))
-        out_file = tmp_path / 'DDRW'
-        out_file.write_bytes(b'\x00' * DDRW_FILE_SIZE)
-        args = type('A', (), {
-            'file': str(out_file), 'json_file': str(json_file),
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        cmd_import(args)
-        assert 'Warning' not in capsys.readouterr().err
-
-    def test_wrong_size_warns(self, tmp_path, capsys):
-        """Importing wrong size should produce a warning."""
-        from ult3edit.ddrw import cmd_import, DDRW_FILE_SIZE
-        json_file = tmp_path / 'ddrw.json'
-        json_file.write_text(json.dumps({'raw': [0] * 100}))
-        out_file = tmp_path / 'DDRW'
-        out_file.write_bytes(b'\x00' * DDRW_FILE_SIZE)
-        args = type('A', (), {
-            'file': str(out_file), 'json_file': str(json_file),
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        cmd_import(args)
-        err = capsys.readouterr().err
-        assert 'Warning' in err
-        assert '1792' in err
-
-
-class TestSoundImportSizeValidation:
-    """Sound import should warn on unknown file sizes."""
-
-    def test_known_size_no_warning(self, tmp_path, capsys):
-        """Importing 4096 bytes (SOSA) should produce no warning."""
-        from ult3edit.sound import cmd_import
-        from ult3edit.constants import SOSA_FILE_SIZE
-        json_file = tmp_path / 'sosa.json'
-        json_file.write_text(json.dumps({'raw': [0] * SOSA_FILE_SIZE}))
-        out_file = tmp_path / 'SOSA'
-        out_file.write_bytes(b'\x00' * SOSA_FILE_SIZE)
-        args = type('A', (), {
-            'file': str(out_file), 'json_file': str(json_file),
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        cmd_import(args)
-        assert 'Warning' not in capsys.readouterr().err
-
-    def test_unknown_size_warns(self, tmp_path, capsys):
-        """Importing unknown size should produce a warning."""
-        from ult3edit.sound import cmd_import
-        json_file = tmp_path / 'sound.json'
-        json_file.write_text(json.dumps({'raw': [0] * 999}))
-        out_file = tmp_path / 'SND'
-        out_file.write_bytes(b'\x00' * 999)
-        args = type('A', (), {
-            'file': str(out_file), 'json_file': str(json_file),
-            'output': None, 'backup': False, 'dry_run': False,
-        })()
-        cmd_import(args)
-        err = capsys.readouterr().err
-        assert 'Warning' in err
-        assert '999' in err
-
-
 class TestTextImportOverflow:
     """Text import should report actual records written, not total in JSON."""
 
@@ -6638,909 +4511,25 @@ class TestTextImportOverflow:
 # Engine SDK: Round-trip assembly verification
 # =============================================================================
 
-class TestEngineRoundTrip:
-    """Verify engine binaries reassemble byte-identical from CIDAR disassembly.
-
-    These tests prove the SDK build pipeline works:
-    CIDAR disassembly (.s) → asmiigs assembler → OMF → byte-identical binary.
-
-    Requires engine/originals/*.bin and engine/build/*.omf to exist.
-    Run `bash engine/build.sh` first to populate build output.
-    """
-
-    ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'engine')
-    OMF_HEADER_SIZE = 60  # asmiigs OMF v2.1 segment header
-    OMF_TRAILER_SIZE = 1  # End-of-segment marker ($00)
-
-    BINARIES = {
-        'SUBS': {'size': 3584, 'org': 0x4100},
-        'ULT3': {'size': 17408, 'org': 0x5000},
-        'EXOD': {'size': 26208, 'org': 0x2000},
-    }
-
-    def _verify(self, name):
-        info = self.BINARIES[name]
-        omf_path = os.path.join(self.ENGINE_DIR, 'build', f'{name}.omf')
-        orig_path = os.path.join(self.ENGINE_DIR, 'originals', f'{name}.bin')
-
-        if not os.path.exists(omf_path):
-            pytest.skip(f"Build output not found: {omf_path} (run engine/build.sh)")
-        if not os.path.exists(orig_path):
-            pytest.skip(f"Original binary not found: {orig_path}")
-
-        with open(omf_path, 'rb') as f:
-            omf_data = f.read()
-        with open(orig_path, 'rb') as f:
-            orig_data = f.read()
-
-        assert len(orig_data) == info['size'], \
-            f"Original {name} size: expected {info['size']}, got {len(orig_data)}"
-
-        code = omf_data[self.OMF_HEADER_SIZE:self.OMF_HEADER_SIZE + len(orig_data)]
-        assert len(code) == len(orig_data), \
-            f"OMF code section: expected {len(orig_data)}, got {len(code)}"
-        assert code == orig_data, \
-            f"{name} not byte-identical after reassembly"
-
-    def test_subs_byte_identical(self):
-        """SUBS (3,584 bytes at $4100) reassembles byte-identical."""
-        self._verify('SUBS')
-
-    def test_ult3_byte_identical(self):
-        """ULT3 (17,408 bytes at $5000) reassembles byte-identical."""
-        self._verify('ULT3')
-
-    def test_exod_byte_identical(self):
-        """EXOD (26,208 bytes at $2000) reassembles byte-identical."""
-        self._verify('EXOD')
-
-    def test_all_source_files_exist(self):
-        """All three CIDAR disassembly source files exist."""
-        for name, subdir in [('subs.s', 'subs'), ('ult3.s', 'ult3'), ('exod.s', 'exod')]:
-            path = os.path.join(self.ENGINE_DIR, subdir, name)
-            assert os.path.exists(path), f"Source not found: {path}"
-
-    def test_all_original_binaries_exist(self):
-        """All three original binaries exist for verification."""
-        for name in self.BINARIES:
-            path = os.path.join(self.ENGINE_DIR, 'originals', f'{name}.bin')
-            assert os.path.exists(path), f"Original not found: {path}"
-
-    def test_original_binary_sizes(self):
-        """Original binaries have correct documented sizes."""
-        for name, info in self.BINARIES.items():
-            path = os.path.join(self.ENGINE_DIR, 'originals', f'{name}.bin')
-            if not os.path.exists(path):
-                pytest.skip(f"Original not found: {path}")
-            size = os.path.getsize(path)
-            assert size == info['size'], \
-                f"{name}: expected {info['size']} bytes, got {size}"
-
-    def test_omf_header_size(self):
-        """OMF files have the expected 60-byte header."""
-        for name, info in self.BINARIES.items():
-            omf_path = os.path.join(self.ENGINE_DIR, 'build', f'{name}.omf')
-            if not os.path.exists(omf_path):
-                pytest.skip(f"Build output not found (run engine/build.sh)")
-            omf_size = os.path.getsize(omf_path)
-            expected = info['size'] + self.OMF_HEADER_SIZE + self.OMF_TRAILER_SIZE
-            assert omf_size == expected, \
-                f"{name}.omf: expected {expected} bytes, got {omf_size}"
-
-    def test_build_script_exists(self):
-        """Build script exists."""
-        assert os.path.exists(os.path.join(self.ENGINE_DIR, 'build.sh'))
-
-    def test_verify_script_exists(self):
-        """Verification script exists."""
-        assert os.path.exists(os.path.join(self.ENGINE_DIR, 'verify.py'))
-
-
-class TestStringCatalog:
-    """Test the engine inline string catalog tool."""
-
-    ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'engine')
-
-    def _load_ult3(self):
-        path = os.path.join(self.ENGINE_DIR, 'originals', 'ULT3.bin')
-        if not os.path.exists(path):
-            pytest.skip("ULT3.bin not found")
-        with open(path, 'rb') as f:
-            return f.read()
-
-    def test_catalog_tool_exists(self):
-        path = os.path.join(self.ENGINE_DIR, 'tools', 'string_catalog.py')
-        assert os.path.exists(path)
-
-    def test_extract_finds_strings(self):
-        """ULT3 contains 200+ inline strings."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        data = self._load_ult3()
-        strings = extract_inline_strings(data, 0x5000)
-        assert len(strings) >= 200, f"Expected 200+ strings, got {len(strings)}"
-
-    def test_extract_card_of_death(self):
-        """Can find 'CARD OF DEATH' inline string."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        data = self._load_ult3()
-        strings = extract_inline_strings(data, 0x5000)
-        texts = [s['text'] for s in strings]
-        assert any('CARD OF DEATH' in t for t in texts)
-
-    def test_extract_mark_of_kings(self):
-        """Can find 'MARK OF KINGS' inline string."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        data = self._load_ult3()
-        strings = extract_inline_strings(data, 0x5000)
-        texts = [s['text'] for s in strings]
-        assert any('MARK OF KINGS' in t for t in texts)
-
-    def test_extract_evocare(self):
-        """Can find 'EVOCARE' inline string."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        data = self._load_ult3()
-        strings = extract_inline_strings(data, 0x5000)
-        texts = [s['text'] for s in strings]
-        assert any('EVOCARE' in t for t in texts)
-
-    def test_total_bytes_reasonable(self):
-        """Total inline string bytes should be 3000-5000."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        data = self._load_ult3()
-        strings = extract_inline_strings(data, 0x5000)
-        total = sum(s['jsr_plus_text'] for s in strings)
-        assert 3000 <= total <= 5000, f"Total bytes: {total}"
-
-    def test_no_strings_in_exod(self):
-        """EXOD should have zero JSR $46BA strings."""
-        path = os.path.join(self.ENGINE_DIR, 'originals', 'EXOD.bin')
-        if not os.path.exists(path):
-            pytest.skip("EXOD.bin not found")
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        with open(path, 'rb') as f:
-            data = f.read()
-        strings = extract_inline_strings(data, 0x2000)
-        assert len(strings) == 0
-
-    def test_no_strings_in_subs(self):
-        """SUBS should have zero JSR $46BA strings (it IS the printer)."""
-        path = os.path.join(self.ENGINE_DIR, 'originals', 'SUBS.bin')
-        if not os.path.exists(path):
-            pytest.skip("SUBS.bin not found")
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        with open(path, 'rb') as f:
-            data = f.read()
-        strings = extract_inline_strings(data, 0x4100)
-        assert len(strings) == 0
-
-    def test_json_catalog_exists(self):
-        """Pre-built JSON catalog exists."""
-        path = os.path.join(self.ENGINE_DIR, 'tools', 'ult3_strings.json')
-        if not os.path.exists(path):
-            pytest.skip("JSON catalog not built yet")
-        with open(path) as f:
-            catalog = json.load(f)
-        assert catalog['total_strings'] >= 200
-        assert 'strings' in catalog
-
-    def test_categorize_quest_items(self):
-        """Categorizer identifies quest item strings correctly."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import categorize_string
-        assert categorize_string('CARD OF DEATH') == 'quest-item'
-        assert categorize_string('MARK OF KINGS') == 'quest-item'
-
-    def test_categorize_combat(self):
-        """Categorizer identifies combat strings correctly."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import categorize_string
-        assert categorize_string('KILLED! EXP.-') == 'combat'
-        assert categorize_string('MISSED!') == 'combat'
-
-    def test_synthesized_binary_scan(self):
-        """String extraction works on synthesized data with known strings."""
-        sys.path.insert(0, os.path.join(self.ENGINE_DIR, 'tools'))
-        from string_catalog import extract_inline_strings
-        # Build a small binary with two inline strings
-        data = bytearray(100)
-        # JSR $46BA at offset 10
-        data[10] = 0x20
-        data[11] = 0xBA
-        data[12] = 0x46
-        # "HI" in high-ASCII + null
-        data[13] = 0xC8  # H
-        data[14] = 0xC9  # I
-        data[15] = 0x00  # null
-        # JSR $46BA at offset 30
-        data[30] = 0x20
-        data[31] = 0xBA
-        data[32] = 0x46
-        # "BYE" in high-ASCII + null
-        data[33] = 0xC2  # B
-        data[34] = 0xD9  # Y
-        data[35] = 0xC5  # E
-        data[36] = 0x00  # null
-        strings = extract_inline_strings(bytes(data))
-        assert len(strings) == 2
-        assert strings[0]['text'] == 'HI'
-        assert strings[1]['text'] == 'BYE'
-        assert strings[0]['file_offset'] == 10
-        assert strings[1]['file_offset'] == 30
-
 
 # =============================================================================
 # String patcher tests
 # =============================================================================
-
-def _make_inline_binary(*texts):
-    """Build a synthetic binary with JSR $46BA inline strings.
-
-    Returns (bytearray, list_of_string_info_dicts).
-    Each text is high-ASCII encoded after the JSR pattern.
-    """
-    parts = bytearray()
-    # pad with NOPs at start
-    parts.extend(b'\xEA' * 4)
-    for text in texts:
-        # JSR $46BA
-        parts.extend(b'\x20\xBA\x46')
-        for ch in text:
-            if ch == '\n':
-                parts.append(0xFF)
-            else:
-                parts.append(ord(ch.upper()) | 0x80)
-        parts.append(0x00)  # null terminator
-        parts.extend(b'\xEA' * 2)  # pad between strings
-    # Extract string info using the catalog tool
-    import importlib
-    tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'engine', 'tools')
-    if tools_dir not in sys.path:
-        sys.path.insert(0, tools_dir)
-    from string_catalog import extract_inline_strings
-    strings = extract_inline_strings(bytes(parts))
-    return parts, strings
-
-
-class TestStringPatcher:
-    """Test the engine inline string patcher tool."""
-
-    ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'engine')
-
-    def _get_patcher(self):
-        tools_dir = os.path.join(self.ENGINE_DIR, 'tools')
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
-        from string_patcher import encode_high_ascii, patch_string, resolve_patches
-        return encode_high_ascii, patch_string, resolve_patches
-
-    def test_patcher_tool_exists(self):
-        path = os.path.join(self.ENGINE_DIR, 'tools', 'string_patcher.py')
-        assert os.path.exists(path)
-
-    def test_encode_high_ascii_simple(self):
-        encode_high_ascii, _, _ = self._get_patcher()
-        result = encode_high_ascii('HI')
-        assert result == bytearray([0xC8, 0xC9])
-
-    def test_encode_high_ascii_newline(self):
-        encode_high_ascii, _, _ = self._get_patcher()
-        result = encode_high_ascii('A\nB')
-        assert result == bytearray([0xC1, 0xFF, 0xC2])
-
-    def test_patch_string_fits(self):
-        """Patch that fits in available space succeeds."""
-        _, patch_string, _ = self._get_patcher()
-        data, strings = _make_inline_binary('HELLO WORLD')
-        ok, msg = patch_string(data, strings[0], 'GOODBYE')
-        assert ok
-        assert 'Patched' in msg
-        # Verify the patched bytes
-        offset = strings[0]['text_offset']
-        assert data[offset] == 0xC7  # G
-        assert data[offset + 6] == 0xC5  # E (last char of GOODBYE)
-        assert data[offset + 7] == 0x00  # null fill
-
-    def test_patch_string_exact_fit(self):
-        """Patch that exactly matches original length succeeds."""
-        _, patch_string, _ = self._get_patcher()
-        data, strings = _make_inline_binary('ABC')
-        ok, msg = patch_string(data, strings[0], 'XYZ')
-        assert ok
-        offset = strings[0]['text_offset']
-        assert data[offset] == 0xD8  # X
-        assert data[offset + 1] == 0xD9  # Y
-        assert data[offset + 2] == 0xDA  # Z
-
-    def test_patch_string_too_long(self):
-        """Patch longer than available space fails gracefully."""
-        _, patch_string, _ = self._get_patcher()
-        data, strings = _make_inline_binary('HI')
-        ok, msg = patch_string(data, strings[0], 'THIS IS WAY TOO LONG')
-        assert not ok
-        assert 'too long' in msg.lower()
-
-    def test_patch_null_fills_remainder(self):
-        """Shorter replacement null-fills remaining bytes."""
-        _, patch_string, _ = self._get_patcher()
-        data, strings = _make_inline_binary('ABCDEF')
-        ok, msg = patch_string(data, strings[0], 'XY')
-        assert ok
-        offset = strings[0]['text_offset']
-        assert data[offset] == 0xD8  # X
-        assert data[offset + 1] == 0xD9  # Y
-        # Remaining bytes should be null-filled
-        for i in range(2, 7):  # 6 original + null
-            assert data[offset + i] == 0x00
-
-    def test_resolve_by_index(self):
-        """Resolve patches by string index."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('FIRST', 'SECOND')
-        patches = [{'index': 1, 'text': 'REPLACEMENT'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 1
-        assert resolved[0][0]['index'] == 1
-        assert resolved[0][1] == 'REPLACEMENT'
-
-    def test_resolve_by_vanilla_text(self):
-        """Resolve patches by vanilla text matching."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('CARD OF DEATH', 'HELLO')
-        patches = [{'vanilla': 'CARD OF DEATH', 'text': 'SHARD OF VOID'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 1
-        assert 'CARD OF DEATH' in resolved[0][0]['text']
-
-    def test_resolve_by_vanilla_case_insensitive(self):
-        """Vanilla text matching is case-insensitive."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('HELLO WORLD')
-        patches = [{'vanilla': 'hello world', 'text': 'GOODBYE'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 1
-
-    def test_resolve_by_address(self):
-        """Resolve patches by address."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('TEST')
-        addr = strings[0]['address']
-        patches = [{'address': addr, 'text': 'NEW'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 1
-
-    def test_resolve_missing_index_warns(self, capsys):
-        """Missing index produces warning, not crash."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('ONLY')
-        patches = [{'index': 999, 'text': 'MISSING'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 0
-
-    def test_resolve_missing_vanilla_warns(self, capsys):
-        """Missing vanilla text produces warning, not crash."""
-        _, _, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary('ACTUAL')
-        patches = [{'vanilla': 'NONEXISTENT', 'text': 'MISSING'}]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 0
-
-    def test_full_patch_roundtrip(self):
-        """Full pipeline: resolve + patch multiple strings."""
-        _, patch_string, resolve_patches = self._get_patcher()
-        data, strings = _make_inline_binary(
-            'CARD OF DEATH', 'MARK OF KINGS', 'HELLO'
-        )
-        patches = [
-            {'vanilla': 'CARD OF DEATH', 'text': 'SHARD OF VOID'},
-            {'vanilla': 'MARK OF KINGS', 'text': 'SIGIL: KINGS'},
-        ]
-        resolved = resolve_patches(strings, patches)
-        assert len(resolved) == 2
-        for string_info, new_text in resolved:
-            ok, msg = patch_string(data, string_info, new_text)
-            assert ok
-        # Verify HELLO is untouched
-        hello_offset = strings[2]['text_offset']
-        assert data[hello_offset] == 0xC8  # H still there
-
-    def test_voidborn_engine_strings_valid(self):
-        """Voidborn engine_strings.json has valid structure."""
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                            'conversions', 'voidborn', 'sources', 'engine_strings.json')
-        if not os.path.exists(path):
-            pytest.skip("engine_strings.json not found")
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        assert 'patches' in data
-        assert len(data['patches']) >= 10
-        for patch in data['patches']:
-            assert 'text' in patch
-            assert 'index' in patch or 'vanilla' in patch or 'address' in patch
-
-    def test_voidborn_patches_fit_in_place(self):
-        """All Voidborn engine string patches fit in original space."""
-        ult3_path = os.path.join(self.ENGINE_DIR, 'originals', 'ULT3.bin')
-        if not os.path.exists(ult3_path):
-            pytest.skip("ULT3.bin not found")
-        patches_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                    'conversions', 'voidborn', 'sources',
-                                    'engine_strings.json')
-        if not os.path.exists(patches_path):
-            pytest.skip("engine_strings.json not found")
-        tools_dir = os.path.join(self.ENGINE_DIR, 'tools')
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
-        from string_catalog import extract_inline_strings
-        from string_patcher import patch_string, resolve_patches
-        with open(ult3_path, 'rb') as f:
-            data = bytearray(f.read())
-        with open(patches_path, 'r', encoding='utf-8') as f:
-            patch_data = json.load(f)
-        strings = extract_inline_strings(bytes(data), 0x5000)
-        resolved = resolve_patches(strings, patch_data['patches'])
-        assert len(resolved) >= 10, f"Only {len(resolved)} patches resolved"
-        for string_info, new_text in resolved:
-            ok, msg = patch_string(data, string_info, new_text)
-            assert ok, f"Patch failed: {msg}"
 
 
 # =============================================================================
 # Source-level string patcher tests
 # =============================================================================
 
-def _make_asm_source(*inline_texts):
-    """Build synthetic .s source lines with ASC inline strings.
-
-    Returns list of source lines simulating CIDAR disassembly output.
-    """
-    lines = []
-    lines.append('            ORG     $5000\n')
-    lines.append('; --- Code ---\n')
-    for text in inline_texts:
-        lines.append('            DB      $20,$BA,$46,$FF\n')
-        lines.append(f'            ASC     "{text}"\n')
-        lines.append('            DB      $00 ; null terminator\n')
-        lines.append('            DB      $60  ; RTS\n')
-    return lines
-
-
-class TestSourcePatcher:
-    """Test the source-level inline string patcher tool."""
-
-    ENGINE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'engine')
-
-    def _get_source_patcher(self):
-        tools_dir = os.path.join(self.ENGINE_DIR, 'tools')
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
-        from source_patcher import (
-            extract_asc_strings, is_inline_string,
-            resolve_source_patches, apply_source_patches,
-        )
-        return extract_asc_strings, is_inline_string, resolve_source_patches, apply_source_patches
-
-    def test_source_patcher_exists(self):
-        path = os.path.join(self.ENGINE_DIR, 'tools', 'source_patcher.py')
-        assert os.path.exists(path)
-
-    def test_extract_asc_strings(self):
-        """Can find ASC directives in synthesized source."""
-        extract, _, _, _ = self._get_source_patcher()
-        lines = _make_asm_source('HELLO WORLD', 'GOODBYE')
-        strings = extract(lines)
-        assert len(strings) == 2
-        assert strings[0]['text'] == 'HELLO WORLD'
-        assert strings[1]['text'] == 'GOODBYE'
-
-    def test_is_inline_string(self):
-        """Correctly identifies JSR $46BA inline strings."""
-        extract, is_inline, _, _ = self._get_source_patcher()
-        lines = _make_asm_source('CARD OF DEATH')
-        strings = extract(lines)
-        assert len(strings) == 1
-        assert is_inline(lines, strings[0])
-
-    def test_is_not_inline_string(self):
-        """Non-inline ASC directives are not flagged."""
-        extract, is_inline, _, _ = self._get_source_patcher()
-        lines = [
-            '            ASC     "JUST DATA"\n',
-            '            DB      $00\n',
-        ]
-        strings = extract(lines)
-        assert len(strings) == 1
-        assert not is_inline(lines, strings[0])
-
-    def test_resolve_by_vanilla(self):
-        """Resolve source patches by vanilla text."""
-        extract, _, resolve, _ = self._get_source_patcher()
-        lines = _make_asm_source('CARD OF DEATH', 'HELLO')
-        strings = extract(lines)
-        patches = [{'vanilla': 'CARD OF DEATH', 'text': 'SHARD OF VOID'}]
-        resolved = resolve(strings, patches)
-        assert len(resolved) == 1
-        assert resolved[0][1] == 'SHARD OF VOID'
-
-    def test_resolve_case_insensitive(self):
-        """Vanilla text matching is case-insensitive."""
-        extract, _, resolve, _ = self._get_source_patcher()
-        lines = _make_asm_source('HELLO WORLD')
-        strings = extract(lines)
-        patches = [{'vanilla': 'hello world', 'text': 'GOODBYE'}]
-        resolved = resolve(strings, patches)
-        assert len(resolved) == 1
-
-    def test_resolve_by_index(self):
-        """Resolve source patches by ASC index."""
-        extract, _, resolve, _ = self._get_source_patcher()
-        lines = _make_asm_source('FIRST', 'SECOND', 'THIRD')
-        strings = extract(lines)
-        patches = [{'index': 1, 'text': 'REPLACEMENT'}]
-        resolved = resolve(strings, patches)
-        assert len(resolved) == 1
-        assert resolved[0][0]['text'] == 'SECOND'
-
-    def test_apply_replaces_text(self):
-        """Applying patches replaces ASC directive text."""
-        extract, _, resolve, apply_patches = self._get_source_patcher()
-        lines = _make_asm_source('CARD OF DEATH', 'MARK OF KINGS')
-        strings = extract(lines)
-        patches = [
-            {'vanilla': 'CARD OF DEATH', 'text': 'SHARD OF THE ETERNAL VOID'},
-            {'vanilla': 'MARK OF KINGS', 'text': 'SIGIL OF KINGS'},
-        ]
-        resolved = resolve(strings, patches)
-        modified, count = apply_patches(lines, resolved)
-        assert count == 2
-        # Check that modified lines contain new text
-        combined = ''.join(modified)
-        assert 'SHARD OF THE ETERNAL VOID' in combined
-        assert 'SIGIL OF KINGS' in combined
-        # Originals should be gone
-        assert 'CARD OF DEATH' not in combined
-        assert 'MARK OF KINGS' not in combined
-
-    def test_apply_no_length_constraint(self):
-        """Source-level patches have no length constraints."""
-        extract, _, resolve, apply_patches = self._get_source_patcher()
-        lines = _make_asm_source('HI')
-        strings = extract(lines)
-        # Replace 2-char string with 50-char string -- would fail in binary patcher
-        long_text = 'THIS IS A VERY LONG REPLACEMENT STRING WITH NO LIMIT'
-        patches = [{'vanilla': 'HI', 'text': long_text}]
-        resolved = resolve(strings, patches)
-        modified, count = apply_patches(lines, resolved)
-        assert count == 1
-        assert long_text in ''.join(modified)
-
-    def test_apply_preserves_untouched(self):
-        """Unmatched ASC directives are preserved."""
-        extract, _, resolve, apply_patches = self._get_source_patcher()
-        lines = _make_asm_source('CHANGE ME', 'KEEP ME')
-        strings = extract(lines)
-        patches = [{'vanilla': 'CHANGE ME', 'text': 'CHANGED'}]
-        resolved = resolve(strings, patches)
-        modified, count = apply_patches(lines, resolved)
-        assert count == 1
-        combined = ''.join(modified)
-        assert 'KEEP ME' in combined
-        assert 'CHANGED' in combined
-
-    def test_voidborn_full_patches_valid(self):
-        """Voidborn engine_strings_full.json has valid structure."""
-        path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                            'conversions', 'voidborn', 'sources',
-                            'engine_strings_full.json')
-        if not os.path.exists(path):
-            pytest.skip("engine_strings_full.json not found")
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        assert 'patches' in data
-        assert len(data['patches']) >= 8
-        for patch in data['patches']:
-            assert 'text' in patch
-            assert 'vanilla' in patch or 'index' in patch
-
-    def test_voidborn_full_patches_resolve_against_source(self):
-        """All Voidborn full patches resolve against ULT3 source."""
-        source_path = os.path.join(self.ENGINE_DIR, 'ult3', 'ult3.s')
-        if not os.path.exists(source_path):
-            pytest.skip("ult3.s not found")
-        patches_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                    'conversions', 'voidborn', 'sources',
-                                    'engine_strings_full.json')
-        if not os.path.exists(patches_path):
-            pytest.skip("engine_strings_full.json not found")
-        extract, _, resolve, _ = self._get_source_patcher()
-        with open(source_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        with open(patches_path, 'r', encoding='utf-8') as f:
-            patch_data = json.load(f)
-        strings = extract(lines)
-        resolved = resolve(strings, patch_data['patches'])
-        assert len(resolved) >= 8, f"Only {len(resolved)} patches resolved"
-
 
 # =============================================================================
 # Integrated inline string catalog (patch.py cmd_strings)
 # =============================================================================
 
-class TestPatchStrings:
-    """Test the ult3edit patch strings CLI integration."""
-
-    def _make_binary_with_strings(self, *texts):
-        """Build binary with JSR $46BA inline strings."""
-        data = bytearray()
-        data.extend(b'\xEA' * 4)  # NOP padding
-        for text in texts:
-            data.extend(b'\x20\xBA\x46')  # JSR $46BA
-            for ch in text:
-                if ch == '\n':
-                    data.append(0xFF)
-                else:
-                    data.append(ord(ch.upper()) | 0x80)
-            data.append(0x00)  # null terminator
-            data.extend(b'\xEA' * 2)
-        return bytes(data)
-
-    def test_extract_inline_strings(self):
-        """Integrated _extract_inline_strings finds strings."""
-        from ult3edit.patch import _extract_inline_strings
-        data = self._make_binary_with_strings('HELLO', 'WORLD')
-        strings = _extract_inline_strings(data)
-        assert len(strings) == 2
-        assert strings[0]['text'] == 'HELLO'
-        assert strings[1]['text'] == 'WORLD'
-
-    def test_extract_with_newlines(self):
-        """Strings with embedded newlines ($FF) decoded correctly."""
-        from ult3edit.patch import _extract_inline_strings
-        data = self._make_binary_with_strings('LINE1\nLINE2')
-        strings = _extract_inline_strings(data)
-        assert len(strings) == 1
-        assert strings[0]['text'] == 'LINE1\nLINE2'
-
-    def test_extract_with_org(self):
-        """Origin address added to reported addresses."""
-        from ult3edit.patch import _extract_inline_strings
-        data = self._make_binary_with_strings('TEST')
-        strings = _extract_inline_strings(data, org=0x5000)
-        assert strings[0]['address'] >= 0x5000
-
-    def test_extract_empty_binary(self):
-        """Empty or no-string binary returns empty list."""
-        from ult3edit.patch import _extract_inline_strings
-        data = bytes(100)
-        strings = _extract_inline_strings(data)
-        assert len(strings) == 0
-
-    def test_cmd_strings_on_ult3(self, capsys):
-        """cmd_strings produces output on ULT3 binary."""
-        ult3_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                 'engine', 'originals', 'ULT3.bin')
-        if not os.path.exists(ult3_path):
-            pytest.skip("ULT3.bin not found")
-        from ult3edit.patch import cmd_strings
-        args = argparse.Namespace(file=ult3_path, json=False, search=None,
-                                  output=None)
-        cmd_strings(args)
-        captured = capsys.readouterr()
-        assert '245 strings' in captured.out
-        assert 'CARD OF DEATH' in captured.out
-
-    def test_cmd_strings_search(self, capsys):
-        """cmd_strings search filter works."""
-        ult3_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                 'engine', 'originals', 'ULT3.bin')
-        if not os.path.exists(ult3_path):
-            pytest.skip("ULT3.bin not found")
-        from ult3edit.patch import cmd_strings
-        args = argparse.Namespace(file=ult3_path, json=False,
-                                  search='MARK', output=None)
-        cmd_strings(args)
-        captured = capsys.readouterr()
-        assert 'MARK OF KINGS' in captured.out
-        # Should NOT show unrelated strings
-        assert 'SPELL TYPE' not in captured.out
-
-    def test_cmd_strings_json(self, capsys, tmp_dir):
-        """cmd_strings JSON output is valid."""
-        ult3_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                 'engine', 'originals', 'ULT3.bin')
-        if not os.path.exists(ult3_path):
-            pytest.skip("ULT3.bin not found")
-        out_path = os.path.join(tmp_dir, 'strings.json')
-        from ult3edit.patch import cmd_strings
-        args = argparse.Namespace(file=ult3_path, json=True, search=None,
-                                  output=out_path)
-        cmd_strings(args)
-        with open(out_path) as f:
-            data = json.load(f)
-        assert data['total_strings'] >= 200
-        assert 'strings' in data
-
 
 # =============================================================================
 # Inline string editing (patch.py cmd_strings_edit / cmd_strings_import)
 # =============================================================================
-
-class TestPatchStringsEdit:
-    """Test ult3edit patch strings-edit and strings-import CLI commands."""
-
-    def _make_test_binary(self, tmp_dir, *texts):
-        """Create a test binary with inline strings in tmp_dir."""
-        data = bytearray()
-        data.extend(b'\xEA' * 4)
-        for text in texts:
-            data.extend(b'\x20\xBA\x46')  # JSR $46BA
-            for ch in text:
-                if ch == '\n':
-                    data.append(0xFF)
-                else:
-                    data.append(ord(ch.upper()) | 0x80)
-            data.append(0x00)
-            data.extend(b'\xEA' * 2)
-        path = os.path.join(tmp_dir, 'test.bin')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path
-
-    def test_strings_edit_by_index(self, tmp_dir):
-        """Edit string by index replaces bytes correctly."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'HELLO WORLD', 'GOODBYE')
-        args = argparse.Namespace(
-            file=path, text='CHANGED', index=0, vanilla=None,
-            address=None, output=None, backup=False, dry_run=False)
-        cmd_strings_edit(args)
-        # Verify the binary was modified
-        from ult3edit.patch import _extract_inline_strings
-        with open(path, 'rb') as f:
-            data = f.read()
-        strings = _extract_inline_strings(data)
-        assert strings[0]['text'] == 'CHANGED'
-        assert strings[1]['text'] == 'GOODBYE'  # untouched
-
-    def test_strings_edit_by_vanilla(self, tmp_dir):
-        """Edit string by vanilla text match."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'CARD OF DEATH', 'HELLO')
-        args = argparse.Namespace(
-            file=path, text='SHARD O VOID', index=None,
-            vanilla='CARD OF DEATH', address=None, output=None,
-            backup=False, dry_run=False)
-        cmd_strings_edit(args)
-        from ult3edit.patch import _extract_inline_strings
-        with open(path, 'rb') as f:
-            data = f.read()
-        strings = _extract_inline_strings(data)
-        assert strings[0]['text'] == 'SHARD O VOID'
-
-    def test_strings_edit_too_long(self, tmp_dir):
-        """Editing with text too long for in-place fails gracefully."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'HI')
-        args = argparse.Namespace(
-            file=path, text='THIS IS WAY TOO LONG FOR HI',
-            index=0, vanilla=None, address=None, output=None,
-            backup=False, dry_run=False)
-        with pytest.raises(SystemExit):
-            cmd_strings_edit(args)
-
-    def test_strings_edit_dry_run(self, tmp_dir):
-        """Dry run does not modify the file."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
-        with open(path, 'rb') as f:
-            original = f.read()
-        args = argparse.Namespace(
-            file=path, text='CHANGED', index=0, vanilla=None,
-            address=None, output=None, backup=False, dry_run=True)
-        cmd_strings_edit(args)
-        with open(path, 'rb') as f:
-            after = f.read()
-        assert original == after
-
-    def test_strings_edit_backup(self, tmp_dir):
-        """Backup creates .bak file."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
-        args = argparse.Namespace(
-            file=path, text='CHANGED', index=0, vanilla=None,
-            address=None, output=None, backup=True, dry_run=False)
-        cmd_strings_edit(args)
-        assert os.path.exists(path + '.bak')
-
-    def test_strings_edit_output_file(self, tmp_dir):
-        """Writing to separate output file preserves original."""
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
-        out_path = os.path.join(tmp_dir, 'output.bin')
-        with open(path, 'rb') as f:
-            original = f.read()
-        args = argparse.Namespace(
-            file=path, text='CHANGED', index=0, vanilla=None,
-            address=None, output=out_path, backup=False, dry_run=False)
-        cmd_strings_edit(args)
-        with open(path, 'rb') as f:
-            assert f.read() == original  # original untouched
-        assert os.path.exists(out_path)
-
-    def test_strings_import_from_json(self, tmp_dir):
-        """Import multiple patches from JSON file."""
-        from ult3edit.patch import cmd_strings_import, _extract_inline_strings
-        path = self._make_test_binary(tmp_dir,
-                                      'CARD OF DEATH', 'MARK OF KINGS', 'HELLO')
-        # Create patch JSON
-        patch_path = os.path.join(tmp_dir, 'patches.json')
-        with open(patch_path, 'w') as f:
-            json.dump({'patches': [
-                {'vanilla': 'CARD OF DEATH', 'text': 'SHARD O VOID'},
-                {'vanilla': 'MARK OF KINGS', 'text': 'SIGIL KINGS'},
-            ]}, f)
-        args = argparse.Namespace(
-            file=path, json_file=patch_path, output=None,
-            backup=False, dry_run=False)
-        cmd_strings_import(args)
-        with open(path, 'rb') as f:
-            data = f.read()
-        strings = _extract_inline_strings(data)
-        assert strings[0]['text'] == 'SHARD O VOID'
-        assert strings[1]['text'] == 'SIGIL KINGS'
-        assert strings[2]['text'] == 'HELLO'  # untouched
-
-    def test_strings_import_dry_run(self, tmp_dir):
-        """Import dry run doesn't modify file."""
-        from ult3edit.patch import cmd_strings_import
-        path = self._make_test_binary(tmp_dir, 'ORIGINAL')
-        with open(path, 'rb') as f:
-            original = f.read()
-        patch_path = os.path.join(tmp_dir, 'patches.json')
-        with open(patch_path, 'w') as f:
-            json.dump({'patches': [
-                {'index': 0, 'text': 'CHANGED'},
-            ]}, f)
-        args = argparse.Namespace(
-            file=path, json_file=patch_path, output=None,
-            backup=False, dry_run=True)
-        cmd_strings_import(args)
-        with open(path, 'rb') as f:
-            assert f.read() == original
-
-    def test_strings_import_voidborn(self, tmp_dir):
-        """Voidborn engine_strings.json imports successfully on ULT3."""
-        ult3_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                 'engine', 'originals', 'ULT3.bin')
-        if not os.path.exists(ult3_path):
-            pytest.skip("ULT3.bin not found")
-        patches_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                    'conversions', 'voidborn', 'sources',
-                                    'engine_strings.json')
-        if not os.path.exists(patches_path):
-            pytest.skip("engine_strings.json not found")
-        # Copy ULT3 to temp
-        test_bin = os.path.join(tmp_dir, 'ULT3.bin')
-        shutil.copy2(ult3_path, test_bin)
-        from ult3edit.patch import cmd_strings_import
-        args = argparse.Namespace(
-            file=test_bin, json_file=patches_path, output=None,
-            backup=False, dry_run=False)
-        cmd_strings_import(args)
-        # Verify changes
-        from ult3edit.patch import _extract_inline_strings
-        with open(test_bin, 'rb') as f:
-            data = f.read()
-        strings = _extract_inline_strings(data, 0x5000)
-        texts = [s['text'] for s in strings]
-        assert any('SHARD OF VOID' in t for t in texts)
-        assert any('SIGIL: KINGS' in t for t in texts)
 
 
 # =============================================================================
@@ -7647,282 +4636,6 @@ class TestMapCompileSubcommand:
         assert '4096 bytes' in captured.out
 
 
-class TestShapesCompileSubcommand:
-    """Test ult3edit shapes compile/decompile CLI subcommands."""
-
-    def _make_tiles_source(self, path, count=2):
-        """Create a .tiles source with test glyphs."""
-        lines = []
-        for i in range(count):
-            lines.append(f'# Tile 0x{i:02X}: Test{i}')
-            for row in range(8):
-                # Alternating pattern
-                if row % 2 == 0:
-                    lines.append('#.#.#.#')
-                else:
-                    lines.append('.#.#.#.')
-            lines.append('')
-        with open(path, 'w') as f:
-            f.write('\n'.join(lines))
-
-    def test_compile_binary(self, tmp_dir):
-        """Compile .tiles to 2048-byte SHPS binary."""
-        from ult3edit.shapes import cmd_compile_tiles
-        src = os.path.join(tmp_dir, 'test.tiles')
-        self._make_tiles_source(src)
-        out = os.path.join(tmp_dir, 'test.bin')
-        args = argparse.Namespace(source=src, output=out, format='binary')
-        cmd_compile_tiles(args)
-        with open(out, 'rb') as f:
-            data = f.read()
-        assert len(data) == 2048
-        # Tile 0 should have non-zero data
-        assert data[0] != 0
-
-    def test_compile_json(self, tmp_dir):
-        """Compile .tiles to JSON format."""
-        from ult3edit.shapes import cmd_compile_tiles
-        src = os.path.join(tmp_dir, 'test.tiles')
-        self._make_tiles_source(src, count=3)
-        out = os.path.join(tmp_dir, 'test.json')
-        args = argparse.Namespace(source=src, output=out, format='json')
-        cmd_compile_tiles(args)
-        with open(out, 'r') as f:
-            result = json.load(f)
-        assert 'tiles' in result
-        assert len(result['tiles'][0]['frames']) == 3
-
-    def test_decompile(self, tmp_dir):
-        """Decompile SHPS binary to text-art."""
-        from ult3edit.shapes import cmd_decompile_tiles
-        # Create 2048-byte SHPS binary
-        data = bytearray(2048)
-        # Put a pattern in tile 0: alternating rows
-        data[0] = 0b0101010  # #.#.#.#
-        data[1] = 0b0101010
-        bin_path = os.path.join(tmp_dir, 'test.bin')
-        with open(bin_path, 'wb') as f:
-            f.write(data)
-        out = os.path.join(tmp_dir, 'test.tiles')
-        args = argparse.Namespace(file=bin_path, output=out)
-        cmd_decompile_tiles(args)
-        with open(out, 'r') as f:
-            text = f.read()
-        assert '# Tile 0x00' in text
-        assert '#' in text  # pixel-on chars present
-
-    def test_compile_decompile_roundtrip(self, tmp_dir):
-        """Compile then decompile preserves glyph pixel data."""
-        from ult3edit.shapes import cmd_compile_tiles, cmd_decompile_tiles, \
-            parse_tiles_text
-        src = os.path.join(tmp_dir, 'orig.tiles')
-        self._make_tiles_source(src, count=4)
-        # Read original
-        with open(src, 'r') as f:
-            orig_tiles = parse_tiles_text(f.read())
-        # Compile
-        bin_path = os.path.join(tmp_dir, 'test.bin')
-        args = argparse.Namespace(source=src, output=bin_path, format='binary')
-        cmd_compile_tiles(args)
-        # Decompile
-        out = os.path.join(tmp_dir, 'decomp.tiles')
-        args2 = argparse.Namespace(file=bin_path, output=out)
-        cmd_decompile_tiles(args2)
-        # Re-parse decompiled
-        with open(out, 'r') as f:
-            decomp_tiles = parse_tiles_text(f.read())
-        # Find our original tiles in the decompiled output
-        decomp_map = {idx: data for idx, data in decomp_tiles}
-        for idx, orig_data in orig_tiles:
-            assert idx in decomp_map
-            assert decomp_map[idx] == orig_data
-
-    def test_compile_no_output_prints_count(self, tmp_dir, capsys):
-        """Compile without --output prints tile count."""
-        from ult3edit.shapes import cmd_compile_tiles
-        src = os.path.join(tmp_dir, 'test.tiles')
-        self._make_tiles_source(src, count=5)
-        args = argparse.Namespace(source=src, output=None, format='binary')
-        cmd_compile_tiles(args)
-        captured = capsys.readouterr()
-        assert '5 tiles' in captured.out
-
-    def test_parse_tiles_text_auto_index(self, tmp_dir):
-        """Tiles without headers get auto-assigned sequential indices."""
-        from ult3edit.shapes import parse_tiles_text
-        text = '# Tile 0x10: Start\n'
-        for _ in range(8):
-            text += '#######\n'
-        text += '\n'
-        for _ in range(8):
-            text += '.......\n'
-        text += '\n'
-        tiles = parse_tiles_text(text)
-        assert len(tiles) == 2
-        assert tiles[0][0] == 0x10
-        assert tiles[1][0] == 0x11  # auto-assigned
-
-
-class TestPatchCompileNamesSubcommand:
-    """Test ult3edit patch compile-names/decompile-names CLI subcommands."""
-
-    def _make_names_source(self, path, names=None):
-        """Create a .names source file."""
-        if names is None:
-            names = ['WATER', 'GRASS', 'FOREST', 'MOUNTAIN',
-                     'SWORD', 'MACE', 'DAGGER']
-        lines = ['# Test Name Table', '# Group: Terrain']
-        lines.extend(names[:4])
-        lines.append('')
-        lines.append('# Group: Weapons')
-        lines.extend(names[4:])
-        with open(path, 'w') as f:
-            f.write('\n'.join(lines) + '\n')
-
-    def test_compile_names_json(self, tmp_dir):
-        """Compile .names to JSON with regions.name-table.data."""
-        from ult3edit.patch import cmd_compile_names
-        src = os.path.join(tmp_dir, 'test.names')
-        self._make_names_source(src)
-        out = os.path.join(tmp_dir, 'names.json')
-        args = argparse.Namespace(source=src, output=out)
-        cmd_compile_names(args)
-        with open(out, 'r') as f:
-            result = json.load(f)
-        assert 'regions' in result
-        assert 'name-table' in result['regions']
-        assert 'data' in result['regions']['name-table']
-        names = result['regions']['name-table']['data']
-        assert 'WATER' in names
-        assert 'SWORD' in names
-
-    def test_compile_names_stdout(self, tmp_dir, capsys):
-        """Compile .names to stdout prints JSON."""
-        from ult3edit.patch import cmd_compile_names
-        src = os.path.join(tmp_dir, 'test.names')
-        self._make_names_source(src)
-        args = argparse.Namespace(source=src, output=None)
-        cmd_compile_names(args)
-        captured = capsys.readouterr()
-        result = json.loads(captured.out)
-        assert 'regions' in result
-
-    def test_validate_names_pass(self, tmp_dir, capsys):
-        """Validate .names within budget passes."""
-        from ult3edit.patch import cmd_validate_names
-        src = os.path.join(tmp_dir, 'test.names')
-        self._make_names_source(src)
-        args = argparse.Namespace(source=src)
-        cmd_validate_names(args)
-        captured = capsys.readouterr()
-        assert 'PASS' in captured.out
-
-    def test_validate_names_fail(self, tmp_dir):
-        """Validate .names over budget fails."""
-        from ult3edit.patch import cmd_validate_names
-        src = os.path.join(tmp_dir, 'test.names')
-        # Create names that exceed 891-byte budget
-        names = [f'VERY_LONG_NAME_PADDING_{i:04d}' for i in range(100)]
-        self._make_names_source(src, names)
-        args = argparse.Namespace(source=src)
-        with pytest.raises(SystemExit):
-            cmd_validate_names(args)
-
-    def test_decompile_names(self, tmp_dir):
-        """Decompile name table from ULT3-sized binary."""
-        from ult3edit.patch import cmd_decompile_names
-        # Create a minimal binary with name table at offset 0x397A
-        data = bytearray(0x397A + 921)
-        # Encode some test names at offset 0x397A
-        offset = 0x397A
-        for name in ['WATER', 'GRASS', 'SWORD']:
-            for ch in name:
-                data[offset] = ord(ch) | 0x80
-                offset += 1
-            data[offset] = 0x00
-            offset += 1
-        bin_path = os.path.join(tmp_dir, 'test_ult3.bin')
-        with open(bin_path, 'wb') as f:
-            f.write(data)
-        out = os.path.join(tmp_dir, 'names.names')
-        args = argparse.Namespace(file=bin_path, output=out)
-        cmd_decompile_names(args)
-        with open(out, 'r') as f:
-            text = f.read()
-        assert 'WATER' in text
-        assert 'GRASS' in text
-        assert 'SWORD' in text
-
-    def test_parse_names_empty_string(self):
-        """Explicit empty strings ('""') are preserved."""
-        from ult3edit.patch import _parse_names_file
-        text = '# Test\nFOO\n""\nBAR\n'
-        names = _parse_names_file(text)
-        assert names == ['FOO', '', 'BAR']
-
-    def test_validate_names_budget_math(self):
-        """Budget math: encoded size = sum(len+1), budget = 921-30."""
-        from ult3edit.patch import _validate_names
-        names = ['AB', 'CD']
-        size, budget, valid = _validate_names(names)
-        assert size == 6  # (2+1) + (2+1)
-        assert budget == 891
-        assert valid is True
-
-
-class TestCliParityCompilers:
-    """Verify compile subcommands are registered in CLI dispatch."""
-
-    def test_map_compile_in_dispatch(self):
-        """map dispatch handles 'compile'."""
-        from ult3edit.map import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'compile'" in src
-
-    def test_map_decompile_in_dispatch(self):
-        """map dispatch handles 'decompile'."""
-        from ult3edit.map import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'decompile'" in src
-
-    def test_shapes_compile_in_dispatch(self):
-        """shapes dispatch handles 'compile'."""
-        from ult3edit.shapes import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'compile'" in src
-
-    def test_shapes_decompile_in_dispatch(self):
-        """shapes dispatch handles 'decompile'."""
-        from ult3edit.shapes import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'decompile'" in src
-
-    def test_patch_compile_names_in_dispatch(self):
-        """patch dispatch handles 'compile-names'."""
-        from ult3edit.patch import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'compile-names'" in src
-
-    def test_patch_decompile_names_in_dispatch(self):
-        """patch dispatch handles 'decompile-names'."""
-        from ult3edit.patch import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'decompile-names'" in src
-
-    def test_patch_validate_names_in_dispatch(self):
-        """patch dispatch handles 'validate-names'."""
-        from ult3edit.patch import dispatch
-        import inspect
-        src = inspect.getsource(dispatch)
-        assert "'validate-names'" in src
-
-
 # ============================================================================
 # Compile warnings and validation (Task #110)
 # ============================================================================
@@ -7939,7 +4652,8 @@ class TestMapCompileWarnings:
         out = tmp_path / 'out.bin'
         args = argparse.Namespace(
             source=str(src), output=str(out), dungeon=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_compile(args)
@@ -7961,7 +4675,8 @@ class TestMapCompileWarnings:
         out = tmp_path / 'out.bin'
         args = argparse.Namespace(
             source=str(src), output=str(out), dungeon=True)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_compile(args)
@@ -7977,7 +4692,8 @@ class TestMapCompileWarnings:
         out = tmp_path / 'out.bin'
         args = argparse.Namespace(
             source=str(src), output=str(out), dungeon=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_compile(args)
@@ -7992,55 +4708,11 @@ class TestMapCompileWarnings:
         out = tmp_path / 'out.bin'
         args = argparse.Namespace(
             source=str(src), output=str(out), dungeon=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_compile(args)
-        assert stderr.getvalue() == ''
-
-
-class TestShapesCompileWarnings:
-    """Test shapes compile partial glyph set warning."""
-
-    def test_partial_tileset_warns(self, tmp_path):
-        """Compiling fewer than 256 glyphs warns on stderr."""
-        from ult3edit.shapes import cmd_compile_tiles
-        # Source with only 2 tiles
-        lines = []
-        for idx in range(2):
-            lines.append(f'# Tile 0x{idx:02X}')
-            for _ in range(8):
-                lines.append('#......')
-            lines.append('')
-        src = tmp_path / 'partial.tiles'
-        src.write_text('\n'.join(lines))
-        out = tmp_path / 'out.bin'
-        args = argparse.Namespace(
-            source=str(src), output=str(out), format='binary')
-        import io, contextlib
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            cmd_compile_tiles(args)
-        assert 'only 2 of 256 glyphs' in stderr.getvalue()
-
-    def test_full_tileset_no_warning(self, tmp_path):
-        """Compiling all 256 glyphs produces no warning."""
-        from ult3edit.shapes import cmd_compile_tiles, GLYPHS_PER_FILE
-        lines = []
-        for idx in range(GLYPHS_PER_FILE):
-            lines.append(f'# Tile 0x{idx:02X}')
-            for _ in range(8):
-                lines.append('.......')
-            lines.append('')
-        src = tmp_path / 'full.tiles'
-        src.write_text('\n'.join(lines))
-        out = tmp_path / 'out.bin'
-        args = argparse.Namespace(
-            source=str(src), output=str(out), format='binary')
-        import io, contextlib
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            cmd_compile_tiles(args)
         assert stderr.getvalue() == ''
 
 
@@ -8055,7 +4727,8 @@ class TestMapDecompileUnknownTiles:
         binfile.write_bytes(bytes([0xFF]) * 4096)
         out = tmp_path / 'out.map'
         args = argparse.Namespace(file=str(binfile), output=str(out))
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_decompile(args)
@@ -8071,7 +4744,8 @@ class TestMapDecompileUnknownTiles:
         binfile.write_bytes(bytes([0xFE]) * 2048)
         out = tmp_path / 'out.map'
         args = argparse.Namespace(file=str(binfile), output=str(out))
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_decompile(args)
@@ -8086,7 +4760,8 @@ class TestMapDecompileUnknownTiles:
         binfile.write_bytes(bytes(4096))
         out = tmp_path / 'out.map'
         args = argparse.Namespace(file=str(binfile), output=str(out))
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_decompile(args)
@@ -8140,7 +4815,8 @@ class TestCombatImportBoundsValidation:
         args = argparse.Namespace(
             file=str(binfile), json_file=str(jfile),
             output=str(out), backup=False, dry_run=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_import(args)
@@ -8163,7 +4839,8 @@ class TestCombatImportBoundsValidation:
         args = argparse.Namespace(
             file=str(binfile), json_file=str(jfile),
             output=str(out), backup=False, dry_run=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_import(args)
@@ -8186,7 +4863,8 @@ class TestCombatImportBoundsValidation:
         args = argparse.Namespace(
             file=str(binfile), json_file=str(jfile),
             output=str(out), backup=False, dry_run=False)
-        import io, contextlib
+        import io
+        import contextlib
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             cmd_import(args)
@@ -8197,197 +4875,10 @@ class TestCombatImportBoundsValidation:
 # DDRW command tests (Task #112)
 # ============================================================================
 
-class TestDdrwCommands:
-    """Tests for ddrw cmd_view, cmd_edit, cmd_import."""
-
-    def test_view_text_output(self, tmp_path, capsys):
-        """cmd_view prints dungeon drawing data summary."""
-        from ult3edit.ddrw import cmd_view
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
-        args = argparse.Namespace(
-            path=str(binfile), json=False, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'Dungeon Drawing Data' in out
-        assert '1792 bytes' in out
-
-    def test_view_json_output(self, tmp_path):
-        """cmd_view --json produces JSON with vectors and records."""
-        from ult3edit.ddrw import cmd_view
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        data = bytearray(DDRW_FILE_SIZE)
-        data[0xF0] = 0x42  # Set a perspective vector
-        binfile.write_bytes(bytes(data))
-        outfile = tmp_path / 'out.json'
-        args = argparse.Namespace(
-            path=str(binfile), json=True, output=str(outfile))
-        cmd_view(args)
-        result = json.loads(outfile.read_text())
-        assert result['size'] == DDRW_FILE_SIZE
-        assert result['vectors'][0] == 0x42
-        assert 'raw' in result
-
-    def test_edit_patches_bytes(self, tmp_path):
-        """cmd_edit patches bytes at offset."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), offset=0x10, data='AABB',
-            output=str(out), backup=False, dry_run=False)
-        cmd_edit(args)
-        result = out.read_bytes()
-        assert result[0x10] == 0xAA
-        assert result[0x11] == 0xBB
-
-    def test_edit_dry_run(self, tmp_path, capsys):
-        """cmd_edit --dry-run doesn't write."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), offset=0, data='FF',
-            output=str(out), backup=False, dry_run=True)
-        cmd_edit(args)
-        assert not out.exists()
-        assert 'Dry run' in capsys.readouterr().out
-
-    def test_import_raw_json(self, tmp_path):
-        """cmd_import writes raw byte array from JSON."""
-        from ult3edit.ddrw import cmd_import
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
-        data = [0] * DDRW_FILE_SIZE
-        data[0] = 0x55
-        jfile = tmp_path / 'ddrw.json'
-        jfile.write_text(json.dumps({'raw': data}))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), json_file=str(jfile),
-            output=str(out), backup=False, dry_run=False)
-        cmd_import(args)
-        result = out.read_bytes()
-        assert len(result) == DDRW_FILE_SIZE
-        assert result[0] == 0x55
-
-    def test_import_backup(self, tmp_path):
-        """cmd_import --backup creates .bak file."""
-        from ult3edit.ddrw import cmd_import
-        from ult3edit.constants import DDRW_FILE_SIZE
-        binfile = tmp_path / 'DDRW'
-        binfile.write_bytes(bytes(DDRW_FILE_SIZE))
-        data = [0] * DDRW_FILE_SIZE
-        jfile = tmp_path / 'ddrw.json'
-        jfile.write_text(json.dumps({'raw': data}))
-        args = argparse.Namespace(
-            file=str(binfile), json_file=str(jfile),
-            output=None, backup=True, dry_run=False)
-        cmd_import(args)
-        bak = tmp_path / 'DDRW.bak'
-        assert bak.exists()
-
 
 # ============================================================================
 # Sound command tests (Task #112)
 # ============================================================================
-
-class TestSoundCommands:
-    """Tests for sound cmd_view, cmd_edit, cmd_import."""
-
-    def test_view_sosa(self, tmp_path, capsys):
-        """cmd_view displays SOSA file summary."""
-        from ult3edit.sound import cmd_view
-        from ult3edit.constants import SOSA_FILE_SIZE
-        binfile = tmp_path / 'SOSA'
-        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
-        args = argparse.Namespace(
-            path=str(binfile), json=False, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'SOSA' in out or 'Speaker' in out or '4096' in out
-
-    def test_view_json(self, tmp_path):
-        """cmd_view --json produces JSON output."""
-        from ult3edit.sound import cmd_view
-        from ult3edit.constants import SOSM_FILE_SIZE
-        binfile = tmp_path / 'SOSM'
-        binfile.write_bytes(bytes(SOSM_FILE_SIZE))
-        outfile = tmp_path / 'out.json'
-        args = argparse.Namespace(
-            path=str(binfile), json=True, output=str(outfile))
-        cmd_view(args)
-        result = json.loads(outfile.read_text())
-        assert 'raw' in result
-
-    def test_edit_patches_bytes(self, tmp_path):
-        """cmd_edit patches sound file bytes."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSA_FILE_SIZE
-        binfile = tmp_path / 'SOSA'
-        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), offset=0, data='DEADBEEF',
-            output=str(out), backup=False, dry_run=False)
-        cmd_edit(args)
-        result = out.read_bytes()
-        assert result[0:4] == bytes([0xDE, 0xAD, 0xBE, 0xEF])
-
-    def test_edit_past_end_exits(self, tmp_path):
-        """cmd_edit rejects patch beyond file end."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSM_FILE_SIZE
-        binfile = tmp_path / 'SOSM'
-        binfile.write_bytes(bytes(SOSM_FILE_SIZE))
-        args = argparse.Namespace(
-            file=str(binfile), offset=SOSM_FILE_SIZE - 1, data='AABB',
-            output=str(binfile), backup=False, dry_run=False)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_import_sosa(self, tmp_path):
-        """cmd_import writes SOSA from JSON."""
-        from ult3edit.sound import cmd_import
-        from ult3edit.constants import SOSA_FILE_SIZE
-        binfile = tmp_path / 'SOSA'
-        binfile.write_bytes(bytes(SOSA_FILE_SIZE))
-        data = [0] * SOSA_FILE_SIZE
-        data[0] = 0x77
-        jfile = tmp_path / 'sosa.json'
-        jfile.write_text(json.dumps({'raw': data}))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), json_file=str(jfile),
-            output=str(out), backup=False, dry_run=False)
-        cmd_import(args)
-        result = out.read_bytes()
-        assert len(result) == SOSA_FILE_SIZE
-        assert result[0] == 0x77
-
-    def test_import_wrong_size_warns(self, tmp_path):
-        """cmd_import warns when size doesn't match known formats."""
-        from ult3edit.sound import cmd_import
-        binfile = tmp_path / 'SOUND'
-        binfile.write_bytes(bytes(100))
-        jfile = tmp_path / 'sound.json'
-        jfile.write_text(json.dumps({'raw': [0] * 100}))
-        out = tmp_path / 'OUT'
-        args = argparse.Namespace(
-            file=str(binfile), json_file=str(jfile),
-            output=str(out), backup=False, dry_run=False)
-        import io, contextlib
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            cmd_import(args)
-        assert 'Warning' in stderr.getvalue()
 
 
 # ============================================================================
@@ -8787,133 +5278,6 @@ class TestViewOnlyCommands:
 # Patch cmd_edit and cmd_dump tests
 # =============================================================================
 
-class TestPatchCmdEdit:
-    """Tests for patch.cmd_edit — region patching."""
-
-    def _make_ult3(self, tmp_path):
-        """Create a fake ULT3 binary of the right size."""
-        from ult3edit.constants import ULT3_FILE_SIZE
-        path = tmp_path / 'ULT3'
-        path.write_bytes(bytes(ULT3_FILE_SIZE))
-        return str(path)
-
-    def test_edit_moongate_x(self, tmp_path, capsys):
-        """Patch moongate-x region and verify bytes written."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='moongate-x', data='01 02 03 04 05 06 07 08',
-            dry_run=False, backup=False, output=None)
-        cmd_edit(args)
-        with open(path, 'rb') as f:
-            data = f.read()
-        assert data[0x29A7:0x29A7 + 8] == bytes([1, 2, 3, 4, 5, 6, 7, 8])
-
-    def test_edit_dry_run(self, tmp_path, capsys):
-        """Dry run shows changes but doesn't write."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='moongate-x', data='AABBCCDD',
-            dry_run=True, backup=False, output=None)
-        cmd_edit(args)
-        out = capsys.readouterr().out
-        assert 'Dry run' in out
-        with open(path, 'rb') as f:
-            data = f.read()
-        assert data[0x29A7:0x29A7 + 4] == bytes(4)  # unchanged
-
-    def test_edit_unknown_region_exits(self, tmp_path):
-        """Unknown region name causes sys.exit."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='nonexistent', data='AA',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_data_too_long_exits(self, tmp_path):
-        """Data exceeding region max_length causes sys.exit."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        # moongate-x max_length is 8, send 9 bytes
-        args = argparse.Namespace(
-            file=path, region='moongate-x', data='01 02 03 04 05 06 07 08 09',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_invalid_hex_exits(self, tmp_path):
-        """Invalid hex data causes sys.exit."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='moongate-x', data='ZZZZ',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_unrecognized_binary_exits(self, tmp_path):
-        """Non-engine binary file causes sys.exit."""
-        from ult3edit.patch import cmd_edit
-        path = tmp_path / 'JUNK'
-        path.write_bytes(bytes(100))
-        args = argparse.Namespace(
-            file=str(path), region='moongate-x', data='AA',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_with_backup(self, tmp_path):
-        """Backup flag creates .bak before patching."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='food-rate', data='02',
-            dry_run=False, backup=True, output=None)
-        cmd_edit(args)
-        assert os.path.exists(path + '.bak')
-
-
-class TestPatchCmdDump:
-    """Tests for patch.cmd_dump — hex dump."""
-
-    def test_dump_basic(self, tmp_path, capsys):
-        """Hex dump produces output with hex values."""
-        from ult3edit.patch import cmd_dump
-        from ult3edit.constants import ULT3_FILE_SIZE
-        path = tmp_path / 'ULT3'
-        data = bytearray(ULT3_FILE_SIZE)
-        data[0] = 0xAB
-        data[1] = 0xCD
-        path.write_bytes(bytes(data))
-        args = argparse.Namespace(file=str(path), offset=0, length=16)
-        cmd_dump(args)
-        out = capsys.readouterr().out
-        assert 'AB CD' in out
-
-    def test_dump_offset_past_end_exits(self, tmp_path):
-        """Offset past end of file causes sys.exit."""
-        from ult3edit.patch import cmd_dump
-        path = tmp_path / 'SMALL'
-        path.write_bytes(bytes(16))
-        args = argparse.Namespace(file=str(path), offset=100, length=16)
-        with pytest.raises(SystemExit):
-            cmd_dump(args)
-
-    def test_dump_with_load_addr(self, tmp_path, capsys):
-        """Recognized binary shows load addresses."""
-        from ult3edit.patch import cmd_dump
-        from ult3edit.constants import ULT3_FILE_SIZE
-        path = tmp_path / 'ULT3'
-        path.write_bytes(bytes(ULT3_FILE_SIZE))
-        args = argparse.Namespace(file=str(path), offset=0, length=16)
-        cmd_dump(args)
-        out = capsys.readouterr().out
-        # ULT3 load_addr is 0x5000, so first line should show 5000:
-        assert '5000:' in out
-
 
 # =============================================================================
 # Map cmd_fill / cmd_replace / cmd_find CLI tests
@@ -9015,7 +5379,6 @@ class TestMapCmdFind:
 
     def test_find_basic(self, tmp_path, capsys):
         """Find tiles at known positions."""
-        from ult3edit.map import cmd_find
         path = tmp_path / 'SOSA'
         data = bytearray(MAP_OVERWORLD_SIZE)
         data[0] = 0x04  # (0,0)
@@ -9032,7 +5395,6 @@ class TestMapCmdFind:
 
     def test_find_json(self, tmp_path):
         """Find with --json produces valid JSON."""
-        from ult3edit.map import cmd_find
         path = tmp_path / 'SOSA'
         data = bytearray(MAP_OVERWORLD_SIZE)
         data[0] = 0x04
@@ -9048,7 +5410,6 @@ class TestMapCmdFind:
 
     def test_find_no_matches(self, tmp_path, capsys):
         """Find with no matches shows 0 found."""
-        from ult3edit.map import cmd_find
         path = tmp_path / 'SOSA'
         path.write_bytes(bytes(MAP_OVERWORLD_SIZE))
         args = argparse.Namespace(
@@ -9068,7 +5429,6 @@ class TestTlkCmdView:
 
     def _make_tlk(self, path, text='Hello'):
         """Create a single-record TLK file."""
-        from ult3edit.tlk import encode_record
         data = encode_record([text])
         path.write_bytes(bytes(data))
 
@@ -9442,65 +5802,6 @@ class TestSpecialCmdViewDir:
 # DDRW cmd_edit out-of-bounds and sound cmd_edit dry-run tests
 # =============================================================================
 
-class TestDdrwCmdEditBounds:
-    """Tests for ddrw cmd_edit boundary checking."""
-
-    def test_edit_past_end_exits(self, tmp_path):
-        """Patch extending past end of file causes sys.exit."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = tmp_path / 'DDRW'
-        path.write_bytes(bytes(DDRW_FILE_SIZE))
-        args = argparse.Namespace(
-            file=str(path), offset=DDRW_FILE_SIZE - 1, data='AABB',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_dry_run(self, tmp_path, capsys):
-        """DDRW edit dry run shows changes without writing."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = tmp_path / 'DDRW'
-        path.write_bytes(bytes(DDRW_FILE_SIZE))
-        args = argparse.Namespace(
-            file=str(path), offset=0, data='AB',
-            dry_run=True, backup=False, output=None)
-        cmd_edit(args)
-        out = capsys.readouterr().out
-        assert 'Dry run' in out
-        assert path.read_bytes()[0] == 0  # unchanged
-
-
-class TestSoundCmdEditExpanded:
-    """Tests for sound cmd_edit with dry-run and backup."""
-
-    def test_edit_dry_run(self, tmp_path, capsys):
-        """Sound edit dry run shows changes without writing."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = tmp_path / 'SOSA'
-        path.write_bytes(bytes(SOSA_FILE_SIZE))
-        args = argparse.Namespace(
-            file=str(path), offset=0, data='FF',
-            dry_run=True, backup=False, output=None)
-        cmd_edit(args)
-        out = capsys.readouterr().out
-        assert 'Dry run' in out
-        assert path.read_bytes()[0] == 0  # unchanged
-
-    def test_edit_with_backup(self, tmp_path):
-        """Sound edit --backup creates .bak file."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = tmp_path / 'SOSA'
-        path.write_bytes(bytes(SOSA_FILE_SIZE))
-        args = argparse.Namespace(
-            file=str(path), offset=0, data='FF',
-            dry_run=False, backup=True, output=None)
-        cmd_edit(args)
-        assert os.path.exists(str(path) + '.bak')
-
 
 # =============================================================================
 # Priority 3 edge case tests
@@ -9800,7 +6101,6 @@ class TestTextImportNoPhantomRecords:
     def test_stale_bytes_zeroed(self, tmp_path, capsys):
         """Bytes after final record are zeroed."""
         from ult3edit.text import cmd_import
-        from ult3edit.fileutil import encode_high_ascii
         # Fill file with 0xFF to detect stale data
         data = bytearray([0xFF] * TEXT_FILE_SIZE)
         path = tmp_path / 'TEXT'
@@ -9822,7 +6122,6 @@ class TestTlkEncodeRecordCase:
 
     def test_encode_forces_uppercase(self):
         """encode_record converts lowercase to uppercase high-ASCII."""
-        from ult3edit.tlk import encode_record
         data = encode_record(['hello'])
         # Each char should be uppercase: H=0xC8, E=0xC5, L=0xCC, L=0xCC, O=0xCF
         assert data[0] == 0xC8  # H
@@ -9834,14 +6133,12 @@ class TestTlkEncodeRecordCase:
 
     def test_encode_preserves_uppercase(self):
         """encode_record keeps already-uppercase text unchanged."""
-        from ult3edit.tlk import encode_record
         data = encode_record(['HELLO'])
         assert data[0] == 0xC8  # H
         assert data[4] == 0xCF  # O
 
     def test_encode_mixed_case(self):
         """encode_record normalizes mixed case to uppercase."""
-        from ult3edit.tlk import encode_record
         data = encode_record(['HeLLo'])
         assert data[0] == 0xC8  # H
         assert data[1] == 0xC5  # E (was lowercase e)
@@ -9950,8 +6247,6 @@ class TestDialogEditorEmptyRecord:
 
     def test_encode_empty_lines_produces_nonzero(self):
         """encode_record(['']) produces at least 1 byte before stripping."""
-        from ult3edit.tlk import encode_record
-        from ult3edit.constants import TLK_RECORD_END
         result = encode_record([''])
         # Empty line should produce just TLK_RECORD_END (0x00)
         assert len(result) >= 1
@@ -9963,7 +6258,6 @@ class TestDialogEditorEmptyRecord:
     def test_dialog_editor_save_preserves_records(self):
         """DialogEditor save doesn't collapse null separators."""
         from ult3edit.tui.dialog_editor import DialogEditor
-        from ult3edit.tlk import encode_record
         from ult3edit.constants import TLK_RECORD_END
         # Build a TLK-like blob with 3 records
         records = [
@@ -10224,7 +6518,6 @@ class TestTlkErrorPaths:
     def test_edit_no_args_exits(self, tmp_path):
         """cmd_edit with no --record/--text and no --find/--replace exits."""
         from ult3edit.tlk import cmd_edit
-        from ult3edit.tlk import encode_record
         tlk = tmp_path / 'TLKA'
         tlk.write_bytes(encode_record(['TEST']))
         args = argparse.Namespace(
@@ -10616,7 +6909,7 @@ class TestSpecialTrailingBytesRoundTrip:
             assert result[121 + i] == 0xEE
 
 
-class TestMapJsonRoundTrip:
+class TestMapJsonRoundTripFull:
     """Verify map JSON export→import preserves tile data."""
 
     def test_overworld_export_import_cycle(self, tmp_path):
@@ -10659,7 +6952,7 @@ class TestTlkMultilineRoundTrip:
 
     def test_multiline_encode_decode(self):
         """Multi-line records round-trip through encode→decode."""
-        from ult3edit.tlk import encode_record, decode_record
+        from ult3edit.tlk import decode_record
         lines = ['HELLO TRAVELER', 'WELCOME TO TOWN', 'FAREWELL']
         encoded = encode_record(lines)
         decoded = decode_record(encoded)
@@ -10667,7 +6960,7 @@ class TestTlkMultilineRoundTrip:
 
     def test_single_line_roundtrip(self):
         """Single-line record round-trips correctly."""
-        from ult3edit.tlk import encode_record, decode_record
+        from ult3edit.tlk import decode_record
         lines = ['GOOD DAY']
         encoded = encode_record(lines)
         decoded = decode_record(encoded)
@@ -10675,7 +6968,7 @@ class TestTlkMultilineRoundTrip:
 
     def test_empty_string_in_lines(self):
         """Records with empty lines survive round-trip."""
-        from ult3edit.tlk import encode_record, decode_record
+        from ult3edit.tlk import decode_record
         lines = ['START', '', 'END']
         encoded = encode_record(lines)
         decoded = decode_record(encoded)
@@ -10685,106 +6978,6 @@ class TestTlkMultilineRoundTrip:
 # =============================================================================
 # Bug fix tests: MBS parsing and shapes overlay extraction
 # =============================================================================
-
-class TestMbsParsingFixes:
-    """Tests for MBS stream parsing bug fixes."""
-
-    def test_loop_opcode_handled(self):
-        """LOOP opcode (0x80) is parsed as its own event type."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x80, 0x05, 0x82])  # LOOP, NOTE 5, END
-        events = parse_mbs_stream(data)
-        assert len(events) == 3
-        assert events[0]['type'] == 'LOOP'
-        assert events[1]['type'] == 'NOTE'
-        assert events[1]['value'] == 5
-        assert events[2]['type'] == 'END'
-
-    def test_jump_truncated_marked(self):
-        """JUMP at end of data marks event as truncated."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x81])  # JUMP with no operands
-        events = parse_mbs_stream(data)
-        assert len(events) == 1
-        assert events[0]['type'] == 'JUMP'
-        assert events[0].get('truncated') is True
-        assert 'target' not in events[0]
-
-    def test_jump_with_full_operand(self):
-        """JUMP with full 2-byte operand reads target address."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x81, 0x34, 0x12, 0x82])  # JUMP $1234, END
-        events = parse_mbs_stream(data)
-        assert len(events) == 2
-        assert events[0]['type'] == 'JUMP'
-        assert events[0]['target'] == 0x1234
-        assert 'truncated' not in events[0]
-
-    def test_write_truncated_marked(self):
-        """WRITE at end of data marks event as truncated."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x83])  # WRITE with no operands
-        events = parse_mbs_stream(data)
-        assert len(events) == 1
-        assert events[0]['type'] == 'WRITE'
-        assert events[0].get('truncated') is True
-
-    def test_tempo_truncated_marked(self):
-        """TEMPO at end of data marks event as truncated."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([0x84])  # TEMPO with no operand
-        events = parse_mbs_stream(data)
-        assert len(events) == 1
-        assert events[0]['type'] == 'TEMPO'
-        assert events[0].get('truncated') is True
-
-    def test_full_stream_parse(self):
-        """Complete MBS stream with multiple event types parses correctly."""
-        from ult3edit.sound import parse_mbs_stream
-        data = bytes([
-            0x84, 0x06,       # TEMPO 6
-            0x85, 0x38,       # MIXER $38
-            0x83, 0x07, 0xFF, # WRITE reg 7 = $FF
-            0x80,             # LOOP
-            0x01, 0x02, 0x03, # NOTE 1, NOTE 2, NOTE 3
-            0x82,             # END
-        ])
-        events = parse_mbs_stream(data)
-        types = [e['type'] for e in events]
-        assert types == ['TEMPO', 'MIXER', 'WRITE', 'LOOP',
-                         'NOTE', 'NOTE', 'NOTE', 'END']
-        assert events[0]['operand'] == 6
-        assert events[2]['register'] == 7
-        assert events[2]['reg_value'] == 0xFF
-
-
-class TestShapesOverlayBoundsFix:
-    """Tests for shapes.py extract_overlay_strings off-by-one fix."""
-
-    def test_string_at_end_of_data(self):
-        """JSR $46BA pattern at the last possible position is found."""
-        from ult3edit.shapes import extract_overlay_strings
-        # Build data where JSR $46BA + inline string starts at len-3
-        prefix = bytes(10)  # 10 zero bytes
-        jsr = bytes([0x20, 0xBA, 0x46])  # JSR $46BA
-        text = bytes([0xC8, 0xC9, 0x00])  # "HI" + null terminator
-        data = prefix + jsr + text
-        strings = extract_overlay_strings(data)
-        assert len(strings) == 1
-        assert strings[0]['text'] == 'HI'
-        assert strings[0]['jsr_offset'] == 10
-
-    def test_string_at_exact_boundary(self):
-        """JSR $46BA pattern exactly at data end (no text following) found."""
-        from ult3edit.shapes import extract_overlay_strings
-        # JSR pattern at end with only null terminator after
-        prefix = bytes(5)
-        jsr = bytes([0x20, 0xBA, 0x46])
-        term = bytes([0x00])  # null only — empty string
-        data = prefix + jsr + term
-        strings = extract_overlay_strings(data)
-        # Empty string should not be added (chars check filters it)
-        assert len(strings) == 0
 
 
 # =============================================================================
@@ -10884,227 +7077,15 @@ class TestFindGameFiles:
 # Patch inline string operations
 # =============================================================================
 
-class TestPatchInlineString:
-    """Tests for _patch_inline_string and _resolve_string_target."""
-
-    def test_patch_exact_fit(self):
-        """Replacement text exactly fills available space."""
-        from ult3edit.patch import _patch_inline_string
-        data = bytearray(20)
-        # Simulate inline string: "ABC" (3 bytes) at offset 5, ending at 8
-        for i, ch in enumerate('ABC'):
-            data[5 + i] = ord(ch.upper()) | 0x80
-        data[8] = 0x00  # null terminator
-
-        info = {'text_offset': 5, 'text_end': 8, 'text': 'ABC', 'index': 0}
-        ok, msg = _patch_inline_string(data, info, 'XYZ')
-        assert ok is True
-        # Verify encoded bytes
-        assert data[5] == ord('X') | 0x80
-        assert data[6] == ord('Y') | 0x80
-        assert data[7] == ord('Z') | 0x80
-
-    def test_patch_shorter_nullfills(self):
-        """Shorter replacement null-fills remaining space."""
-        from ult3edit.patch import _patch_inline_string
-        data = bytearray(20)
-        for i, ch in enumerate('ABCDE'):
-            data[5 + i] = ord(ch) | 0x80
-        data[10] = 0x00
-
-        info = {'text_offset': 5, 'text_end': 10, 'text': 'ABCDE', 'index': 0}
-        ok, msg = _patch_inline_string(data, info, 'HI')
-        assert ok is True
-        assert data[5] == ord('H') | 0x80
-        assert data[6] == ord('I') | 0x80
-        # Remaining should be null-filled
-        assert data[7] == 0x00
-        assert data[8] == 0x00
-        assert data[9] == 0x00
-
-    def test_patch_too_long_fails(self):
-        """Text longer than available space returns failure."""
-        from ult3edit.patch import _patch_inline_string
-        data = bytearray(20)
-        info = {'text_offset': 5, 'text_end': 7, 'text': 'AB', 'index': 0}
-        ok, msg = _patch_inline_string(data, info, 'TOOLONG')
-        assert ok is False
-        assert 'too long' in msg.lower()
-
-    def test_resolve_by_index(self):
-        """_resolve_string_target finds by index."""
-        from ult3edit.patch import _resolve_string_target
-        strings = [
-            {'index': 0, 'text': 'HELLO', 'address': 0x100},
-            {'index': 1, 'text': 'WORLD', 'address': 0x110},
-        ]
-        result = _resolve_string_target(strings, index=1)
-        assert len(result) == 1
-        assert result[0]['text'] == 'WORLD'
-
-    def test_resolve_by_vanilla_text(self):
-        """_resolve_string_target finds by vanilla text (case-insensitive)."""
-        from ult3edit.patch import _resolve_string_target
-        strings = [
-            {'index': 0, 'text': 'HELLO', 'address': 0x100},
-            {'index': 1, 'text': 'WORLD', 'address': 0x110},
-        ]
-        result = _resolve_string_target(strings, vanilla='hello')
-        assert len(result) == 1
-        assert result[0]['index'] == 0
-
-    def test_resolve_by_address(self):
-        """_resolve_string_target finds by address."""
-        from ult3edit.patch import _resolve_string_target
-        strings = [
-            {'index': 0, 'text': 'HELLO', 'address': 0x100},
-            {'index': 1, 'text': 'WORLD', 'address': 0x110},
-        ]
-        result = _resolve_string_target(strings, address=0x110)
-        assert len(result) == 1
-        assert result[0]['text'] == 'WORLD'
-
-    def test_resolve_no_match(self):
-        """_resolve_string_target returns empty list for no match."""
-        from ult3edit.patch import _resolve_string_target
-        strings = [{'index': 0, 'text': 'HELLO', 'address': 0x100}]
-        result = _resolve_string_target(strings, index=99)
-        assert result == []
-
-    def test_resolve_no_criteria(self):
-        """_resolve_string_target returns empty list with no criteria."""
-        from ult3edit.patch import _resolve_string_target
-        strings = [{'index': 0, 'text': 'HELLO', 'address': 0x100}]
-        result = _resolve_string_target(strings)
-        assert result == []
-
 
 # =============================================================================
 # Shapes pixel helper tests
 # =============================================================================
 
-class TestShapesPixelHelpers:
-    """Tests for shapes.py pixel scaling and rendering helpers."""
-
-    def test_scale_pixels_noop(self):
-        """Scale factor 1 returns pixels unchanged."""
-        from ult3edit.shapes import scale_pixels
-        pixels = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)]
-        result, w, h = scale_pixels(pixels, 2, 2, 1)
-        assert result == pixels
-        assert w == 2
-        assert h == 2
-
-    def test_scale_pixels_2x(self):
-        """Scale factor 2 doubles each dimension."""
-        from ult3edit.shapes import scale_pixels
-        pixels = [(255, 0, 0), (0, 255, 0),
-                  (0, 0, 255), (255, 255, 0)]
-        result, w, h = scale_pixels(pixels, 2, 2, 2)
-        assert w == 4
-        assert h == 4
-        assert len(result) == 16
-        # Top-left 2x2 block should be red
-        assert result[0] == (255, 0, 0)
-        assert result[1] == (255, 0, 0)
-        assert result[4] == (255, 0, 0)
-        assert result[5] == (255, 0, 0)
-
-    def test_render_hgr_sprite_basic(self):
-        """render_hgr_sprite produces correct pixel count."""
-        from ult3edit.shapes import render_hgr_sprite
-        # 1 byte wide, 2 rows tall
-        data = bytes([0x00, 0x7F])
-        pixels = render_hgr_sprite(data, width_bytes=1, height=2, offset=0)
-        # Each byte produces 7 pixels (HGR)
-        assert len(pixels) == 14  # 7 * 2
-
-    def test_hgr_ascii_preview_basic(self):
-        """hgr_ascii_preview produces text representation."""
-        from ult3edit.shapes import hgr_ascii_preview
-        # Create simple 2x2 pixel data
-        black = (0, 0, 0)
-        white = (255, 255, 255)
-        pixels = [black, white, white, black]
-        result = hgr_ascii_preview(pixels, 2, 2)
-        assert len(result.split('\n')) == 2
-
 
 # =============================================================================
 # DDRW parsing and editing tests
 # =============================================================================
-
-class TestDdrwParsing:
-    """Tests for DDRW structured parsing functions."""
-
-    def test_parse_vectors_full(self):
-        """parse_vectors reads 32 bytes at vector offset."""
-        from ult3edit.ddrw import parse_vectors, DDRW_VECTOR_OFFSET
-        data = bytearray(1792)
-        for i in range(32):
-            data[DDRW_VECTOR_OFFSET + i] = i + 1
-        result = parse_vectors(data)
-        assert len(result) == 32
-        assert result[0] == 1
-        assert result[31] == 32
-
-    def test_parse_vectors_truncated(self):
-        """parse_vectors pads with zeros for truncated data."""
-        from ult3edit.ddrw import parse_vectors
-        data = bytes(100)  # Too short for vector offset
-        result = parse_vectors(data)
-        assert len(result) == 32
-        assert all(v == 0 for v in result)
-
-    def test_parse_tile_records(self):
-        """parse_tile_records reads 7-byte records at tile offset."""
-        from ult3edit.ddrw import (parse_tile_records, DDRW_TILE_OFFSET,
-                                  DDRW_TILE_RECORD_SIZE)
-        data = bytearray(1792)
-        # Write 2 tile records at offset
-        for j in range(7):
-            data[DDRW_TILE_OFFSET + j] = j + 10
-        for j in range(7):
-            data[DDRW_TILE_OFFSET + 7 + j] = j + 20
-        result = parse_tile_records(data)
-        assert len(result) >= 2
-        assert result[0]['col_start'] == 10
-        assert result[1]['col_start'] == 20
-
-    def test_cmd_edit_dry_run(self, tmp_path):
-        """ddrw cmd_edit --dry-run doesn't modify file."""
-        from ult3edit.ddrw import cmd_edit
-        ddrw_file = tmp_path / 'DDRW'
-        original = bytes(1792)
-        ddrw_file.write_bytes(original)
-        args = argparse.Namespace(
-            file=str(ddrw_file), offset=0x10, data='AABB',
-            dry_run=True, backup=False, output=None)
-        cmd_edit(args)
-        assert ddrw_file.read_bytes() == original
-
-    def test_cmd_edit_writes_bytes(self, tmp_path):
-        """ddrw cmd_edit patches bytes at offset."""
-        from ult3edit.ddrw import cmd_edit
-        ddrw_file = tmp_path / 'DDRW'
-        ddrw_file.write_bytes(bytes(1792))
-        args = argparse.Namespace(
-            file=str(ddrw_file), offset=0x10, data='DEADBEEF',
-            dry_run=False, backup=False, output=None)
-        cmd_edit(args)
-        result = ddrw_file.read_bytes()
-        assert result[0x10:0x14] == bytes([0xDE, 0xAD, 0xBE, 0xEF])
-
-    def test_cmd_edit_past_end_exits(self, tmp_path):
-        """ddrw cmd_edit past end of file exits with error."""
-        from ult3edit.ddrw import cmd_edit
-        ddrw_file = tmp_path / 'DDRW'
-        ddrw_file.write_bytes(bytes(10))
-        args = argparse.Namespace(
-            file=str(ddrw_file), offset=8, data='AABBCCDD',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
 
 
 # =============================================================================
@@ -11239,35 +7220,6 @@ class TestImportTypeValidation:
 # =============================================================================
 # Shapes check_shps_code_region
 # =============================================================================
-
-class TestShpsCodeRegion:
-    """Tests for check_shps_code_region function."""
-
-    def test_data_too_short(self):
-        """Returns False when data is shorter than code region offset."""
-        from ult3edit.shapes import check_shps_code_region
-        data = bytes(100)  # Way shorter than SHPS_CODE_OFFSET (0x1F9)
-        assert check_shps_code_region(data) is False
-
-    def test_code_region_all_zeros(self):
-        """Returns False when code region is all zeros."""
-        from ult3edit.shapes import check_shps_code_region, SHPS_CODE_OFFSET, SHPS_CODE_SIZE
-        data = bytes(SHPS_CODE_OFFSET + SHPS_CODE_SIZE + 100)
-        assert check_shps_code_region(data) is False
-
-    def test_code_region_has_code(self):
-        """Returns True when code region has non-zero bytes."""
-        from ult3edit.shapes import check_shps_code_region, SHPS_CODE_OFFSET, SHPS_CODE_SIZE
-        data = bytearray(SHPS_CODE_OFFSET + SHPS_CODE_SIZE + 100)
-        data[SHPS_CODE_OFFSET] = 0x60  # RTS opcode
-        assert check_shps_code_region(data) is True
-
-    def test_code_region_last_byte_nonzero(self):
-        """Returns True when only last byte of code region is non-zero."""
-        from ult3edit.shapes import check_shps_code_region, SHPS_CODE_OFFSET, SHPS_CODE_SIZE
-        data = bytearray(SHPS_CODE_OFFSET + SHPS_CODE_SIZE + 100)
-        data[SHPS_CODE_OFFSET + SHPS_CODE_SIZE - 1] = 0x01
-        assert check_shps_code_region(data) is True
 
 
 # =============================================================================
@@ -11544,7 +7496,7 @@ class TestBcdEdgeCases:
 # Roster check_progress (endgame readiness)
 # =============================================================================
 
-class TestCheckProgress:
+class TestCheckProgressFull:
     """Test check_progress() endgame readiness analysis."""
 
     def _make_char(self, name='HERO', status='G', marks=0, cards=0,
@@ -11739,209 +7691,10 @@ class TestRosterCmdErrors:
 # Patch module: name compilation, region errors, hex dump
 # =============================================================================
 
-class TestPatchNameCompile:
-    """Test patch.py name table compilation and validation."""
-
-    def test_parse_names_file_basic(self):
-        """Parse a simple .names file."""
-        from ult3edit.patch import _parse_names_file
-        text = "# Comment\nGRASS\nWATER\n\nFIRE\n"
-        result = _parse_names_file(text)
-        assert result == ['GRASS', 'WATER', 'FIRE']
-
-    def test_parse_names_file_empty_quotes(self):
-        """Empty string via double-quotes."""
-        from ult3edit.patch import _parse_names_file
-        text = 'HELLO\n""\nWORLD\n'
-        result = _parse_names_file(text)
-        assert result == ['HELLO', '', 'WORLD']
-
-    def test_parse_names_file_single_quotes(self):
-        """Empty string via single-quotes."""
-        from ult3edit.patch import _parse_names_file
-        text = "HELLO\n''\nWORLD\n"
-        result = _parse_names_file(text)
-        assert result == ['HELLO', '', 'WORLD']
-
-    def test_parse_names_comments_and_blanks(self):
-        """Comments and blank lines are skipped."""
-        from ult3edit.patch import _parse_names_file
-        text = "# header\n\n# another comment\nONE\n#\nTWO\n"
-        result = _parse_names_file(text)
-        assert result == ['ONE', 'TWO']
-
-    def test_validate_names_within_budget(self):
-        """Names within the 921-byte budget pass validation."""
-        from ult3edit.patch import _validate_names
-        names = ['GRASS', 'WATER', 'FIRE']
-        size, budget, valid = _validate_names(names)
-        assert valid
-        # size = len('GRASS')+1 + len('WATER')+1 + len('FIRE')+1 = 17
-        assert size == 17
-
-    def test_validate_names_overflow(self):
-        """Names exceeding the budget fail validation."""
-        from ult3edit.patch import _validate_names
-        # Create names that total > 891 bytes (921 - 30 reserved)
-        names = ['X' * 100] * 10  # 10 * 101 = 1010 bytes > 891
-        size, budget, valid = _validate_names(names)
-        assert not valid
-        assert size > budget
-
-    def test_compile_names_overflow_exits(self, tmp_path):
-        """cmd_compile_names with too-large names exits with error."""
-        from ult3edit.patch import cmd_compile_names
-        source = os.path.join(str(tmp_path), 'big.names')
-        with open(source, 'w') as f:
-            for i in range(100):
-                f.write('A' * 50 + '\n')
-        args = argparse.Namespace(source=source, output=None)
-        with pytest.raises(SystemExit):
-            cmd_compile_names(args)
-
-    def test_compile_names_empty_exits(self, tmp_path):
-        """cmd_compile_names with no names exits with error."""
-        from ult3edit.patch import cmd_compile_names
-        source = os.path.join(str(tmp_path), 'empty.names')
-        with open(source, 'w') as f:
-            f.write('# only comments\n\n')
-        args = argparse.Namespace(source=source, output=None)
-        with pytest.raises(SystemExit):
-            cmd_compile_names(args)
-
-
-class TestPatchCmdErrors:
-    """Test error paths in patch CLI commands."""
-
-    def _make_ult3_binary(self, tmp_path):
-        """Create a fake ULT3-sized binary."""
-        data = bytearray(17408)
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path
-
-    def test_cmd_edit_unknown_region(self, tmp_path):
-        """cmd_edit with non-existent region name exits."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3_binary(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='nonexistent', data='FF',
-            dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_cmd_edit_invalid_hex(self, tmp_path):
-        """cmd_edit with malformed hex exits."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3_binary(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='food-rate', data='ZZZZ',
-            dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_cmd_edit_data_too_long(self, tmp_path):
-        """cmd_edit with data exceeding region max exits."""
-        from ult3edit.patch import cmd_edit
-        path = self._make_ult3_binary(tmp_path)
-        # food-rate max_length is 1, send 10 bytes
-        args = argparse.Namespace(
-            file=path, region='food-rate', data='FF' * 10,
-            dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_cmd_dump_offset_past_end(self, tmp_path):
-        """cmd_dump with offset past EOF exits."""
-        from ult3edit.patch import cmd_dump
-        path = self._make_ult3_binary(tmp_path)
-        args = argparse.Namespace(
-            file=path, offset=99999, length=16)
-        with pytest.raises(SystemExit):
-            cmd_dump(args)
-
-    def test_cmd_view_unknown_region_filter(self, tmp_path):
-        """cmd_view with region filter for unknown region exits."""
-        from ult3edit.patch import cmd_view
-        path = self._make_ult3_binary(tmp_path)
-        args = argparse.Namespace(
-            file=path, region='nonexistent', json=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_view(args)
-
-    def test_cmd_view_unrecognized_binary(self, tmp_path):
-        """cmd_view on unrecognized binary shows warning (no exit)."""
-        from ult3edit.patch import cmd_view
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(b'\x00' * 100)
-        args = argparse.Namespace(
-            file=path, region=None, json=False, output=None)
-        # Should not raise — just prints warning
-        cmd_view(args)
-
-    def test_cmd_import_no_matching_regions(self, tmp_path):
-        """cmd_import with JSON that has no matching region names exits."""
-        from ult3edit.patch import cmd_import
-        path = self._make_ult3_binary(tmp_path)
-        json_path = os.path.join(str(tmp_path), 'bad.json')
-        with open(json_path, 'w') as f:
-            json.dump({'regions': {'fake-region': {'data': [0]}}}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path, output=None,
-            dry_run=True, backup=False, region=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
 
 # =============================================================================
 # Patch encoding helpers
 # =============================================================================
-
-class TestPatchEncoding:
-    """Test encode/parse helpers for coords and text regions."""
-
-    def test_parse_text_region(self):
-        """Parse null-terminated high-ASCII strings."""
-        from ult3edit.patch import parse_text_region
-        # Build: "HI\x00BYE\x00\x00" (trailing null padding)
-        data = bytearray(100)
-        for i, ch in enumerate('HI'):
-            data[10 + i] = ord(ch) | 0x80
-        data[12] = 0x00
-        for i, ch in enumerate('BYE'):
-            data[13 + i] = ord(ch) | 0x80
-        data[16] = 0x00
-        result = parse_text_region(bytes(data), 10, 20)
-        assert result == ['HI', 'BYE']
-
-    def test_encode_coord_region(self):
-        """Encode XY coordinate pairs."""
-        from ult3edit.patch import encode_coord_region
-        coords = [{'x': 10, 'y': 20}, {'x': 30, 'y': 40}]
-        result = encode_coord_region(coords, 8)
-        assert result[:4] == bytes([10, 20, 30, 40])
-        assert len(result) == 8  # padded to max_length
-        assert result[4:] == bytes(4)  # remaining is null-padded
-
-    def test_encode_coord_region_overflow(self):
-        """Encoding coords that exceed max_length raises ValueError."""
-        from ult3edit.patch import encode_coord_region
-        coords = [{'x': i, 'y': i} for i in range(10)]
-        with pytest.raises(ValueError, match='exceeds max'):
-            encode_coord_region(coords, 4)
-
-    def test_encode_text_region(self):
-        """Encode strings as null-terminated high-ASCII."""
-        from ult3edit.patch import encode_text_region
-        result = encode_text_region(['HI', 'BYE'], 20)
-        # HI = 0xC8 0xC9 0x00, BYE = 0xC2 0xD9 0xC5 0x00
-        assert result[0] == ord('H') | 0x80
-        assert result[1] == ord('I') | 0x80
-        assert result[2] == 0x00
-        assert result[3] == ord('B') | 0x80
-        assert len(result) == 20  # padded to max
 
 
 # =============================================================================
@@ -11953,7 +7706,6 @@ class TestTlkCmdErrors:
 
     def _make_tlk_file(self, tmp_path, records=None):
         """Create a TLK file with simple text records."""
-        from ult3edit.tlk import encode_record, TLK_RECORD_END
         data = bytearray()
         if records is None:
             records = [['HELLO WORLD'], ['GOODBYE']]
@@ -12079,87 +7831,10 @@ class TestDiffDetectFileType:
 # Patch identify_binary
 # =============================================================================
 
-class TestPatchIdentifyBinary:
-    """Test identify_binary engine detection."""
-
-    def test_identify_ult3_by_name(self):
-        """Identify ULT3 by filename."""
-        from ult3edit.patch import identify_binary
-        data = bytes(17408)
-        result = identify_binary(data, 'ULT3')
-        assert result is not None
-        assert result['name'] == 'ULT3'
-        assert result['load_addr'] == 0x5000
-
-    def test_identify_exod_by_name(self):
-        """Identify EXOD by filename."""
-        from ult3edit.patch import identify_binary
-        data = bytes(26208)
-        result = identify_binary(data, 'EXOD')
-        assert result is not None
-        assert result['name'] == 'EXOD'
-
-    def test_identify_by_size_only(self):
-        """Identify binary by size when filename doesn't match."""
-        from ult3edit.patch import identify_binary
-        data = bytes(17408)  # ULT3 size
-        result = identify_binary(data, 'randomfile')
-        assert result is not None
-        assert result['name'] == 'ULT3'
-
-    def test_unrecognized_returns_none(self):
-        """Unrecognized binary returns None."""
-        from ult3edit.patch import identify_binary
-        data = bytes(100)
-        result = identify_binary(data, 'UNKNOWN')
-        assert result is None
-
-    def test_identify_subs(self):
-        """Identify SUBS by filename."""
-        from ult3edit.patch import identify_binary
-        data = bytes(3584)
-        result = identify_binary(data, 'SUBS')
-        assert result is not None
-        assert result['name'] == 'SUBS'
-
 
 # =============================================================================
 # Patch cmd_edit dry-run / actual write
 # =============================================================================
-
-class TestPatchCmdEditWriteback:
-    """Test patch cmd_edit writes correct bytes."""
-
-    def test_cmd_edit_dry_run_no_write(self, tmp_path):
-        """cmd_edit with --dry-run doesn't modify the file."""
-        from ult3edit.patch import cmd_edit
-        path = os.path.join(str(tmp_path), 'ULT3')
-        data = bytearray(17408)
-        with open(path, 'wb') as f:
-            f.write(data)
-        args = argparse.Namespace(
-            file=path, region='food-rate', data='08',
-            dry_run=True, backup=False, output=None)
-        cmd_edit(args)
-        with open(path, 'rb') as f:
-            after = f.read()
-        assert after == bytes(17408)  # unchanged
-
-    def test_cmd_edit_writes_bytes(self, tmp_path):
-        """cmd_edit actually patches the correct offset."""
-        from ult3edit.patch import cmd_edit
-        path = os.path.join(str(tmp_path), 'ULT3')
-        data = bytearray(17408)
-        with open(path, 'wb') as f:
-            f.write(data)
-        args = argparse.Namespace(
-            file=path, region='food-rate', data='08',
-            dry_run=False, backup=False, output=None)
-        cmd_edit(args)
-        with open(path, 'rb') as f:
-            after = f.read()
-        # food-rate is at offset 0x272C
-        assert after[0x272C] == 0x08
 
 
 # =============================================================================
@@ -12488,7 +8163,6 @@ class TestDiffTlk:
     def test_identical_tlk(self, tmp_path):
         """Identical TLK files produce no changes."""
         from ult3edit.diff import diff_tlk
-        from ult3edit.tlk import encode_record
         data = encode_record(['HELLO WORLD'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
         p2 = os.path.join(str(tmp_path), 'TLKA2')
@@ -12502,7 +8176,6 @@ class TestDiffTlk:
     def test_changed_record(self, tmp_path):
         """Changed dialog record is detected."""
         from ult3edit.diff import diff_tlk
-        from ult3edit.tlk import encode_record
         d1 = encode_record(['HELLO WORLD'])
         d2 = encode_record(['GOODBYE WORLD'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
@@ -12517,7 +8190,6 @@ class TestDiffTlk:
     def test_added_record(self, tmp_path):
         """Extra record in file2 shows as added."""
         from ult3edit.diff import diff_tlk
-        from ult3edit.tlk import encode_record
         d1 = encode_record(['HELLO'])
         d2 = encode_record(['HELLO']) + encode_record(['EXTRA'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
@@ -13493,7 +9165,6 @@ class TestTlkFindReplace:
 
     def _make_tlk(self, tmp_path, text_records):
         """Create a TLK file with given text records."""
-        from ult3edit.tlk import encode_record
         data = bytearray()
         for rec in text_records:
             data.extend(encode_record(rec))
@@ -14336,100 +10007,6 @@ class TestTextCmdEditGaps:
         assert 'too small' in captured.err or 'Warning' in captured.err
 
 
-class TestPatchCmdGaps:
-    """Test patch command additional error paths."""
-
-    def test_cmd_view_unrecognized_binary_fallback(self, tmp_path, capsys):
-        """cmd_view on unrecognized file prints warning."""
-        from ult3edit.patch import cmd_view
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(b'\x00' * 100)
-        args = argparse.Namespace(
-            file=path, json=False, output=None, region=None)
-        cmd_view(args)
-        captured = capsys.readouterr()
-        assert 'not recognized' in captured.err
-
-    def test_cmd_edit_unrecognized_exits(self, tmp_path):
-        """cmd_edit on unrecognized binary exits."""
-        from ult3edit.patch import cmd_edit
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(b'\x00' * 100)
-        args = argparse.Namespace(
-            file=path, region='name-table', data='FF',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_encode_text_overflow(self):
-        """encode_text_region raises ValueError when text exceeds max_length."""
-        from ult3edit.patch import encode_text_region
-        strings = ['A' * 100, 'B' * 100]
-        with pytest.raises(ValueError, match="exceeds max"):
-            encode_text_region(strings, 10)
-
-    def test_cmd_view_unrecognized_json(self, tmp_path, capsys):
-        """cmd_view on unrecognized file with --json outputs JSON."""
-        from ult3edit.patch import cmd_view
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(b'\x00' * 100)
-        out_path = os.path.join(str(tmp_path), 'out.json')
-        args = argparse.Namespace(
-            file=path, json=True, output=out_path, region=None)
-        cmd_view(args)
-        with open(out_path, 'r') as f:
-            result = json.load(f)
-        assert result['recognized'] is False
-        assert result['size'] == 100
-
-
-class TestDdrwCmdGaps:
-    """Test DDRW command error paths."""
-
-    def test_cmd_view_no_file_in_dir(self, tmp_path):
-        """cmd_view on directory with no DDRW file exits."""
-        from ult3edit.ddrw import cmd_view
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_view(args)
-
-    def test_cmd_import_no_raw_array(self, tmp_path):
-        """cmd_import with JSON missing 'raw' array exits."""
-        from ult3edit.ddrw import cmd_import, DDRW_LOAD_ADDR
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(bytearray(DDRW_FILE_SIZE))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'description': 'no raw field'}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-    def test_cmd_import_invalid_byte_values(self, tmp_path):
-        """cmd_import with out-of-range values in raw array exits."""
-        from ult3edit.ddrw import cmd_import
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(bytearray(DDRW_FILE_SIZE))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'raw': [999, -1, 'abc']}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-
 class TestTlkCmdGaps:
     """Test TLK command gaps."""
 
@@ -14541,7 +10118,7 @@ class TestDiffFileGaps:
         assert result is not None
 
 
-class TestBcdEdgeCases:
+class TestBcdEdgeCasesExtended:
     """Test BCD encoding edge cases."""
 
     def test_bcd_to_int_invalid_nibble(self):
@@ -14575,17 +10152,6 @@ class TestBcdEdgeCases:
         from ult3edit.bcd import int_to_bcd16
         hi, lo = int_to_bcd16(-100)
         assert hi == 0x00 and lo == 0x00
-
-
-class TestPatchEncodeCoordOverflow:
-    """Test encode_coord_region overflow."""
-
-    def test_encode_coord_too_many_pairs(self):
-        """encode_coord_region raises ValueError when coords exceed max_length."""
-        from ult3edit.patch import encode_coord_region
-        coords = [{'x': i, 'y': i} for i in range(20)]
-        with pytest.raises(ValueError, match="exceeds max"):
-            encode_coord_region(coords, 8)
 
 
 class TestFileUtilEdgeCases:
@@ -14633,53 +10199,6 @@ class TestFileUtilEdgeCases:
         encoded = encode_high_ascii(text, len(text))
         decoded = decode_high_ascii(encoded)
         assert decoded == text
-
-
-class TestSoundCmdGaps:
-    """Test sound command edge cases."""
-
-    def test_cmd_view_no_file_in_dir(self, tmp_path):
-        """cmd_view on directory with no sound files works or exits."""
-        from ult3edit.sound import cmd_view
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None)
-        # May exit or print nothing, but should not crash
-        try:
-            cmd_view(args)
-        except SystemExit:
-            pass  # Expected if no files found
-
-    def test_cmd_import_size_mismatch_warning(self, tmp_path, capsys):
-        """Import with wrong-size raw array produces warning."""
-        from ult3edit.sound import cmd_import
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(bytearray(SOSA_FILE_SIZE))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'raw': [0] * 100}, f)  # Wrong size
-        args = argparse.Namespace(
-            file=path, json_file=json_path,
-            dry_run=True, backup=False, output=None)
-        cmd_import(args)
-        captured = capsys.readouterr()
-        assert 'Warning' in captured.err or 'arning' in captured.err or 'bytes' in captured.out
-
-
-class TestShapesCmdGaps:
-    """Test shapes command edge cases."""
-
-    def test_cmd_view_no_file_in_dir(self, tmp_path):
-        """cmd_view on directory with no SHPS files works or exits."""
-        from ult3edit.shapes import cmd_view
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None,
-            tile=None, glyph=True, color=False)
-        try:
-            cmd_view(args)
-        except SystemExit:
-            pass  # Expected if no files found
 
 
 class TestCliDispatch:
@@ -14969,219 +10488,6 @@ class TestSaveCmdViewGaps:
 # Batch 8: Final remaining gaps
 # =============================================================================
 
-class TestSoundCmdEditGaps:
-    """Test sound cmd_edit error paths."""
-
-    def test_invalid_hex_data(self, tmp_path):
-        """cmd_edit with invalid hex data exits."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(bytearray(SOSA_FILE_SIZE))
-        args = argparse.Namespace(
-            file=path, offset=0, data='ZZZZ',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_patch_past_end(self, tmp_path):
-        """cmd_edit with offset+data past end of file exits."""
-        from ult3edit.sound import cmd_edit
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(bytearray(SOSA_FILE_SIZE))
-        args = argparse.Namespace(
-            file=path, offset=SOSA_FILE_SIZE - 1, data='AABBCC',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_no_sound_files_in_dir(self, tmp_path):
-        """cmd_view on directory with no sound files exits."""
-        from ult3edit.sound import cmd_view
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_view(args)
-
-
-class TestSoundCmdImportGaps:
-    """Test sound cmd_import error paths."""
-
-    def test_import_non_list_raw(self, tmp_path):
-        """cmd_import with non-list 'raw' exits."""
-        from ult3edit.sound import cmd_import
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(bytearray(SOSA_FILE_SIZE))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'raw': 'not a list'}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-    def test_import_invalid_byte_values(self, tmp_path):
-        """cmd_import with invalid byte values exits."""
-        from ult3edit.sound import cmd_import
-        from ult3edit.constants import SOSA_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'SOSA')
-        with open(path, 'wb') as f:
-            f.write(bytearray(SOSA_FILE_SIZE))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'raw': [999, -1, 'abc']}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-
-class TestPatchCmdEditDataTooLong:
-    """Test patch cmd_edit data exceeds region size."""
-
-    def test_data_exceeds_region_max(self, tmp_path):
-        """cmd_edit with data larger than region max_length exits."""
-        from ult3edit.patch import cmd_edit
-        # Create file that looks like ULT3 (17408 bytes)
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        args = argparse.Namespace(
-            file=path, region='food-rate',  # max_length=1
-            data='AA BB CC DD',  # 4 bytes > 1
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_invalid_hex_in_patch(self, tmp_path):
-        """cmd_edit with invalid hex string exits."""
-        from ult3edit.patch import cmd_edit
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        args = argparse.Namespace(
-            file=path, region='food-rate',
-            data='ZZZZ',  # Invalid hex
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_unknown_region(self, tmp_path):
-        """cmd_edit with unknown region name exits."""
-        from ult3edit.patch import cmd_edit
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        args = argparse.Namespace(
-            file=path, region='nonexistent-region',
-            data='FF',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-
-class TestPatchCmdImportGaps:
-    """Test patch cmd_import error paths."""
-
-    def test_import_unrecognized_binary(self, tmp_path):
-        """cmd_import on unrecognized binary exits."""
-        from ult3edit.patch import cmd_import
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(bytearray(100))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'food-rate': [4]}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path, region=None,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-    def test_import_no_matching_regions(self, tmp_path):
-        """cmd_import with no matching regions exits."""
-        from ult3edit.patch import cmd_import
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'nonexistent': [1, 2, 3]}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path, region=None,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-    def test_import_subs_no_regions(self, tmp_path):
-        """cmd_import on SUBS binary (no regions) exits."""
-        from ult3edit.patch import cmd_import
-        path = os.path.join(str(tmp_path), 'SUBS')
-        with open(path, 'wb') as f:
-            f.write(bytearray(3584))
-        json_path = os.path.join(str(tmp_path), 'import.json')
-        with open(json_path, 'w') as f:
-            json.dump({'food-rate': [4]}, f)
-        args = argparse.Namespace(
-            file=path, json_file=json_path, region=None,
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-
-class TestShapesCmdEditGaps:
-    """Test shapes cmd_edit error paths."""
-
-    def test_edit_no_file_in_dir(self, tmp_path):
-        """cmd_edit on directory with no SHPS file exits or falls through."""
-        from ult3edit.shapes import cmd_view
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None,
-            tile=None, glyph=True, color=False)
-        try:
-            cmd_view(args)
-        except SystemExit:
-            pass  # Expected
-
-
-class TestDdrwCmdEditGaps:
-    """Test DDRW cmd_edit error paths."""
-
-    def test_edit_patch_past_end(self, tmp_path):
-        """cmd_edit with patch extending past end of file exits."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(bytearray(DDRW_FILE_SIZE))
-        args = argparse.Namespace(
-            file=path, offset=DDRW_FILE_SIZE - 1,
-            data='AA BB CC DD',  # 4 bytes past end
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
-    def test_edit_invalid_hex(self, tmp_path):
-        """cmd_edit with invalid hex data exits."""
-        from ult3edit.ddrw import cmd_edit
-        from ult3edit.constants import DDRW_FILE_SIZE
-        path = os.path.join(str(tmp_path), 'DDRW')
-        with open(path, 'wb') as f:
-            f.write(bytearray(DDRW_FILE_SIZE))
-        args = argparse.Namespace(
-            file=path, offset=0,
-            data='ZZZZ',
-            dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit(args)
-
 
 class TestSpecialCmdImportGaps:
     """Test special cmd_import additional error paths."""
@@ -15200,21 +10506,6 @@ class TestSpecialCmdImportGaps:
             file=path, json_file=json_path,
             dry_run=True, backup=False, output=None)
         cmd_import(args)  # Should not crash
-
-
-class TestPatchCmdDumpGaps:
-    """Test patch cmd_dump error paths."""
-
-    def test_dump_offset_past_end(self, tmp_path):
-        """cmd_dump with offset past end of file exits."""
-        from ult3edit.patch import cmd_dump
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        args = argparse.Namespace(
-            file=path, offset=99999, length=16)
-        with pytest.raises(SystemExit):
-            cmd_dump(args)
 
 
 class TestBestiaryAbility2Validation:
@@ -15501,231 +10792,6 @@ class TestCombatImportNonNumericMonsterKey:
         assert 'non-numeric' in err
 
 
-class TestPatchStringsEditNoStrings:
-    """Test patch cmd_strings_edit exits when binary has no inline strings."""
-
-    def test_no_strings_exits(self, tmp_path):
-        from ult3edit.patch import cmd_strings_edit
-        path = os.path.join(str(tmp_path), 'ULT3')
-        # Binary with no JSR $46BA pattern
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        args = argparse.Namespace(file=path, index=0, vanilla=None,
-                                  address=None, text='TEST',
-                                  dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_strings_edit(args)
-
-
-class TestPatchStringsEditNoCriteria:
-    """Test patch cmd_strings_edit exits when no --index/--vanilla/--address."""
-
-    def _make_ult3_with_string(self, tmp_path):
-        """Create a ULT3-size binary with one inline string."""
-        data = bytearray(17408)
-        # Place JSR $46BA at offset 100
-        data[100] = 0x20
-        data[101] = 0xBA
-        data[102] = 0x46
-        # Inline text "HI" in high-ASCII + null
-        data[103] = ord('H') | 0x80
-        data[104] = ord('I') | 0x80
-        data[105] = 0x00
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path
-
-    def test_no_criteria_exits(self, tmp_path):
-        from ult3edit.patch import cmd_strings_edit
-        path = self._make_ult3_with_string(tmp_path)
-        args = argparse.Namespace(file=path, index=None, vanilla=None,
-                                  address=None, text='TEST',
-                                  dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_strings_edit(args)
-
-
-class TestPatchStringsEditByAddress:
-    """Test patch cmd_strings_edit by --address lookup."""
-
-    def test_edit_by_address(self, tmp_path, capsys):
-        from ult3edit.patch import cmd_strings_edit
-        data = bytearray(17408)
-        # Place JSR $46BA at offset 100
-        data[100] = 0x20
-        data[101] = 0xBA
-        data[102] = 0x46
-        # Inline "HI" + null
-        data[103] = ord('H') | 0x80
-        data[104] = ord('I') | 0x80
-        data[105] = 0x00
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-        # Address = org + JSR offset = $5000 + 100 = $5064
-        args = argparse.Namespace(file=path, index=None, vanilla=None,
-                                  address=0x5064, text='HI',
-                                  dry_run=True, backup=False, output=None)
-        cmd_strings_edit(args)
-        out = capsys.readouterr().out
-        assert 'Patched' in out or 'Dry run' in out
-
-
-class TestPatchStringsImportNoStrings:
-    """Test patch cmd_strings_import exits when binary has no inline strings."""
-
-    def test_no_strings_exits(self, tmp_path):
-        from ult3edit.patch import cmd_strings_import
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(bytearray(17408))
-        jpath = os.path.join(str(tmp_path), 'patches.json')
-        with open(jpath, 'w') as f:
-            json.dump({'patches': [{'index': 0, 'text': 'X'}]}, f)
-        args = argparse.Namespace(file=path, json_file=jpath,
-                                  dry_run=True, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_strings_import(args)
-
-
-class TestPatchStringsImportErrors:
-    """Test patch cmd_strings_import error paths."""
-
-    def _make_ult3_with_string(self, tmp_path, text='HI'):
-        data = bytearray(17408)
-        data[100] = 0x20
-        data[101] = 0xBA
-        data[102] = 0x46
-        for i, ch in enumerate(text):
-            data[103 + i] = ord(ch) | 0x80
-        data[103 + len(text)] = 0x00
-        path = os.path.join(str(tmp_path), 'ULT3')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path
-
-    def test_all_patches_fail_exits(self, tmp_path):
-        """cmd_strings_import exits when replacement is too long."""
-        from ult3edit.patch import cmd_strings_import
-        path = self._make_ult3_with_string(tmp_path, 'HI')
-        jpath = os.path.join(str(tmp_path), 'patches.json')
-        with open(jpath, 'w') as f:
-            json.dump({'patches': [{'index': 0,
-                                    'text': 'THIS IS WAY TOO LONG FOR TWO BYTES'}]}, f)
-        args = argparse.Namespace(file=path, json_file=jpath,
-                                  dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_strings_import(args)
-
-    def test_no_match_warning(self, tmp_path, capsys):
-        """Unmatched vanilla text produces warning."""
-        from ult3edit.patch import cmd_strings_import
-        path = self._make_ult3_with_string(tmp_path, 'HI')
-        jpath = os.path.join(str(tmp_path), 'patches.json')
-        with open(jpath, 'w') as f:
-            json.dump({'patches': [{'vanilla': 'NONEXISTENT', 'text': 'X'}]}, f)
-        args = argparse.Namespace(file=path, json_file=jpath,
-                                  dry_run=True, backup=False, output=None)
-        # No match = 0 successes + 0 errors, so it won't exit(1)
-        cmd_strings_import(args)
-        err = capsys.readouterr().err
-        assert 'no match' in err.lower() or 'Warning' in err
-
-
-class TestShapesImportOverlayStrings:
-    """Test shapes cmd_import with overlay strings JSON format."""
-
-    def test_import_overlay_strings(self, tmp_path, capsys):
-        from ult3edit.shapes import cmd_import
-        # Build an SHP overlay with inline string "WEAPONS"
-        data = bytearray(b'\x60' * 16)
-        data += bytes([0x20, 0xBA, 0x46])  # JSR $46BA
-        for ch in 'WEAPONS':
-            data.append(ord(ch) | 0x80)
-        data.append(0x00)  # null terminator
-        data += bytearray(b'\x60' * 16)
-        path = os.path.join(str(tmp_path), 'SHP0')
-        with open(path, 'wb') as f:
-            f.write(data)
-        # JSON with 'strings' key
-        jdata = {
-            'strings': [
-                {'offset': 19, 'text': 'ARMS'}  # text_offset = 16 + 3 = 19
-            ]
-        }
-        jpath = os.path.join(str(tmp_path), 'strings.json')
-        with open(jpath, 'w') as f:
-            json.dump(jdata, f)
-        args = argparse.Namespace(file=path, json_file=jpath,
-                                  dry_run=False, backup=False, output=None)
-        cmd_import(args)
-        out = capsys.readouterr().out
-        assert '1 string(s)' in out
-
-
-class TestShapesImportUnrecognizedJSON:
-    """Test shapes cmd_import rejects unrecognized JSON format."""
-
-    def test_unrecognized_json_exits(self, tmp_path):
-        from ult3edit.shapes import cmd_import
-        path = os.path.join(str(tmp_path), 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(bytearray(2048))
-        jpath = os.path.join(str(tmp_path), 'bad.json')
-        with open(jpath, 'w') as f:
-            json.dump({'random_key': 123}, f)
-        args = argparse.Namespace(file=path, json_file=jpath,
-                                  dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_import(args)
-
-
-class TestShapesEditStringErrors:
-    """Test shapes cmd_edit_string error paths."""
-
-    def _make_overlay(self, tmp_path, text='HELLO'):
-        data = bytearray(b'\x60' * 16)
-        data += bytes([0x20, 0xBA, 0x46])
-        for ch in text:
-            data.append(ord(ch) | 0x80)
-        data.append(0x00)
-        data += bytearray(b'\x60' * 16)
-        path = os.path.join(str(tmp_path), 'SHP0')
-        with open(path, 'wb') as f:
-            f.write(data)
-        return path
-
-    def test_non_overlay_exits(self, tmp_path):
-        """cmd_edit_string on a SHPS file exits with error."""
-        from ult3edit.shapes import cmd_edit_string
-        path = os.path.join(str(tmp_path), 'SHPS')
-        with open(path, 'wb') as f:
-            f.write(bytearray(2048))
-        args = argparse.Namespace(file=path, offset=0, text='X',
-                                  dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit_string(args)
-
-    def test_bad_offset_exits(self, tmp_path):
-        """cmd_edit_string with nonexistent offset exits."""
-        from ult3edit.shapes import cmd_edit_string
-        path = self._make_overlay(tmp_path)
-        args = argparse.Namespace(file=path, offset=9999, text='X',
-                                  dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit_string(args)
-
-    def test_text_too_long_exits(self, tmp_path):
-        """cmd_edit_string with text longer than slot exits."""
-        from ult3edit.shapes import cmd_edit_string
-        path = self._make_overlay(tmp_path, text='HI')
-        args = argparse.Namespace(file=path, offset=19, text='THIS IS WAY TOO LONG',
-                                  dry_run=False, backup=False, output=None)
-        with pytest.raises(SystemExit):
-            cmd_edit_string(args)
-
-
 class TestSpecialImportMetadataBackcompat:
     """Test special cmd_import accepts old 'metadata' key."""
 
@@ -15792,19 +10858,6 @@ class TestValidateMonsterEmpty:
         attrs = [0] * 10
         m = Monster(attrs, 0)
         assert validate_monster(m) == []
-
-
-class TestShapesCompileNoTiles:
-    """Test shapes cmd_compile_tiles exits when .tiles file has no tiles."""
-
-    def test_empty_source_exits(self, tmp_path):
-        from ult3edit.shapes import cmd_compile_tiles
-        src = os.path.join(str(tmp_path), 'empty.tiles')
-        with open(src, 'w') as f:
-            f.write('# Just a comment\n')
-        args = argparse.Namespace(source=src, output=None, format='binary')
-        with pytest.raises(SystemExit):
-            cmd_compile_tiles(args)
 
 
 class TestMapDecompileUnknownBytes:
@@ -15910,7 +10963,6 @@ class TestMapCompileRowPadding:
 
     def test_short_overworld_row_padded_with_grass(self, tmp_path):
         from ult3edit.map import cmd_compile
-        from ult3edit.constants import TILES
         # Create a .map file with one short row
         src = os.path.join(str(tmp_path), 'test.map')
         # Use '.' which is Grass (0x04) for the first few chars, then short
@@ -15945,18 +10997,6 @@ class TestMapCompileRowPadding:
         assert data[5] == 0x00
 
 
-class TestSoundFileDescriptions:
-    """Test that SOSA/SOSM have correct descriptions."""
-
-    def test_sosa_description(self):
-        from ult3edit.sound import SOUND_FILES
-        assert 'map state' in SOUND_FILES['SOSA']['description'].lower()
-
-    def test_sosm_description(self):
-        from ult3edit.sound import SOUND_FILES
-        assert 'monster' in SOUND_FILES['SOSM']['description'].lower()
-
-
 class TestBcd16Docstring:
     """Test bcd16_to_int decodes correctly (verifying fixed docstring)."""
 
@@ -15978,40 +11018,6 @@ class TestBcd16Docstring:
 # ============================================================================
 
 
-class TestShapesCmdViewTile:
-    """Test shapes cmd_view with --tile N on a charset file."""
-
-    def test_view_single_tile(self, tmp_path, capsys):
-        from ult3edit.shapes import cmd_view
-        path = os.path.join(str(tmp_path), 'SHPS')
-        # Create a valid SHPS file (2048 bytes)
-        data = bytearray(2048)
-        # Put some nonzero data in tile 0 (glyphs 0-3, each 8 bytes)
-        for i in range(32):
-            data[i] = 0xAA
-        with open(path, 'wb') as f:
-            f.write(data)
-        args = argparse.Namespace(
-            path=path, json=False, output=None, tile=0)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'Tile' in out or 'tile' in out
-
-
-class TestShapesDecompileTooSmall:
-    """Test decompile_shps raises ValueError for too-small file."""
-
-    def test_truncated_raises(self):
-        from ult3edit.shapes import decompile_shps
-        with pytest.raises(ValueError, match='too small'):
-            decompile_shps(bytes(1024))
-
-    def test_exact_size_ok(self):
-        from ult3edit.shapes import decompile_shps
-        result = decompile_shps(bytes(2048))
-        assert '# Tile' in result
-
-
 class TestMapOverviewPreview:
     """Test cmd_overview with --preview flag."""
 
@@ -16028,72 +11034,6 @@ class TestMapOverviewPreview:
         cmd_overview(args)
         out = capsys.readouterr().out
         assert 'Sosaria' in out or 'scaled' in out.lower()
-
-
-class TestSoundCmdViewDir:
-    """Test sound cmd_view directory mode with actual files present."""
-
-    def test_dir_text_mode(self, tmp_path, capsys):
-        from ult3edit.sound import cmd_view
-        # Create an MBS-sized file (5456 bytes)
-        mbs_path = os.path.join(str(tmp_path), 'MBS')
-        with open(mbs_path, 'wb') as f:
-            f.write(bytearray(5456))
-        args = argparse.Namespace(
-            path=str(tmp_path), json=False, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'MBS' in out
-
-    def test_dir_json_mode(self, tmp_path, capsys):
-        from ult3edit.sound import cmd_view
-        mbs_path = os.path.join(str(tmp_path), 'MBS')
-        with open(mbs_path, 'wb') as f:
-            f.write(bytearray(5456))
-        args = argparse.Namespace(
-            path=str(tmp_path), json=True, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        result = json.loads(out)
-        assert 'MBS' in result
-        assert result['MBS']['size'] == 5456
-
-
-class TestSoundCmdViewSingleMBS:
-    """Test sound cmd_view on a single MBS file with structured output."""
-
-    def test_mbs_file_view(self, tmp_path, capsys):
-        from ult3edit.sound import cmd_view
-        path = os.path.join(str(tmp_path), 'MBS')
-        # Create MBS with some AY register writes (reg 0-13 are valid)
-        data = bytearray(5456)
-        # Put valid register write pairs: register, value
-        data[0] = 0  # register 0
-        data[1] = 0x42  # value
-        data[2] = 7  # register 7 (mixer)
-        data[3] = 0x38  # value
-        with open(path, 'wb') as f:
-            f.write(data)
-        args = argparse.Namespace(
-            path=path, json=False, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'MBS' in out or 'Mockingboard' in out
-
-
-class TestSoundCmdViewUnknown:
-    """Test sound cmd_view on an unrecognized file type."""
-
-    def test_unknown_file_type(self, tmp_path, capsys):
-        from ult3edit.sound import cmd_view
-        path = os.path.join(str(tmp_path), 'MYSTERY')
-        with open(path, 'wb') as f:
-            f.write(bytearray(999))
-        args = argparse.Namespace(
-            path=path, json=False, output=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'Unknown' in out or 'MYSTERY' in out
 
 
 class TestDiffFileDispatchCombat:
@@ -16296,7 +11236,6 @@ class TestMapCmdFindDungeon:
     """Test map cmd_find with dungeon-sized file."""
 
     def test_find_tile_in_dungeon(self, tmp_path, capsys):
-        from ult3edit.map import cmd_find
         # Create dungeon (2048 bytes, 8 levels x 16x16)
         data = bytearray(2048)
         data[0] = 0x01  # Wall at level 0, (0,0)
@@ -16333,23 +11272,6 @@ class TestCombatImportDoubleWrite:
             result = f.read()
         # descriptor.block1 overwrites padding.pre_monster
         assert result[0x79] == 0x22
-
-
-class TestShapesCmdViewBinaryFormat:
-    """Test shapes cmd_view on a non-charset, non-overlay file (binary hex dump)."""
-
-    def test_binary_hex_dump(self, tmp_path, capsys):
-        from ult3edit.shapes import cmd_view
-        # Create a file that doesn't match any known format
-        # Size not 2048 (SHPS), name not SHP0-7, not TEXT/1024
-        path = os.path.join(str(tmp_path), 'UNKNOWN')
-        with open(path, 'wb') as f:
-            f.write(bytearray(512))
-        args = argparse.Namespace(
-            path=path, json=False, output=None, tile=None)
-        cmd_view(args)
-        out = capsys.readouterr().out
-        assert 'Binary' in out or '00' in out
 
 
 class TestRosterNameNonAscii:
@@ -16406,22 +11328,6 @@ class TestDiffDetectMapNoSizeCheck:
         with open(path, 'wb') as f:
             f.write(bytearray(10))
         assert detect_file_type(path) == 'TLKA'
-
-
-class TestShapesParseHeaderAmbiguity:
-    """Test that _TILE_HEADER_RE matches before comment skip in parse_tiles_text."""
-
-    def test_tile_header_comment_treated_as_header(self):
-        from ult3edit.shapes import parse_tiles_text
-        # A comment that looks like a tile header is treated as a header
-        text = '# Tile 0x10: Some comment\n'
-        # Add 8 pixel rows for tile 0x10 (GLYPH_HEIGHT=8)
-        for _ in range(8):
-            text += '........\n'
-        tiles = parse_tiles_text(text)
-        # The comment is parsed as a header for tile 0x10
-        indices = [idx for idx, _ in tiles]
-        assert 0x10 in indices
 
 
 # ============================================================================
@@ -16967,58 +11873,6 @@ class TestSpecialConstantsImportable:
         assert sp.SPECIAL_META_SIZE == SPECIAL_META_SIZE
 
 
-class TestShapesCompileJsonStructure:
-    """shapes.py: compile JSON groups glyphs by tile (4 frames per tile)."""
-
-    def test_compile_json_has_tile_groups(self, tmp_path):
-        """Compile 8 glyphs → 2 tiles, verify JSON has tile_id and frames."""
-        from ult3edit.shapes import cmd_compile_tiles
-        # Create a .tiles file with 2 tiles (8 glyphs, indices 0-7)
-        lines = []
-        for idx in range(8):
-            lines.append(f'# Glyph 0x{idx:02X}')
-            for row in range(8):
-                lines.append('#.#.#.#' if row % 2 == 0 else '.#.#.#.')
-            lines.append('')
-        src = tmp_path / 'test.tiles'
-        src.write_text('\n'.join(lines))
-        out = tmp_path / 'tiles.json'
-        args = argparse.Namespace(
-            source=str(src), output=str(out), format='json')
-        cmd_compile_tiles(args)
-        data = json.loads(out.read_text())
-        assert 'tiles' in data
-        # Should have 2 tile groups (0x00 and 0x04)
-        assert len(data['tiles']) == 2
-        # Each tile has tile_id, name, and frames
-        t0 = data['tiles'][0]
-        assert 'tile_id' in t0
-        assert 'name' in t0
-        assert 'frames' in t0
-        assert t0['tile_id'] == 0
-        assert len(t0['frames']) == 4  # 4 animation frames per tile
-
-    def test_compile_json_frame_indices(self, tmp_path):
-        """Verify frame indices are sequential within each tile group."""
-        from ult3edit.shapes import cmd_compile_tiles
-        lines = []
-        for idx in range(4):
-            lines.append(f'# Glyph 0x{idx:02X}')
-            for _ in range(8):
-                lines.append('#######')
-            lines.append('')
-        src = tmp_path / 'test.tiles'
-        src.write_text('\n'.join(lines))
-        out = tmp_path / 'tiles.json'
-        args = argparse.Namespace(
-            source=str(src), output=str(out), format='json')
-        cmd_compile_tiles(args)
-        data = json.loads(out.read_text())
-        frames = data['tiles'][0]['frames']
-        indices = [f['index'] for f in frames]
-        assert indices == [0, 1, 2, 3]
-
-
 class TestDiffMapDungeonLevelFormat:
     """diff.py: dungeon map diffs show Level N (X, Y) format."""
 
@@ -17092,57 +11946,6 @@ class TestVerifySizeWarnings:
         assert len(size_warns) == 1
         assert '100' in size_warns[0]
         assert '1280' in size_warns[0]
-
-
-class TestNameCompilerTail:
-    """name_compiler.py: tail extraction preserves original ULT3 tail."""
-
-    def test_compile_preserves_tail(self, tmp_path):
-        """Shorter names list should preserve tail data from original."""
-        sys.path.insert(0, os.path.join(
-            os.path.dirname(__file__), '..', 'conversions', 'tools'))
-        try:
-            from name_compiler import compile_names
-        finally:
-            sys.path.pop(0)
-        # Create names and tail data
-        names = ['WATER', 'GRASS', 'FOREST']
-        tail = bytes([0xAA, 0xBB, 0xCC])
-        result = compile_names(names, tail_data=tail)
-        assert len(result) == 921
-        # The tail bytes should be preserved somewhere after the encoded names
-        # Encoded: "WATER\0GRASS\0FOREST\0" = 5+1+5+1+6+1 = 19 bytes (high-ASCII)
-        assert 0xAA in result[19:]
-        assert 0xBB in result[19:]
-        assert 0xCC in result[19:]
-
-    def test_compile_budget_exceeded_raises(self):
-        """Names exceeding budget should raise ValueError."""
-        sys.path.insert(0, os.path.join(
-            os.path.dirname(__file__), '..', 'conversions', 'tools'))
-        try:
-            from name_compiler import validate_names, NAME_TABLE_SIZE, TAIL_RESERVE
-        finally:
-            sys.path.pop(0)
-        # Create names that are way too big
-        big_names = ['A' * 50] * 50  # 50 names x 51 bytes each = 2550 bytes
-        size, budget, valid = validate_names(big_names)
-        assert not valid
-        assert size > budget
-
-
-class TestSoundModuleDocstring:
-    """sound.py: module docstring describes SOSA/SOSM correctly."""
-
-    def test_sosa_description(self):
-        from ult3edit.sound import SOUND_FILES
-        desc = SOUND_FILES['SOSA']['description']
-        assert 'map' in desc.lower() or 'overworld' in desc.lower()
-
-    def test_sosm_description(self):
-        from ult3edit.sound import SOUND_FILES
-        desc = SOUND_FILES['SOSM']['description']
-        assert 'monster' in desc.lower() or 'overworld' in desc.lower()
 
 
 class TestRosterNoDeadImport:

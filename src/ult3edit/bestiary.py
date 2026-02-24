@@ -23,7 +23,7 @@ from .constants import (
     MON_ABIL1_TELEPORT, MON_ABIL1_DIVIDE,
     MON_ABIL2_RESISTANT,
     MON_TERRAIN, MON_LETTERS, MONSTER_NAMES, MONSTER_NAMES_REVERSE,
-    MON_GROUP_NAMES, TILES,
+    TILES,
 )
 from .fileutil import resolve_game_file, backup_file, hex_int
 from .json_export import export_json
@@ -283,7 +283,7 @@ def cmd_dump(args) -> None:
         hex_str = ' '.join(f'{data[offset+i]:02X}' for i in range(MON_MONSTERS_PER_FILE))
         print(f"    {MON_ATTR_NAMES[row]:>10s}: {hex_str}")
 
-    print(f"\n  Per-monster view:\n")
+    print("\n  Per-monster view:\n")
     for m in monsters:
         m.display(compact=False)
 

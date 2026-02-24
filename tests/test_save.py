@@ -2,12 +2,11 @@
 
 import argparse
 import os
-import pytest
 
 from ult3edit.save import PartyState, cmd_edit, validate_party_state
 from ult3edit.constants import (
     PRTY_FILE_SIZE, PRTY_OFF_TRANSPORT, PRTY_OFF_PARTY_SIZE,
-    PRTY_OFF_LOCATION, PRTY_OFF_SAVED_X, PRTY_OFF_SENTINEL,
+    PRTY_OFF_LOCATION, PRTY_OFF_SENTINEL,
     PRTY_OFF_SLOT_IDS,
 )
 
@@ -189,7 +188,8 @@ class TestPlrsImport:
 
     def test_import_plrs_name(self, tmp_dir, sample_prty_bytes, sample_character_bytes):
         """Import should update character name in PLRS."""
-        import json, types
+        import json
+        import types
         from ult3edit.save import cmd_import as save_import
         from ult3edit.roster import Character
         from ult3edit.constants import CHAR_RECORD_SIZE
@@ -210,7 +210,8 @@ class TestPlrsImport:
 
     def test_import_plrs_stats(self, tmp_dir, sample_prty_bytes, sample_character_bytes):
         """Import should update character stats in PLRS."""
-        import json, types
+        import json
+        import types
         from ult3edit.save import cmd_import as save_import
         from ult3edit.roster import Character
         from ult3edit.constants import CHAR_RECORD_SIZE
@@ -233,7 +234,8 @@ class TestPlrsImport:
 
     def test_import_plrs_dry_run(self, tmp_dir, sample_prty_bytes, sample_character_bytes):
         """Dry run should not write PLRS changes."""
-        import json, types
+        import json
+        import types
         from ult3edit.save import cmd_import as save_import
         plrs_path = self._setup_game_dir(tmp_dir, sample_prty_bytes, sample_character_bytes)
         with open(plrs_path, 'rb') as f:
@@ -253,7 +255,8 @@ class TestPlrsImport:
 
     def test_import_plrs_missing_file(self, tmp_dir, sample_prty_bytes):
         """Missing PLRS file should skip gracefully."""
-        import json, types
+        import json
+        import types
         from ult3edit.save import cmd_import as save_import
         # Only write PRTY, no PLRS
         prty_path = os.path.join(tmp_dir, 'PRTY#060000')
@@ -272,7 +275,8 @@ class TestPlrsImport:
 
     def test_import_plrs_multiple_slots(self, tmp_dir, sample_prty_bytes, sample_character_bytes):
         """Import should update multiple PLRS slots."""
-        import json, types
+        import json
+        import types
         from ult3edit.save import cmd_import as save_import
         from ult3edit.roster import Character
         from ult3edit.constants import CHAR_RECORD_SIZE

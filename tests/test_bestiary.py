@@ -3,18 +3,14 @@
 import argparse
 import json
 import os
-import pytest
 
 from ult3edit.bestiary import (
-    Monster, load_mon_file, save_mon_file, cmd_edit, cmd_import, _apply_edits,
-    validate_monster,
+    Monster, load_mon_file, save_mon_file, cmd_edit, cmd_import, validate_monster,
 )
 from ult3edit.constants import (
-    MON_FILE_SIZE, MON_MONSTERS_PER_FILE,
+    MON_MONSTERS_PER_FILE,
     MON_FLAG1_UNDEAD, MON_FLAG1_RANGED, MON_FLAG1_MAGIC_USER, MON_FLAG1_BOSS,
-    MON_ABIL1_POISON, MON_ABIL1_SLEEP, MON_ABIL1_NEGATE,
-    MON_ABIL1_TELEPORT, MON_ABIL1_DIVIDE,
-    MON_ABIL2_RESISTANT,
+    MON_ABIL1_POISON, MON_ABIL1_TELEPORT, MON_ABIL2_RESISTANT,
 )
 
 
@@ -419,7 +415,7 @@ class TestDryRun:
 def load_mon_file_from_bytes(data: bytes):
     """Helper to load monsters directly from bytes without a file."""
     from ult3edit.bestiary import Monster
-    from ult3edit.constants import MON_ATTR_COUNT, MON_MONSTERS_PER_FILE
+    from ult3edit.constants import MON_ATTR_COUNT
 
     monsters = []
     for i in range(MON_MONSTERS_PER_FILE):

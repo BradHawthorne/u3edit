@@ -554,7 +554,7 @@ def cmd_export(args) -> None:
 
     fmt = detect_format(data, args.file)
     if fmt['type'] != 'charset':
-        print(f"Error: PNG export only supported for charset files",
+        print("Error: PNG export only supported for charset files",
               file=sys.stderr)
         sys.exit(1)
 
@@ -643,8 +643,8 @@ def cmd_edit(args) -> None:
             print(f"Warning: Glyph {glyph_idx} overlaps embedded code "
                   f"region at 0x{code_start:04X}-0x{code_end:04X}",
                   file=sys.stderr)
-            print(f"  This region contains executable code that must be "
-                  f"preserved.", file=sys.stderr)
+            print("  This region contains executable code that must be "
+                  "preserved.", file=sys.stderr)
 
     old_bytes = bytes(data[offset:offset + GLYPH_SIZE])
     print(f"Glyph {glyph_idx} (offset 0x{offset:04X}):")

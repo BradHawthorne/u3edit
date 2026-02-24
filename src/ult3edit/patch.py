@@ -277,7 +277,7 @@ def cmd_edit(args) -> None:
 
     info = identify_binary(data, args.file)
     if not info:
-        print(f"Error: Not a recognized engine binary", file=sys.stderr)
+        print("Error: Not a recognized engine binary", file=sys.stderr)
         sys.exit(1)
 
     regions = get_regions(info['name'])

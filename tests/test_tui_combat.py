@@ -1,7 +1,7 @@
 """Tests for CombatEditor data handling (no terminal needed)."""
 
 from ult3edit.constants import (
-    CON_FILE_SIZE, CON_MAP_TILES, CON_MAP_WIDTH,
+    CON_FILE_SIZE, CON_MAP_WIDTH,
     CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET, CON_MONSTER_COUNT,
     CON_PC_X_OFFSET, CON_PC_Y_OFFSET, CON_PC_COUNT,
 )

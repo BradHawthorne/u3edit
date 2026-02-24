@@ -12,7 +12,6 @@ Reads multiple save files from a GAME directory:
 
 import argparse
 import json
-import os
 import sys
 
 from .constants import (
@@ -21,8 +20,7 @@ from .constants import (
     PRTY_OFF_TRANSPORT, PRTY_OFF_PARTY_SIZE, PRTY_OFF_LOCATION,
     PRTY_OFF_SAVED_X, PRTY_OFF_SAVED_Y, PRTY_OFF_SENTINEL,
     PRTY_OFF_SLOT_IDS,
-    PRTY_FILE_SIZE, PLRS_FILE_SIZE, SOSA_FILE_SIZE, SOSM_FILE_SIZE,
-    CHAR_RECORD_SIZE, tile_char,
+    PRTY_FILE_SIZE, CHAR_RECORD_SIZE, tile_char,
     WEAPONS, ARMORS,
 )
 from .fileutil import resolve_single_file, backup_file
@@ -232,15 +230,15 @@ def cmd_view(args) -> None:
         export_json(result, args.output)
         return
 
-    print(f"\n=== Ultima III Save State ===\n")
-    print(f"  --- Party Info (PRTY) ---")
+    print("\n=== Ultima III Save State ===\n")
+    print("  --- Party Info (PRTY) ---")
     party.display()
     if do_validate:
         for w in validate_party_state(party):
             print(f"  WARNING: {w}", file=sys.stderr)
 
     if active_chars:
-        print(f"\n  --- Active Characters (PLRS) ---\n")
+        print("\n  --- Active Characters (PLRS) ---\n")
         for i, char in enumerate(active_chars):
             if not char.is_empty:
                 char.display(i)
@@ -251,7 +249,7 @@ def cmd_view(args) -> None:
     if sosa_path and not args.brief:
         with open(sosa_path, 'rb') as f:
             sosa_data = f.read()
-        print(f"  --- Overworld State (SOSA, scaled 4:1) ---\n")
+        print("  --- Overworld State (SOSA, scaled 4:1) ---\n")
         for y in range(0, 64, 4):
             row = '  '
             for x in range(0, 64, 2):

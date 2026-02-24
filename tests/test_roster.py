@@ -5,7 +5,7 @@ import os
 import pytest
 
 from ult3edit.roster import Character, load_roster, save_roster, cmd_edit, cmd_create
-from ult3edit.constants import CHAR_RECORD_SIZE, CHAR_MARKS_CARDS
+from ult3edit.constants import CHAR_RECORD_SIZE
 
 
 class TestCharacter:

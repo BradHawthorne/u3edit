@@ -1,13 +1,8 @@
 """Tests for EXOD TUI editors (data logic, no terminal needed)."""
 
-import struct
 
 from ult3edit.exod import (
     EXOD_SIZE,
-    GLYPH_COUNT,
-    GLYPH_DATA_SIZE,
-    GLYPH_TABLE_OFFSET,
-    GLYPH_VARIANTS,
     TEXT_CRAWL_OFFSET,
     extract_text_crawl,
 )

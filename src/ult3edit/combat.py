@@ -21,8 +21,7 @@ import os
 import sys
 
 from .constants import (
-    CON_NAMES, CON_LETTERS, CON_FILE_SIZE,
-    CON_MAP_WIDTH, CON_MAP_HEIGHT, CON_MAP_TILES,
+    CON_NAMES, CON_LETTERS, CON_MAP_WIDTH, CON_MAP_HEIGHT, CON_MAP_TILES,
     CON_MONSTER_X_OFFSET, CON_MONSTER_Y_OFFSET, CON_MONSTER_COUNT,
     CON_PC_X_OFFSET, CON_PC_Y_OFFSET, CON_PC_COUNT,
     CON_PADDING1_OFFSET, CON_PADDING1_SIZE,
@@ -214,7 +213,7 @@ def cmd_view(args) -> None:
             cm = CombatMap(data)
             print(f"  CON{letter} - {name}")
             print(cm.render())
-            print(f"  Legend: @ = PC start, m = monster start")
+            print("  Legend: @ = PC start, m = monster start")
             if do_validate:
                 for w in validate_combat_map(cm):
                     print(f"  WARNING: {w}", file=sys.stderr)
@@ -236,7 +235,7 @@ def cmd_view(args) -> None:
         cm = CombatMap(data)
         print(f"\n=== Combat Map: {filename} ({len(data)} bytes) ===\n")
         print(cm.render())
-        print(f"\n  Legend: @ = PC start, m = monster start")
+        print("\n  Legend: @ = PC start, m = monster start")
         if do_validate:
             for w in validate_combat_map(cm):
                 print(f"  WARNING: {w}", file=sys.stderr)

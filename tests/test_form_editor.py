@@ -1,6 +1,5 @@
 """Tests for FormEditorTab, RosterEditor, BestiaryEditor, PartyEditor, DialogEditor."""
 
-import pytest
 
 from ult3edit.tui.form_editor import FormField, FormEditorTab
 

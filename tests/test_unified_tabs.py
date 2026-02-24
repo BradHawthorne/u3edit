@@ -1,6 +1,5 @@
 """Tests for EditorTab, DrillDownTab state management."""
 
-import pytest
 
 from ult3edit.tui.editor_tab import TileEditorTab, DrillDownTab
 from ult3edit.tui.base import EditorState, BaseTileEditor

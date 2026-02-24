@@ -1,6 +1,5 @@
 """TUI party state editor: form-based field editing for PRTY file."""
 
-from ..constants import PRTY_FILE_SIZE
 from ..save import PartyState
 from .form_editor import FormField, FormEditorTab
 
