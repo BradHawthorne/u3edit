@@ -1,6 +1,7 @@
 # ult3edit
 
 [![Tests](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml/badge.svg)](https://github.com/BradHawthorne/ult3edit/actions/workflows/tests.yml)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/BradHawthorne/ult3edit)
 [![PyPI](https://img.shields.io/pypi/v/ult3edit)](https://pypi.org/project/ult3edit/)
 
 A complete data toolkit for **Ultima III: Exodus** (Apple II, 1983).
@@ -633,9 +634,12 @@ Extracted ProDOS files use a `#TTAAAA` suffix encoding file type and aux type:
 ```bash
 pip install -e ".[dev]"
 pytest -v
+
+# With coverage report (100% enforced in CI)
+pytest --cov=ult3edit --cov-report=term-missing
 ```
 
-1903 tests covering all modules with synthesized game data (no real game files needed).
+2512 tests with 100% code coverage. All tests use synthesized game data (no real game files needed).
 
 ## Bug Fixes from Prototype
 

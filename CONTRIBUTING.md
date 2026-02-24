@@ -17,12 +17,15 @@ Python 3.10 is the minimum supported version. Do not use `match` statements, `St
 ## Running Tests
 
 ```bash
-pytest -v                        # Run all 1903 tests
+pytest -v                        # Run all 2512 tests
 pytest tests/test_roster.py      # Run one module
 pytest -v tests/test_bcd.py::TestBcdToInt::test_zero   # Run a single test
+
+# Coverage report (100% enforced in CI)
+pytest --cov=ult3edit --cov-report=term-missing
 ```
 
-All tests must pass before submitting a pull request.
+All tests must pass and 100% code coverage must be maintained before submitting a pull request. New code should include tests — coverage will fail in CI if any lines are left uncovered.
 
 ## Code Style
 
