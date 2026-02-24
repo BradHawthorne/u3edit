@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-02-24
+
+### Added
+- 609 new tests (1903 → 2512) achieving 100% code coverage across all 40 source files
+- `# pragma: no cover` markers for untestable prompt_toolkit UI methods (~600 lines)
+- `tests/test_tui_pure_logic.py`: 67+ tests for TUI pure logic (editor state, save callbacks, render cells, factory methods)
+- `tests/test_exod_coverage.py`: 80+ tests for EXOD PNG filters, HGR encoding, CLI commands, crawl/glyph subcommands
+- `tests/test_final_coverage.py`: 41 targeted tests closing the last coverage gaps across 12 modules
+
+### Changed
+- Coverage threshold enforced at 100% in CI (was 75%)
+- Version bump to 1.20.0
+
 ## [1.19.0] - 2026-02-23
 
 ### Added

@@ -93,6 +93,54 @@ class TestEquipView:
 
 
 # =============================================================================
+# Coverage: equip.py lines 78-87 — main() standalone entry point
+# =============================================================================
+
+
+class TestEquipMain:
+    """Cover lines 78-87: main() standalone entry point."""
+
+    def test_main_view(self, capsys):
+        from ult3edit.equip import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-equip', 'view']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Weapons' in out
+        assert 'Armor' in out
+
+    def test_main_view_json(self, tmp_path, capsys):
+        from ult3edit.equip import main
+        outfile = tmp_path / 'equip.json'
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-equip', 'view', '--json', '--output', str(outfile)]
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        result = json.loads(outfile.read_text())
+        assert 'weapons' in result
+        assert 'armors' in result
+
+    def test_main_no_subcommand(self, capsys):
+        from ult3edit.equip import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-equip']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        err = capsys.readouterr().err
+        assert 'Usage' in err or 'usage' in err.lower() or 'equip' in err.lower()
+
+
+# =============================================================================
 # Spell reference (spell.py)
 # =============================================================================
 

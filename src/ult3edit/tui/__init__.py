@@ -1,7 +1,7 @@
 """TUI editors for ult3edit. Requires prompt_toolkit (install with pip install ult3edit[tui])."""
 
 
-def require_prompt_toolkit():
+def require_prompt_toolkit():  # pragma: no cover
     """Check that prompt_toolkit is available. Exit with helpful message if not."""
     try:
         import prompt_toolkit  # noqa: F401

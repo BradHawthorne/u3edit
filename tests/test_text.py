@@ -631,3 +631,209 @@ class TestTextCmdEditGaps:
         captured = capsys.readouterr()
         assert 'too small' in captured.err or 'Warning' in captured.err
 
+
+# =============================================================================
+# Batch 3: Coverage for text.py uncovered lines
+# =============================================================================
+
+
+class TestTextCmdView:
+    """Cover lines 32-46: cmd_view text and JSON output."""
+
+    def test_view_text_output(self, tmp_path, capsys, sample_text_bytes):
+        from ult3edit.text import cmd_view
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        args = argparse.Namespace(file=path, json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Ultima III Game Text' in out
+        assert 'ULTIMA III' in out
+        assert 'EXODUS' in out
+        assert 'PRESS ANY KEY' in out
+        # Check record index format [  0]
+        assert '[  0]' in out
+
+    def test_view_json_output(self, tmp_path, sample_text_bytes):
+        from ult3edit.text import cmd_view
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        outfile = str(tmp_path / 'text.json')
+        args = argparse.Namespace(file=path, json=True, output=outfile)
+        cmd_view(args)
+        with open(outfile) as f:
+            result = json.load(f)
+        assert 'file' in result
+        assert 'records' in result
+        assert result['records'][0]['text'] == 'ULTIMA III'
+        assert result['records'][0]['index'] == 0
+
+
+class TestTextCmdEditPartialArgs:
+    """Cover lines 58-60, 63-71: cmd_edit with partial args exits,
+    and TUI fallback path (mocked)."""
+
+    def test_record_without_text_exits(self, tmp_path):
+        from ult3edit.text import cmd_edit
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(bytearray(TEXT_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, record=0, text=None,
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+    def test_text_without_record_exits(self, tmp_path):
+        from ult3edit.text import cmd_edit
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(bytearray(TEXT_FILE_SIZE))
+        args = argparse.Namespace(
+            file=path, record=None, text='HELLO',
+            dry_run=False, backup=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_edit(args)
+
+
+class TestTextCmdImportBackup:
+    """Cover line 145: cmd_import with --backup flag."""
+
+    def test_import_creates_backup(self, tmp_path):
+        from ult3edit.text import cmd_import
+        data = bytearray(TEXT_FILE_SIZE)
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = [{'text': 'BACKED UP'}]
+        json_path = str(tmp_path / 'text.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestTextDispatch:
+    """Cover lines 179-183: dispatch routes to all subcommands."""
+
+    def test_dispatch_view(self, tmp_path, capsys, sample_text_bytes):
+        from ult3edit.text import dispatch
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        args = argparse.Namespace(
+            text_command='view', file=path, json=False, output=None)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'ULTIMA III' in out
+
+    def test_dispatch_edit(self, tmp_path, capsys, sample_text_bytes):
+        from ult3edit.text import dispatch
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        out_path = str(tmp_path / 'OUT')
+        args = argparse.Namespace(
+            text_command='edit', file=path, record=0, text='CHANGED',
+            output=out_path, backup=False, dry_run=False)
+        dispatch(args)
+        records = load_text_records(out_path)
+        assert records[0] == 'CHANGED'
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        from ult3edit.text import dispatch
+        data = bytearray(TEXT_FILE_SIZE)
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = [{'text': 'DISPATCHED'}]
+        json_path = str(tmp_path / 'text.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            text_command='import', file=path, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        dispatch(args)
+        records = load_text_records(path)
+        assert records[0] == 'DISPATCHED'
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.text import dispatch
+        args = argparse.Namespace(text_command=None)
+        dispatch(args)
+        err = capsys.readouterr().err
+        assert 'Usage' in err
+
+
+class TestTextMain:
+    """Cover lines 189-218: main() standalone entry point."""
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch, sample_text_bytes):
+        import sys
+        from ult3edit.text import main
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        monkeypatch.setattr(sys, 'argv', ['ult3-text', 'view', path])
+        main()
+        out = capsys.readouterr().out
+        assert 'ULTIMA III' in out
+
+    def test_main_view_json(self, tmp_path, capsys, monkeypatch, sample_text_bytes):
+        import sys
+        from ult3edit.text import main
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        outfile = str(tmp_path / 'text.json')
+        monkeypatch.setattr(sys, 'argv', [
+            'ult3-text', 'view', path, '--json', '-o', outfile])
+        main()
+        with open(outfile) as f:
+            result = json.load(f)
+        assert 'records' in result
+
+    def test_main_edit(self, tmp_path, capsys, monkeypatch, sample_text_bytes):
+        import sys
+        from ult3edit.text import main
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(sample_text_bytes)
+        out_path = str(tmp_path / 'OUT')
+        monkeypatch.setattr(sys, 'argv', [
+            'ult3-text', 'edit', path, '--record', '0',
+            '--text', 'VIA MAIN', '-o', out_path])
+        main()
+        records = load_text_records(out_path)
+        assert records[0] == 'VIA MAIN'
+
+    def test_main_import(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.text import main
+        data = bytearray(TEXT_FILE_SIZE)
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = [{'text': 'MAIN IMPORT'}]
+        json_path = str(tmp_path / 'text.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        monkeypatch.setattr(sys, 'argv', [
+            'ult3-text', 'import', path, json_path, '--dry-run'])
+        main()
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+    def test_main_no_command(self, capsys, monkeypatch):
+        import sys
+        from ult3edit.text import main
+        monkeypatch.setattr(sys, 'argv', ['ult3-text'])
+        main()
+        err = capsys.readouterr().err
+        assert 'Usage' in err
+

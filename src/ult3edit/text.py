@@ -60,15 +60,15 @@ def cmd_edit(args) -> None:
         sys.exit(1)
 
     # TUI fallback
-    from .tui import require_prompt_toolkit
-    require_prompt_toolkit()
-    from .tui.text_editor import TextEditor
+    from .tui import require_prompt_toolkit  # pragma: no cover
+    require_prompt_toolkit()  # pragma: no cover
+    from .tui.text_editor import TextEditor  # pragma: no cover
 
-    with open(args.file, 'rb') as f:
-        data = f.read()
+    with open(args.file, 'rb') as f:  # pragma: no cover
+        data = f.read()  # pragma: no cover
 
-    editor = TextEditor(args.file, data)
-    editor.run()
+    editor = TextEditor(args.file, data)  # pragma: no cover
+    editor.run()  # pragma: no cover
 
 
 def _cmd_edit_record(args, record_idx: int, new_text: str) -> None:

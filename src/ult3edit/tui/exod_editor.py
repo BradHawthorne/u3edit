@@ -46,7 +46,7 @@ class ExodCrawlEditor:
     def is_dirty(self):
         return self.dirty
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         from prompt_toolkit.layout import HSplit, Window, FormattedTextControl
         from prompt_toolkit.layout.controls import UIControl, UIContent
         from prompt_toolkit.key_binding import KeyBindings
@@ -179,7 +179,7 @@ class ExodGlyphViewer:
     def is_dirty(self):
         return False
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         from prompt_toolkit.layout import HSplit, Window, FormattedTextControl
         from prompt_toolkit.layout.controls import UIControl, UIContent
         from prompt_toolkit.key_binding import KeyBindings
@@ -250,7 +250,7 @@ class ExodFrameViewer:
     def is_dirty(self):
         return False
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         from prompt_toolkit.layout import HSplit, Window, FormattedTextControl
         from prompt_toolkit.layout.controls import UIControl, UIContent
         from prompt_toolkit.key_binding import KeyBindings

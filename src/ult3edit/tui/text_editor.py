@@ -66,7 +66,7 @@ class TextEditor:
         self.dirty = False
         self.save_callback = save_callback
 
-    def _build_ui(self, embedded: bool = False):
+    def _build_ui(self, embedded: bool = False):  # pragma: no cover
         """Build the UI container and keybindings.
 
         Args:
@@ -172,7 +172,7 @@ class TextEditor:
 
         return root, kb
 
-    def run(self) -> bool:
+    def run(self) -> bool:  # pragma: no cover
         """Run the full-screen text editor."""
         from prompt_toolkit import Application
         from prompt_toolkit.layout import Layout

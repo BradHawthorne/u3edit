@@ -463,3 +463,185 @@ class TestDdrwCmdEditGaps:
             dry_run=False, backup=False, output=None)
         with pytest.raises(SystemExit):
             cmd_edit(args)
+
+
+# =============================================================================
+# Coverage: cmd_view JSON (lines 112-118), cmd_view perspective vectors
+# display (line 131), cmd_edit with backup (line 182), cmd_edit write
+# (lines 269-271), dispatch routes (lines 269-271, 278-307), main()
+# =============================================================================
+
+
+class TestDdrwCmdViewJsonOutput:
+    """Cover lines 112-118: cmd_view --json with non-zero vectors."""
+
+    def test_view_json_has_all_fields(self, tmp_path):
+        from ult3edit.ddrw import cmd_view, DDRW_VECTOR_OFFSET
+        from ult3edit.constants import DDRW_FILE_SIZE
+        data = bytearray(DDRW_FILE_SIZE)
+        data[DDRW_VECTOR_OFFSET] = 0x10
+        data[DDRW_VECTOR_OFFSET + 1] = 0x20
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(data))
+        outfile = tmp_path / 'ddrw.json'
+        args = argparse.Namespace(
+            path=str(path), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert result['file'] == 'DDRW'
+        assert result['load_addr'] == '$1800'
+        assert result['vectors'][0] == 0x10
+        assert 'tile_records' in result
+        assert 'raw' in result
+
+
+class TestDdrwCmdViewVectors:
+    """Cover line 131: cmd_view text output with non-zero perspective vectors."""
+
+    def test_view_text_with_vectors(self, tmp_path, capsys):
+        from ult3edit.ddrw import cmd_view, DDRW_VECTOR_OFFSET
+        from ult3edit.constants import DDRW_FILE_SIZE
+        data = bytearray(DDRW_FILE_SIZE)
+        # Set non-zero vectors
+        for i in range(8):
+            data[DDRW_VECTOR_OFFSET + i] = i + 1
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            path=str(path), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Perspective vectors' in out
+        assert '8 active' in out
+
+
+class TestDdrwCmdViewTileRecords:
+    """Cover line 131: cmd_view text output with non-zero tile records."""
+
+    def test_view_text_with_tile_records(self, tmp_path, capsys):
+        from ult3edit.ddrw import cmd_view, DDRW_TILE_OFFSET
+        from ult3edit.constants import DDRW_FILE_SIZE
+        data = bytearray(DDRW_FILE_SIZE)
+        # Set a non-zero tile record at offset $400
+        data[DDRW_TILE_OFFSET + 0] = 0x10  # col_start
+        data[DDRW_TILE_OFFSET + 1] = 0x20  # col_end
+        data[DDRW_TILE_OFFSET + 2] = 0x02  # step
+        data[DDRW_TILE_OFFSET + 3] = 0x01  # flags
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(data))
+        args = argparse.Namespace(
+            path=str(path), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Tile records' in out
+        assert '$10' in out  # col_start
+
+
+class TestDdrwCmdEditBackup:
+    """Cover line 182: cmd_edit with --backup creates .bak file."""
+
+    def test_edit_with_backup(self, tmp_path):
+        from ult3edit.ddrw import cmd_edit
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            file=str(path), offset=0, data='FF',
+            output=None, backup=True, dry_run=False)
+        cmd_edit(args)
+        assert (tmp_path / 'DDRW.bak').exists()
+
+
+class TestDdrwDispatchRoutes:
+    """Cover lines 269-271: dispatch routes to edit and import."""
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        from ult3edit.ddrw import dispatch
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        args = argparse.Namespace(
+            ddrw_command='edit',
+            file=str(path), offset=0, data='FF',
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        from ult3edit.ddrw import dispatch
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        jfile = tmp_path / 'ddrw.json'
+        jfile.write_text(json.dumps({'raw': [0] * DDRW_FILE_SIZE}))
+        args = argparse.Namespace(
+            ddrw_command='import',
+            file=str(path), json_file=str(jfile),
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out or 'Import' in out
+
+
+class TestDdrwMain:
+    """Cover lines 278-307: main() standalone entry point."""
+
+    def test_main_view(self, tmp_path, capsys):
+        from ult3edit.ddrw import main
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-ddrw', 'view', str(path)]
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Dungeon Drawing Data' in out
+
+    def test_main_edit_dry_run(self, tmp_path, capsys):
+        from ult3edit.ddrw import main
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-ddrw', 'edit', str(path), '--offset', '0', '--data', 'FF', '--dry-run']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+    def test_main_import_dry_run(self, tmp_path, capsys):
+        from ult3edit.ddrw import main
+        from ult3edit.constants import DDRW_FILE_SIZE
+        path = tmp_path / 'DDRW'
+        path.write_bytes(bytes(DDRW_FILE_SIZE))
+        jfile = tmp_path / 'ddrw.json'
+        jfile.write_text(json.dumps({'raw': [0] * DDRW_FILE_SIZE}))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-ddrw', 'import', str(path), str(jfile), '--dry-run']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Dry run' in out or 'Import' in out
+
+    def test_main_no_subcommand(self, capsys):
+        from ult3edit.ddrw import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-ddrw']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        err = capsys.readouterr().err
+        assert 'Usage' in err or 'usage' in err.lower() or 'ddrw' in err.lower()

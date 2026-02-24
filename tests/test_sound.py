@@ -704,3 +704,227 @@ class TestSoundModuleDocstring:
     def test_sosm_description(self):
         desc = SOUND_FILES['SOSM']['description']
         assert 'monster' in desc.lower() or 'overworld' in desc.lower()
+
+
+# =============================================================================
+# Coverage: hex_dump default length, MBS stream edge cases,
+# cmd_view MBS stream display, cmd_edit, dispatch, main()
+# =============================================================================
+
+class TestHexDumpDefaultLength:
+    """Cover line 94: hex_dump called without explicit length."""
+
+    def test_hex_dump_no_length_arg(self):
+        data = bytes(range(48))
+        lines = hex_dump(data, 0, base_addr=0)
+        assert len(lines) == 3  # 48 bytes / 16 per line
+
+
+class TestMbsStreamElseBranch:
+    """Cover lines 191-192: MBS opcode that is in MBS_OPCODES but not
+    handled by any specific case (impossible in current code, but the
+    catch-all else advances by 1)."""
+
+    def test_fallthrough_opcode_branch(self):
+        """Inject a synthetic opcode to exercise the catch-all else."""
+        from ult3edit.sound import parse_mbs_stream, MBS_OPCODES
+        # Temporarily add a fake opcode so the `else` branch runs
+        MBS_OPCODES[0x86] = ('FAKE', 'Fake opcode')
+        try:
+            data = bytes([0x86, 0x82])  # FAKE then END
+            events = parse_mbs_stream(data)
+            assert events[0]['type'] == 'FAKE'
+            assert events[1]['type'] == 'END'
+        finally:
+            del MBS_OPCODES[0x86]
+
+
+class TestSoundCmdViewMbsStreamDisplay:
+    """Cover lines 291, 300-314: cmd_view MBS with music stream events
+    including WRITE, TEMPO/MIXER, JUMP, END, and other types."""
+
+    def test_mbs_stream_all_event_types(self, tmp_path, capsys):
+        from ult3edit.sound import cmd_view
+        from ult3edit.constants import MBS_FILE_SIZE
+        data = bytearray(MBS_FILE_SIZE)
+        # Build a stream with all event types at offset 0
+        stream = bytes([
+            0x84, 0x06,       # TEMPO
+            0x85, 0x38,       # MIXER
+            0x83, 0x07, 0xFF, # WRITE R7=$FF
+            0x01, 0x02,       # NOTE x2
+            0x81, 0x00, 0x9A, # JUMP $9A00
+            0x82,             # END
+        ])
+        data[:len(stream)] = stream
+        path = os.path.join(str(tmp_path), 'MBS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(path=path, json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'TEMPO' in out or 'WRITE' in out or 'JUMP' in out or 'END' in out
+
+    def test_mbs_stream_try_offset_break(self, tmp_path, capsys):
+        """Cover line 291: try_offset >= len(data) breaks loop.
+        Use a 128-byte file named MBS so offsets 0x100+ exceed length."""
+        from ult3edit.sound import cmd_view
+        # 128 bytes identified as MBS by filename, not size
+        data = bytearray(128)
+        # Put an invalid byte at offset 0 so stream parsing stops immediately
+        data[0] = 0x50  # unknown byte, stops parsing (< 4 events)
+        path = os.path.join(str(tmp_path), 'MBS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(path=path, json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'MBS' in out or 'Mockingboard' in out
+
+    def test_mbs_stream_loop_opcode_display(self, tmp_path, capsys):
+        """Cover line 314: display LOOP type (else branch)."""
+        from ult3edit.sound import cmd_view
+        from ult3edit.constants import MBS_FILE_SIZE
+        data = bytearray(MBS_FILE_SIZE)
+        # Build a stream with LOOP + enough notes + END to have >= 4 events
+        stream = bytes([
+            0x80,             # LOOP
+            0x01, 0x02, 0x03, # NOTE x3
+            0x82,             # END
+        ])
+        data[:len(stream)] = stream
+        path = os.path.join(str(tmp_path), 'MBS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(path=path, json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'LOOP' in out or 'Music stream' in out
+
+
+class TestSoundCmdEditWriteAndBackup:
+    """Cover lines 452-454: dispatch routes to cmd_edit."""
+
+    def test_edit_writes_to_output(self, tmp_path, capsys):
+        from ult3edit.sound import cmd_edit
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        out = tmp_path / 'OUT'
+        args = argparse.Namespace(
+            file=str(src), offset=0, data='AABB',
+            output=str(out), backup=False, dry_run=False)
+        cmd_edit(args)
+        result = out.read_bytes()
+        assert result[0] == 0xAA
+        assert result[1] == 0xBB
+        captured = capsys.readouterr().out
+        assert 'Updated' in captured
+
+    def test_import_with_backup(self, tmp_path):
+        from ult3edit.sound import cmd_import
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        jfile = tmp_path / 'data.json'
+        jfile.write_text(json.dumps({'raw': [0] * SOSA_FILE_SIZE}))
+        args = argparse.Namespace(
+            file=str(src), json_file=str(jfile),
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        assert (tmp_path / 'SOSA.bak').exists()
+
+
+class TestSoundDispatchRoutes:
+    """Cover lines 452-454: dispatch routes to edit and import."""
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        from ult3edit.sound import dispatch
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        args = argparse.Namespace(
+            sound_command='edit',
+            file=str(src), offset=0, data='FF',
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        from ult3edit.sound import dispatch
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        jfile = tmp_path / 'data.json'
+        jfile.write_text(json.dumps({'raw': [0] * SOSA_FILE_SIZE}))
+        args = argparse.Namespace(
+            sound_command='import',
+            file=str(src), json_file=str(jfile),
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out or 'Import' in out
+
+
+class TestSoundMain:
+    """Cover lines 461-492: main() standalone entry point."""
+
+    def test_main_view(self, tmp_path, capsys):
+        from ult3edit.sound import main
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-sound', 'view', str(src)]
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'SOSA' in out or '4096' in out
+
+    def test_main_edit_dry_run(self, tmp_path, capsys):
+        from ult3edit.sound import main
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-sound', 'edit', str(src), '--offset', '0', '--data', 'FF', '--dry-run']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+    def test_main_import_dry_run(self, tmp_path, capsys):
+        from ult3edit.sound import main
+        from ult3edit.constants import SOSA_FILE_SIZE
+        src = tmp_path / 'SOSA'
+        src.write_bytes(bytes(SOSA_FILE_SIZE))
+        jfile = tmp_path / 'data.json'
+        jfile.write_text(json.dumps({'raw': [0] * SOSA_FILE_SIZE}))
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-sound', 'import', str(src), str(jfile), '--dry-run']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Dry run' in out or 'Import' in out
+
+    def test_main_no_subcommand(self, capsys):
+        from ult3edit.sound import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-sound']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        err = capsys.readouterr().err
+        assert 'Usage' in err or 'usage' in err.lower() or 'sound' in err.lower()

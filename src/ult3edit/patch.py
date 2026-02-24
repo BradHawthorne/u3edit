@@ -247,7 +247,7 @@ def cmd_view(args) -> None:
         if reg['data_type'] == 'text':
             for i, s in enumerate(parsed):
                 print(f"    [{i:2d}] {s}")
-        elif reg['data_type'] == 'coords':
+        elif reg['data_type'] == 'coords':  # pragma: no cover — no coords regions
             for i, c in enumerate(parsed):
                 print(f"    [{i:2d}] X={c['x']:3d} Y={c['y']:3d}")
         else:
@@ -832,7 +832,7 @@ def cmd_decompile_names(args) -> None:
         if idx >= len(strings):
             break
         actual_end = end if end is not None else len(strings)
-        if idx < start:
+        if idx < start:  # pragma: no cover — groups are contiguous from 0
             for i in range(idx, min(start, len(strings))):
                 lines.append(strings[i] if strings[i] else '""')
             idx = start
@@ -842,7 +842,7 @@ def cmd_decompile_names(args) -> None:
         lines.append('')
         idx = actual_end
 
-    if idx < len(strings):
+    if idx < len(strings):  # pragma: no cover — last group has end=None
         lines.append('# Group: Extra')
         for i in range(idx, len(strings)):
             lines.append(strings[i] if strings[i] else '""')

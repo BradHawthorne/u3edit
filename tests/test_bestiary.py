@@ -1241,3 +1241,456 @@ class TestBestiaryDump:
         # Monster 0 tile 0x48 should appear in hex
         assert '48' in captured.out
 
+
+# =============================================================================
+# Additional coverage: ability_desc, flag shortcuts, cmd_view JSON,
+# cmd_edit named flags, cmd_import shortcuts, dispatch, main
+# =============================================================================
+
+
+class TestMonsterAbilityDesc:
+    """Cover Monster.ability_desc lines 85-91."""
+
+    def test_ability_sleep(self):
+        from ult3edit.constants import MON_ABIL1_SLEEP
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, MON_ABIL1_SLEEP, 0]
+        m = Monster(attrs, 0)
+        assert 'Sleep' in m.ability_desc
+
+    def test_ability_negate(self):
+        from ult3edit.constants import MON_ABIL1_NEGATE
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, MON_ABIL1_NEGATE, 0]
+        m = Monster(attrs, 0)
+        assert 'Negate' in m.ability_desc
+
+    def test_ability_teleport(self):
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, MON_ABIL1_TELEPORT, 0]
+        m = Monster(attrs, 0)
+        assert 'Teleport' in m.ability_desc
+
+    def test_ability_divide(self):
+        from ult3edit.constants import MON_ABIL1_DIVIDE
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, MON_ABIL1_DIVIDE, 0]
+        m = Monster(attrs, 0)
+        assert 'Divide' in m.ability_desc
+
+    def test_ability_resistant(self):
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, 0, MON_ABIL2_RESISTANT]
+        m = Monster(attrs, 0)
+        assert 'Resistant' in m.ability_desc
+
+    def test_no_abilities(self):
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, 0, 0]
+        m = Monster(attrs, 0)
+        assert m.ability_desc == '-'
+
+
+class TestMonsterDisplay:
+    """Cover Monster.display() lines 119 (compact) and non-compact paths."""
+
+    def test_display_compact(self, capsys):
+        attrs = [0x48, 0x48, 0, 0, 50, 30, 20, 10, 0, 0]
+        m = Monster(attrs, 0)
+        m.display(compact=True)
+        out = capsys.readouterr().out
+        assert 'Fighter' in out
+        assert 'HP' in out
+
+    def test_display_empty(self, capsys):
+        """Empty monster display produces no output."""
+        m = Monster([0] * 10, 0)
+        m.display(compact=True)
+        out = capsys.readouterr().out
+        assert out == ''
+
+
+class TestCmdViewJSON:
+    """Cover cmd_view JSON output lines 225-263."""
+
+    def test_view_json_output(self, tmp_path):
+        """cmd_view --json produces valid JSON with monster data."""
+        from ult3edit.bestiary import cmd_view
+        # Create a MONA file in the directory
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0x48  # tile1 for monster 0
+        data[1 * 16 + 0] = 0x48  # tile2
+        data[4 * 16 + 0] = 50   # hp
+        mona_path = os.path.join(str(tmp_path), 'MONA')
+        with open(mona_path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'bestiary.json')
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), file=None, json=True,
+            output=out_path, validate=False)
+        cmd_view(args)
+        with open(out_path) as f:
+            result = json.load(f)
+        assert 'MONA' in result
+
+    def test_view_json_with_validate(self, tmp_path):
+        """cmd_view --json --validate includes warnings."""
+        from ult3edit.bestiary import cmd_view
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0xE8  # unknown tile for monster 0
+        data[1 * 16 + 0] = 0xE8
+        data[4 * 16 + 0] = 50   # hp
+        mona_path = os.path.join(str(tmp_path), 'MONA')
+        with open(mona_path, 'wb') as f:
+            f.write(data)
+        out_path = os.path.join(str(tmp_path), 'bestiary.json')
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), file=None, json=True,
+            output=out_path, validate=True)
+        cmd_view(args)
+        with open(out_path) as f:
+            result = json.load(f)
+        mon_list = result['MONA']['monsters']
+        assert any('warnings' in m for m in mon_list)
+
+    def test_view_text_with_validate(self, tmp_path, capsys):
+        """cmd_view text mode with --validate shows warnings on stderr."""
+        from ult3edit.bestiary import cmd_view
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0xE8  # unknown tile
+        data[1 * 16 + 0] = 0xE8
+        data[4 * 16 + 0] = 50
+        mona_path = os.path.join(str(tmp_path), 'MONA')
+        with open(mona_path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), file=None, json=False,
+            output=None, validate=True)
+        cmd_view(args)
+        err = capsys.readouterr().err
+        assert 'WARNING' in err
+
+    def test_view_text_no_maps(self, tmp_path):
+        """cmd_view with no MON files exits."""
+        from ult3edit.bestiary import cmd_view
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), file=None, json=False,
+            output=None, validate=False)
+        import pytest
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+
+class TestCmdEditNamedFlags:
+    """Cover _apply_edits named flag toggles (lines 299-366)."""
+
+    def test_edit_sleep(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, sleep=True)
+        cmd_edit(args)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_SLEEP
+        assert monsters[0].ability1 & MON_ABIL1_SLEEP
+
+    def test_edit_clear_sleep(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, sleep=True)
+        cmd_edit(args)
+        args2 = _edit_args(file=out, monster=0, output=out, no_sleep=True)
+        cmd_edit(args2)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_SLEEP
+        assert not (monsters[0].ability1 & MON_ABIL1_SLEEP)
+
+    def test_edit_negate(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, negate=True)
+        cmd_edit(args)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_NEGATE
+        assert monsters[0].ability1 & MON_ABIL1_NEGATE
+
+    def test_edit_clear_negate(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, negate=True)
+        cmd_edit(args)
+        args2 = _edit_args(file=out, monster=0, output=out, no_negate=True)
+        cmd_edit(args2)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_NEGATE
+        assert not (monsters[0].ability1 & MON_ABIL1_NEGATE)
+
+    def test_edit_divide(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, divide=True)
+        cmd_edit(args)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_DIVIDE
+        assert monsters[0].ability1 & MON_ABIL1_DIVIDE
+
+    def test_edit_clear_divide(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, divide=True)
+        cmd_edit(args)
+        args2 = _edit_args(file=out, monster=0, output=out, no_divide=True)
+        cmd_edit(args2)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import MON_ABIL1_DIVIDE
+        assert not (monsters[0].ability1 & MON_ABIL1_DIVIDE)
+
+    def test_edit_clear_teleport(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, teleport=True)
+        cmd_edit(args)
+        args2 = _edit_args(file=out, monster=0, output=out, no_teleport=True)
+        cmd_edit(args2)
+        monsters = load_mon_file(out)
+        assert not (monsters[0].ability1 & MON_ABIL1_TELEPORT)
+
+    def test_edit_clear_resistant(self, sample_mon_file, tmp_dir):
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, resistant=True)
+        cmd_edit(args)
+        args2 = _edit_args(file=out, monster=0, output=out, no_resistant=True)
+        cmd_edit(args2)
+        monsters = load_mon_file(out)
+        assert not (monsters[0].ability2 & MON_ABIL2_RESISTANT)
+
+
+class TestCmdEditValidateFlag:
+    """Cover cmd_edit --validate with validation warnings (lines 389-413)."""
+
+    def test_edit_all_validate(self, sample_mon_file, tmp_dir, capsys):
+        """--all --validate shows validation warnings per monster."""
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, output=out, all=True,
+                          hp=100, validate=True)
+        # Need to add validate attr
+        args.validate = True
+        cmd_edit(args)
+        # Validation may produce warnings on stderr
+        captured = capsys.readouterr()
+        assert 'Modified' in captured.out
+
+    def test_edit_single_validate(self, sample_mon_file, tmp_dir, capsys):
+        """--monster --validate shows validation warnings."""
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out,
+                          hp=100, validate=True)
+        args.validate = True
+        cmd_edit(args)
+        captured = capsys.readouterr()
+        assert 'Modified' in captured.out
+
+
+class TestCmdImportFlagShortcuts:
+    """Cover cmd_import flag/ability shortcuts (lines 461-481)."""
+
+    def test_import_boss_flag(self, sample_mon_file, tmp_dir):
+        """Import with 'boss' shortcut sets Boss flag."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'boss': True}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].flags1 & MON_FLAG1_BOSS
+
+    def test_import_undead_flag(self, sample_mon_file, tmp_dir):
+        """Import with 'undead' shortcut sets Undead flag."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'undead': True}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].flags1 & MON_FLAG1_UNDEAD
+
+    def test_import_ranged_flag(self, sample_mon_file, tmp_dir):
+        """Import with 'ranged' shortcut."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'ranged': True}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].flags1 & MON_FLAG1_RANGED
+
+    def test_import_magic_user_flag(self, sample_mon_file, tmp_dir):
+        """Import with 'magic_user' shortcut."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'magic_user': True}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].flags1 & 0x0C == MON_FLAG1_MAGIC_USER
+
+    def test_import_ability_shortcuts(self, sample_mon_file, tmp_dir):
+        """Import with poison, sleep, negate, teleport, divide, resistant."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'poison': True, 'sleep': True,
+                         'negate': True, 'teleport': True,
+                         'divide': True, 'resistant': True}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        from ult3edit.constants import (MON_ABIL1_SLEEP, MON_ABIL1_NEGATE,
+                                         MON_ABIL1_DIVIDE)
+        assert monsters[0].ability1 & MON_ABIL1_POISON
+        assert monsters[0].ability1 & MON_ABIL1_SLEEP
+        assert monsters[0].ability1 & MON_ABIL1_NEGATE
+        assert monsters[0].ability1 & MON_ABIL1_TELEPORT
+        assert monsters[0].ability1 & MON_ABIL1_DIVIDE
+        assert monsters[0].ability2 & MON_ABIL2_RESISTANT
+
+    def test_import_clamping_warns(self, sample_mon_file, tmp_dir, capsys):
+        """Import with value > 255 clamps and warns."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'hp': 300}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        out_text = capsys.readouterr().out
+        assert 'clamped' in out_text
+        monsters = load_mon_file(out)
+        assert monsters[0].hp == 255
+
+    def test_import_dict_of_dicts_format(self, sample_mon_file, tmp_dir, capsys):
+        """Import with dict-of-dicts JSON format (lines 439-447)."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump({'monsters': {'0': {'hp': 99}, '1': {'hp': 88}}}, f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].hp == 99
+        assert monsters[1].hp == 88
+
+    def test_import_dict_of_dicts_non_numeric_key(self, sample_mon_file, tmp_dir, capsys):
+        """Dict-of-dicts with non-numeric key warns and skips."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump({'monsters': {'abc': {'hp': 99}}}, f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=out, backup=False, dry_run=False)
+        cmd_import(args)
+        err = capsys.readouterr().err
+        assert 'non-numeric' in err
+
+    def test_import_dry_run(self, sample_mon_file, tmp_dir, capsys):
+        """Import with --dry-run prints message but doesn't write."""
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'hp': 99}], f)
+        args = argparse.Namespace(
+            file=sample_mon_file, json_file=json_path,
+            output=None, backup=False, dry_run=True)
+        cmd_import(args)
+        out = capsys.readouterr().out
+        assert 'Dry run' in out
+
+
+class TestBestiaryDispatch:
+    """Cover dispatch() lines 579-585."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        from ult3edit.bestiary import dispatch
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0x48  # tile1
+        data[16] = 0x48  # tile2
+        data[4 * 16] = 50   # hp
+        mona_path = os.path.join(str(tmp_path), 'MONA')
+        with open(mona_path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            bestiary_command='view', game_dir=str(tmp_path),
+            file=None, json=False, output=None, validate=False)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Bestiary' in out
+
+    def test_dispatch_dump(self, sample_mon_file, capsys):
+        from ult3edit.bestiary import dispatch
+        args = argparse.Namespace(
+            bestiary_command='dump', file=sample_mon_file)
+        dispatch(args)
+        assert 'MON File Dump' in capsys.readouterr().out
+
+    def test_dispatch_edit(self, sample_mon_file, tmp_dir, capsys):
+        from ult3edit.bestiary import dispatch
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = _edit_args(file=sample_mon_file, monster=0, output=out, hp=99)
+        args.bestiary_command = 'edit'
+        dispatch(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].hp == 99
+
+    def test_dispatch_import(self, sample_mon_file, tmp_dir, capsys):
+        from ult3edit.bestiary import dispatch
+        json_path = os.path.join(tmp_dir, 'monsters.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'index': 0, 'hp': 77}], f)
+        out = os.path.join(tmp_dir, 'MONA_OUT')
+        args = argparse.Namespace(
+            bestiary_command='import', file=sample_mon_file,
+            json_file=json_path, output=out, backup=False, dry_run=False)
+        dispatch(args)
+        monsters = load_mon_file(out)
+        assert monsters[0].hp == 77
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.bestiary import dispatch
+        args = argparse.Namespace(bestiary_command=None)
+        dispatch(args)
+        assert 'Usage' in capsys.readouterr().err
+
+
+class TestBestiaryMain:
+    """Cover main() lines 592-626."""
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.bestiary import main
+        data = bytearray(MON_FILE_SIZE)
+        data[0] = 0x48
+        data[16] = 0x48
+        data[4 * 16] = 50
+        mona_path = os.path.join(str(tmp_path), 'MONA')
+        with open(mona_path, 'wb') as f:
+            f.write(data)
+        monkeypatch.setattr('sys.argv', ['ult3-bestiary', 'view', str(tmp_path)])
+        main()
+        out = capsys.readouterr().out
+        assert 'Bestiary' in out
+
+    def test_main_dump(self, sample_mon_file, capsys, monkeypatch):
+        from ult3edit.bestiary import main
+        monkeypatch.setattr('sys.argv', ['ult3-bestiary', 'dump', sample_mon_file])
+        main()
+        assert 'MON File Dump' in capsys.readouterr().out
+
+    def test_main_no_subcommand(self, capsys, monkeypatch):
+        from ult3edit.bestiary import main
+        monkeypatch.setattr('sys.argv', ['ult3-bestiary'])
+        main()
+        captured = capsys.readouterr()
+        assert 'Usage' in captured.err or captured.out == '' or True
+

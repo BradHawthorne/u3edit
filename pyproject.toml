@@ -1,6 +1,6 @@
 [project]
 name = "ult3edit"
-version = "1.19.0"
+version = "1.20.0"
 description = "Ultima III: Exodus - Data file toolkit for Apple II archaeology"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -67,7 +67,7 @@ testpaths = ["tests"]
 source = ["ult3edit"]
 
 [tool.coverage.report]
-fail_under = 75
+fail_under = 100
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

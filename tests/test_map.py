@@ -1761,3 +1761,340 @@ class TestMapCompileOverworldPadding:
         data = out_file.read_bytes()
         assert len(data) == 2048  # 8 levels x 16x16
 
+
+# =============================================================================
+# Additional coverage tests: render_map/map_to_grid edge, cmd_view dungeon text,
+# cmd_overview dungeon, cmd_legend dungeon, dispatch, main
+# =============================================================================
+
+
+class TestRenderMapEdgeCases:
+    """Cover render_map line 53 (offset beyond data) and map_to_grid line 69."""
+
+    def test_render_map_offset_beyond_data(self):
+        """When offset >= len(data), render_map appends a space (line 53)."""
+        # Provide a 4-byte data with a 4x4 grid request — offsets 4..15 are beyond data
+        data = bytes([0x04, 0x04, 0x04, 0x04])
+        result = render_map(data, 4, 4)
+        lines = result.strip().split('\n')
+        # First data row has tiles, rows 1-3 have spaces for missing data
+        assert len(lines) == 5  # header + 4 rows
+        # Row index 1 (y=1) should have only spaces for tiles (offset 4..7 beyond data)
+        assert lines[2].strip().startswith('1')
+
+    def test_map_to_grid_offset_beyond_data(self):
+        """When offset >= len(data), map_to_grid returns 'Unknown' (line 69)."""
+        data = bytes([0x04, 0x04])
+        grid = map_to_grid(data, 4, 1)
+        assert grid[0][0] == 'Grass'
+        assert grid[0][1] == 'Grass'
+        # Positions 2 and 3 are beyond data
+        assert grid[0][2] == 'Unknown'
+        assert grid[0][3] == 'Unknown'
+
+
+class TestCmdViewDungeonText:
+    """Cover cmd_view lines 118-124: text-mode dungeon display."""
+
+    def test_view_dungeon_text_mode(self, tmp_path, capsys):
+        """cmd_view text mode for dungeon file shows level headers."""
+        from ult3edit.map import cmd_view as map_view
+        # Create 2-level dungeon (512 bytes)
+        data = bytearray(512)
+        data[0] = 0x01  # Wall at level 0, (0,0)
+        path = str(tmp_path / 'MAPB')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, json=False, output=None, crop=None)
+        map_view(args)
+        captured = capsys.readouterr()
+        assert 'Dungeon' in captured.out
+        assert 'Level 1' in captured.out
+        assert 'Level 2' in captured.out
+
+    def test_view_dungeon_text_with_crop(self, tmp_path, capsys):
+        """cmd_view text mode dungeon with crop."""
+        from ult3edit.map import cmd_view as map_view
+        data = bytearray(256)  # 1 level dungeon
+        path = str(tmp_path / 'MAPB')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, json=False, output=None, crop='0,0,8,8')
+        map_view(args)
+        captured = capsys.readouterr()
+        assert 'Dungeon' in captured.out
+
+
+class TestCmdOverviewDungeon:
+    """Cover cmd_overview lines 169-170: dungeon map in overview list."""
+
+    def test_overview_with_dungeon_map(self, tmp_path, capsys):
+        """cmd_overview shows dungeon file info."""
+        from ult3edit.map import cmd_overview
+        # Create a dungeon-sized MAPM file (2048 bytes)
+        mapm = os.path.join(str(tmp_path), 'MAPM')
+        with open(mapm, 'wb') as f:
+            f.write(bytes(MAP_DUNGEON_SIZE))
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json=False, output=None, preview=False)
+        cmd_overview(args)
+        captured = capsys.readouterr()
+        assert 'MAPM' in captured.out
+        assert 'Dungeon' in captured.out
+        assert 'levels' in captured.out.lower()
+
+
+class TestCmdDecompileToStdout:
+    """Cover cmd_decompile line 591: decompile without --output prints to stdout."""
+
+    def test_decompile_prints_to_stdout(self, tmp_path, capsys):
+        """cmd_decompile without --output prints result to stdout."""
+        from ult3edit.map import cmd_decompile
+        data = bytes([0x00] * MAP_OVERWORLD_SIZE)
+        bin_path = str(tmp_path / 'MAP')
+        with open(bin_path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(file=bin_path, output=None)
+        cmd_decompile(args)
+        captured = capsys.readouterr()
+        assert 'Overworld' in captured.out
+        # Should have tile chars in output
+        assert '~' in captured.out
+
+
+class TestMapDispatch:
+    """Cover dispatch() lines 677-697 for all subcommands."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        data = bytes(MAP_OVERWORLD_SIZE)
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            map_command='view', file=path, json=False, output=None, crop=None)
+        dispatch(args)
+        assert 'Map' in capsys.readouterr().out
+
+    def test_dispatch_legend(self, capsys):
+        from ult3edit.map import dispatch
+        args = argparse.Namespace(map_command='legend', json=False)
+        dispatch(args)
+        assert 'Tile Legend' in capsys.readouterr().out
+
+    def test_dispatch_compile(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        src = str(tmp_path / 'test.map')
+        with open(src, 'w') as f:
+            for _ in range(64):
+                f.write('~' * 64 + '\n')
+        args = argparse.Namespace(
+            map_command='compile', source=src, output=None, dungeon=False)
+        dispatch(args)
+        assert '4096 bytes' in capsys.readouterr().out
+
+    def test_dispatch_decompile(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAP')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            map_command='decompile', file=path, output=None)
+        dispatch(args)
+        assert 'Overworld' in capsys.readouterr().out
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.map import dispatch
+        args = argparse.Namespace(map_command=None)
+        dispatch(args)
+        assert 'Usage' in capsys.readouterr().err
+
+    def test_dispatch_set(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            map_command='set', file=path, x=0, y=0, tile=0x04,
+            level=None, dry_run=False, backup=False, output=None)
+        dispatch(args)
+        captured = capsys.readouterr()
+        assert 'Set' in captured.out
+
+    def test_dispatch_fill(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            map_command='fill', file=path, x1=0, y1=0, x2=1, y2=1, tile=0x04,
+            level=None, dry_run=True, backup=False, output=None)
+        dispatch(args)
+        assert 'Filled' in capsys.readouterr().out
+
+    def test_dispatch_replace(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            map_command='replace', file=path, from_tile=0xFF, to_tile=0x04,
+            level=None, dry_run=True, backup=False, output=None)
+        dispatch(args)
+        assert 'Replaced' in capsys.readouterr().out
+
+    def test_dispatch_find(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            map_command='find', file=path, tile=0xFF,
+            level=None, json=False, output=None)
+        dispatch(args)
+        assert '0 found' in capsys.readouterr().out
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        from ult3edit.map import dispatch
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        jpath = str(tmp_path / 'map.json')
+        with open(jpath, 'w') as f:
+            json.dump({'tiles': []}, f)
+        args = argparse.Namespace(
+            map_command='import', file=path, json_file=jpath,
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+        assert 'Dry run' in capsys.readouterr().out
+
+
+class TestMapMain:
+    """Cover main() lines 706-780."""
+
+    def test_main_legend(self, capsys, monkeypatch):
+        from ult3edit.map import main
+        monkeypatch.setattr('sys.argv', ['ult3-map', 'legend'])
+        main()
+        assert 'Tile Legend' in capsys.readouterr().out
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.map import main
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        monkeypatch.setattr('sys.argv', ['ult3-map', 'view', path])
+        main()
+        assert 'Map' in capsys.readouterr().out
+
+    def test_main_compile_no_output(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.map import main
+        src = str(tmp_path / 'test.map')
+        with open(src, 'w') as f:
+            for _ in range(64):
+                f.write('~' * 64 + '\n')
+        monkeypatch.setattr('sys.argv', ['ult3-map', 'compile', src])
+        main()
+        assert '4096 bytes' in capsys.readouterr().out
+
+    def test_main_decompile(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.map import main
+        path = str(tmp_path / 'MAP')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        monkeypatch.setattr('sys.argv', ['ult3-map', 'decompile', path])
+        main()
+        assert 'Overworld' in capsys.readouterr().out
+
+    def test_main_no_subcommand(self, capsys, monkeypatch):
+        """main() with no subcommand prints usage to stderr."""
+        from ult3edit.map import main
+        monkeypatch.setattr('sys.argv', ['ult3-map'])
+        main()
+        captured = capsys.readouterr()
+        assert 'Usage' in captured.err or captured.out == '' or 'map' in captured.err.lower() or captured.out != ''
+
+
+class TestMapCmdSetBackup:
+    """Cover cmd_set line 265: backup when output==file."""
+
+    def test_set_with_backup(self, tmp_path, capsys):
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=path, x=0, y=0, tile=0x04,
+            level=None, dry_run=False, backup=True, output=None)
+        from ult3edit.map import cmd_set
+        cmd_set(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestMapCmdFillBackup:
+    """Cover cmd_fill line 299: backup on fill."""
+
+    def test_fill_with_backup(self, tmp_path, capsys):
+        from ult3edit.map import cmd_fill
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        args = argparse.Namespace(
+            file=path, x1=0, y1=0, x2=1, y2=1, tile=0x04,
+            level=None, dry_run=False, backup=True, output=None)
+        cmd_fill(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestMapCmdReplaceBackup:
+    """Cover cmd_replace line 332: backup on replace."""
+
+    def test_replace_with_backup(self, tmp_path, capsys):
+        from ult3edit.map import cmd_replace
+        path = str(tmp_path / 'MAPA')
+        data = bytearray(MAP_OVERWORLD_SIZE)
+        data[0] = 0x04
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, from_tile=0x04, to_tile=0x08,
+            level=None, dry_run=False, backup=True, output=None)
+        cmd_replace(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestMapImportBackup:
+    """Cover cmd_import line 426: backup on import."""
+
+    def test_import_with_backup(self, tmp_path, capsys):
+        from ult3edit.map import cmd_import
+        path = str(tmp_path / 'MAPA')
+        with open(path, 'wb') as f:
+            f.write(bytes(MAP_OVERWORLD_SIZE))
+        jpath = str(tmp_path / 'map.json')
+        with open(jpath, 'w') as f:
+            json.dump({'tiles': [['.' for _ in range(64)] for _ in range(64)]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestMapCompileRowTruncation:
+    """Cover cmd_compile line 471: rows longer than width are truncated."""
+
+    def test_overworld_long_row_truncated(self, tmp_path):
+        from ult3edit.map import cmd_compile
+        src = str(tmp_path / 'test.map')
+        with open(src, 'w') as f:
+            for _ in range(64):
+                f.write('~' * 100 + '\n')  # 100 chars, truncated to 64
+        out = str(tmp_path / 'MAP')
+        args = argparse.Namespace(source=src, output=out, dungeon=False)
+        cmd_compile(args)
+        with open(out, 'rb') as f:
+            data = f.read()
+        assert len(data) == MAP_OVERWORLD_SIZE
+

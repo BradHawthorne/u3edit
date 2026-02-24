@@ -88,7 +88,7 @@ class CombatEditor(BaseTileEditor):
         else:
             self.state.paint()
 
-    def _extra_keybindings(self, kb) -> None:
+    def _extra_keybindings(self, kb) -> None:  # pragma: no cover
         editor = self
 
         @kb.add('p')

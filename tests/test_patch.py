@@ -2880,3 +2880,843 @@ class TestNameCompilerTail:
         assert not valid
         assert size > budget
 
+
+# =============================================================================
+# Coverage tests: cmd_view() JSON output and various region types
+# =============================================================================
+
+class TestPatchCmdViewCoverage:
+    """Tests for cmd_view() uncovered paths."""
+
+    def _make_ult3(self):
+        """Create a synthetic ULT3 binary with known region data."""
+        data = bytearray(17408)
+        offset = 0x397A
+        text = b'\x00\xD7\xC1\xD4\xC5\xD2\x00\xC7\xD2\xC1\xD3\xD3\x00'
+        data[offset:offset + len(text)] = text
+        for i in range(8):
+            data[0x29A7 + i] = i * 8
+            data[0x29AF + i] = i * 4
+        data[0x272C] = 0x04
+        return data
+
+    def test_view_json_output(self, tmp_path):
+        """cmd_view --json produces valid JSON with regions."""
+        from ult3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out = str(tmp_path / 'view.json')
+        args = argparse.Namespace(
+            file=path, region=None, json=True, output=out)
+        cmd_view(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert result['binary'] == 'ULT3'
+        assert 'name-table' in result['regions']
+        assert 'moongate-x' in result['regions']
+        assert 'food-rate' in result['regions']
+
+    def test_view_json_specific_region(self, tmp_path):
+        """cmd_view --json --region filters to one region."""
+        from ult3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out = str(tmp_path / 'view.json')
+        args = argparse.Namespace(
+            file=path, region='food-rate', json=True, output=out)
+        cmd_view(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert len(result['regions']) == 1
+        assert 'food-rate' in result['regions']
+
+    def test_view_text_output(self, tmp_path, capsys):
+        """cmd_view text output shows region data."""
+        from ult3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, region=None, json=False, output=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'name-table' in captured.out
+        assert 'moongate-x' in captured.out
+        assert 'food-rate' in captured.out
+        assert 'WATER' in captured.out
+
+    def test_view_text_bytes_region(self, tmp_path, capsys):
+        """cmd_view text output for bytes region shows hex."""
+        from ult3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, region='food-rate', json=False, output=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert '04' in captured.out
+
+    def test_view_unknown_region_exits(self, tmp_path):
+        """cmd_view with unknown region name exits with error."""
+        from ult3edit.patch import cmd_view
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, region='nonexistent', json=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_view(args)
+
+    def test_view_unrecognized_binary(self, tmp_path, capsys):
+        """cmd_view on unrecognized binary warns."""
+        from ult3edit.patch import cmd_view
+        data = bytearray(999)
+        path = str(tmp_path / 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, region=None, json=False, output=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'not recognized' in captured.err
+
+    def test_view_unrecognized_json(self, tmp_path):
+        """cmd_view --json on unrecognized binary produces JSON."""
+        from ult3edit.patch import cmd_view
+        data = bytearray(999)
+        path = str(tmp_path / 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            file=path, region=None, json=True, output=out)
+        cmd_view(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert result['recognized'] is False
+
+    def test_view_no_patchable_regions(self, tmp_path, capsys):
+        """cmd_view on binary with no patchable regions shows message."""
+        from ult3edit.patch import cmd_view
+        # SUBS has no patchable regions
+        data = bytearray(3584)
+        path = str(tmp_path / 'SUBS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, region=None, json=False, output=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'No known patchable regions' in captured.out
+
+
+# =============================================================================
+# Coverage tests: cmd_dump() bounds checking
+# =============================================================================
+
+class TestPatchCmdDumpCoverage:
+    """Tests for cmd_dump() uncovered paths."""
+
+    def test_dump_offset_past_end_exits(self, tmp_path):
+        """cmd_dump with offset past end of file exits with error."""
+        from ult3edit.patch import cmd_dump
+        data = bytearray(100)
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, offset=200, length=16)
+        with pytest.raises(SystemExit):
+            cmd_dump(args)
+
+    def test_dump_produces_hex_output(self, tmp_path, capsys):
+        """cmd_dump produces hex dump output."""
+        from ult3edit.patch import cmd_dump
+        data = bytearray(256)
+        for i in range(256):
+            data[i] = i & 0xFF
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, offset=0, length=32)
+        cmd_dump(args)
+        captured = capsys.readouterr()
+        assert 'hex dump' in captured.out
+        assert '00 01 02' in captured.out
+
+
+# =============================================================================
+# Coverage tests: cmd_import() validation and error paths
+# =============================================================================
+
+class TestPatchCmdImportCoverage:
+    """Tests for cmd_import() uncovered validation paths."""
+
+    def _make_ult3(self):
+        data = bytearray(17408)
+        offset = 0x397A
+        text = b'\x00\xD7\xC1\xD4\xC5\xD2\x00\xC7\xD2\xC1\xD3\xD3\x00'
+        data[offset:offset + len(text)] = text
+        for i in range(8):
+            data[0x29A7 + i] = i * 8
+            data[0x29AF + i] = i * 4
+        data[0x272C] = 0x04
+        return data
+
+    def test_import_unrecognized_binary_exits(self, tmp_path):
+        """cmd_import on unrecognized binary exits."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        data = bytearray(999)
+        path = str(tmp_path / 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump({'food-rate': [1]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            patch_cmd_import(args)
+
+    def test_import_unexpected_format_warns(self, tmp_path, capsys):
+        """cmd_import with unexpected region format skips and warns."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # Unexpected format: region value is a string, not dict/list
+        jdata = {'regions': {'food-rate': 'bad_value'}}
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=False, dry_run=False)
+        # Should exit because no matching regions found after skip
+        with pytest.raises(SystemExit):
+            patch_cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'unexpected format' in captured.err.lower()
+
+    def test_import_encode_error_exits(self, tmp_path):
+        """cmd_import with encoding error exits."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # Provide a huge bytes region that exceeds max_length
+        jdata = {'regions': {'food-rate': {'data': list(range(100))}}}
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            patch_cmd_import(args)
+
+    def test_import_no_matching_regions_exits(self, tmp_path):
+        """cmd_import exits when no matching regions in JSON."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'regions': {'nonexistent-region': {'data': [1]}}}
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            patch_cmd_import(args)
+
+    def test_import_no_patchable_regions_exits(self, tmp_path):
+        """cmd_import on binary with no patchable regions exits."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        # SUBS has no patchable regions
+        data = bytearray(3584)
+        path = str(tmp_path / 'SUBS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump({'food-rate': [1]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            patch_cmd_import(args)
+
+    def test_import_backup_same_file(self, tmp_path):
+        """cmd_import with --backup creates .bak when writing in-place."""
+        from ult3edit.patch import cmd_import as patch_cmd_import
+        data = self._make_ult3()
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = {'regions': {'food-rate': {'data': [2]}}}
+        jpath = str(tmp_path / 'patch.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath, region=None,
+            output=None, backup=True, dry_run=False)
+        patch_cmd_import(args)
+        assert os.path.exists(path + '.bak')
+
+
+# =============================================================================
+# Coverage tests: _extract_inline_strings
+# =============================================================================
+
+class TestExtractInlineStringsCoverage:
+    """Additional tests for _extract_inline_strings edge cases."""
+
+    def _make_binary(self, *texts):
+        """Build binary with JSR $46BA inline strings."""
+        data = bytearray()
+        data.extend(b'\xEA' * 4)
+        for text in texts:
+            data.extend(b'\x20\xBA\x46')
+            for ch in text:
+                if ch == '\n':
+                    data.append(0xFF)
+                else:
+                    data.append(ord(ch.upper()) | 0x80)
+            data.append(0x00)
+            data.extend(b'\xEA' * 2)
+        return bytes(data)
+
+    def test_extract_has_byte_count(self):
+        """Extracted strings include byte_count field."""
+        from ult3edit.patch import _extract_inline_strings
+        data = self._make_binary('HELLO')
+        strings = _extract_inline_strings(data)
+        assert len(strings) == 1
+        assert 'byte_count' in strings[0]
+        assert strings[0]['byte_count'] == 6  # 5 chars + 1 null
+
+    def test_extract_has_text_offset(self):
+        """Extracted strings include text_offset and text_end."""
+        from ult3edit.patch import _extract_inline_strings
+        data = self._make_binary('HI')
+        strings = _extract_inline_strings(data)
+        assert 'text_offset' in strings[0]
+        assert 'text_end' in strings[0]
+
+    def test_extract_sequential_index(self):
+        """Extracted strings have sequential index values."""
+        from ult3edit.patch import _extract_inline_strings
+        data = self._make_binary('A', 'B', 'C')
+        strings = _extract_inline_strings(data)
+        indices = [s['index'] for s in strings]
+        assert indices == [0, 1, 2]
+
+
+# =============================================================================
+# Coverage tests: cmd_strings / cmd_strings_edit / cmd_strings_import
+# =============================================================================
+
+class TestPatchCmdStringsCoverage:
+    """Tests for cmd_strings, cmd_strings_edit, cmd_strings_import uncovered paths."""
+
+    def _make_test_binary(self, tmp_path, *texts):
+        """Create a test binary with inline strings."""
+        data = bytearray()
+        data.extend(b'\xEA' * 4)
+        for text in texts:
+            data.extend(b'\x20\xBA\x46')
+            for ch in text:
+                if ch == '\n':
+                    data.append(0xFF)
+                else:
+                    data.append(ord(ch.upper()) | 0x80)
+            data.append(0x00)
+            data.extend(b'\xEA' * 2)
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_cmd_strings_on_unknown_binary(self, tmp_path, capsys):
+        """cmd_strings warns on unknown binary, still extracts strings."""
+        from ult3edit.patch import cmd_strings
+        path = self._make_test_binary(tmp_path, 'HELLO', 'WORLD')
+        args = argparse.Namespace(
+            file=path, json=False, search=None, output=None)
+        cmd_strings(args)
+        captured = capsys.readouterr()
+        assert 'Unknown binary' in captured.err
+        assert 'HELLO' in captured.out
+
+    def test_cmd_strings_no_strings_found(self, tmp_path, capsys):
+        """cmd_strings on binary with no strings reports none."""
+        from ult3edit.patch import cmd_strings
+        path = str(tmp_path / 'empty.bin')
+        with open(path, 'wb') as f:
+            f.write(bytearray(100))
+        args = argparse.Namespace(
+            file=path, json=False, search=None, output=None)
+        cmd_strings(args)
+        captured = capsys.readouterr()
+        assert 'No inline strings' in captured.out
+
+    def test_cmd_strings_json_output(self, tmp_path):
+        """cmd_strings --json produces valid JSON."""
+        from ult3edit.patch import cmd_strings
+        path = self._make_test_binary(tmp_path, 'TEST')
+        out = str(tmp_path / 'strings.json')
+        args = argparse.Namespace(
+            file=path, json=True, search=None, output=out)
+        cmd_strings(args)
+        with open(out, 'r') as f:
+            result = json.load(f)
+        assert 'strings' in result
+        assert result['total_strings'] >= 1
+
+    def test_cmd_strings_edit_no_match_exits(self, tmp_path):
+        """cmd_strings_edit exits when no matching string found."""
+        from ult3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_path, 'HELLO')
+        args = argparse.Namespace(
+            file=path, text='NEW', index=999,
+            vanilla=None, address=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_edit(args)
+
+    def test_cmd_strings_edit_no_strings_exits(self, tmp_path):
+        """cmd_strings_edit exits when binary has no inline strings."""
+        from ult3edit.patch import cmd_strings_edit
+        path = str(tmp_path / 'empty.bin')
+        with open(path, 'wb') as f:
+            f.write(bytearray(100))
+        args = argparse.Namespace(
+            file=path, text='NEW', index=0,
+            vanilla=None, address=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_edit(args)
+
+    def test_cmd_strings_edit_no_target_specified(self, tmp_path):
+        """cmd_strings_edit exits when no --index/--vanilla/--address."""
+        from ult3edit.patch import cmd_strings_edit
+        path = self._make_test_binary(tmp_path, 'HELLO')
+        args = argparse.Namespace(
+            file=path, text='NEW', index=None,
+            vanilla=None, address=None,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_edit(args)
+
+    def test_cmd_strings_edit_by_address(self, tmp_path):
+        """cmd_strings_edit by address works."""
+        from ult3edit.patch import cmd_strings_edit, _extract_inline_strings
+        path = self._make_test_binary(tmp_path, 'HELLO WORLD')
+        with open(path, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data)
+        addr = strings[0]['address']
+        args = argparse.Namespace(
+            file=path, text='CHANGED', index=None,
+            vanilla=None, address=addr,
+            output=None, backup=False, dry_run=False)
+        cmd_strings_edit(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        new_strings = _extract_inline_strings(result)
+        assert new_strings[0]['text'] == 'CHANGED'
+
+    def test_cmd_strings_import_no_strings_exits(self, tmp_path):
+        """cmd_strings_import exits when binary has no strings."""
+        from ult3edit.patch import cmd_strings_import
+        path = str(tmp_path / 'empty.bin')
+        with open(path, 'wb') as f:
+            f.write(bytearray(100))
+        jpath = str(tmp_path / 'patches.json')
+        with open(jpath, 'w') as f:
+            json.dump({'patches': [{'index': 0, 'text': 'X'}]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_import(args)
+
+    def test_cmd_strings_import_no_patches_exits(self, tmp_path):
+        """cmd_strings_import exits when JSON has no patches."""
+        from ult3edit.patch import cmd_strings_import
+        path = self._make_test_binary(tmp_path, 'HELLO')
+        jpath = str(tmp_path / 'patches.json')
+        with open(jpath, 'w') as f:
+            json.dump({'patches': []}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            cmd_strings_import(args)
+
+    def test_cmd_strings_import_address_resolution(self, tmp_path):
+        """cmd_strings_import resolves by address (string or int)."""
+        from ult3edit.patch import cmd_strings_import, _extract_inline_strings
+        path = self._make_test_binary(tmp_path, 'HELLO WORLD')
+        with open(path, 'rb') as f:
+            data = f.read()
+        strings = _extract_inline_strings(data)
+        addr = strings[0]['address']
+        jpath = str(tmp_path / 'patches.json')
+        with open(jpath, 'w') as f:
+            json.dump({'patches': [
+                {'address': f'0x{addr:04X}', 'text': 'CHANGED'}
+            ]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=False, dry_run=False)
+        cmd_strings_import(args)
+        with open(path, 'rb') as f:
+            result = f.read()
+        new_strings = _extract_inline_strings(result)
+        assert new_strings[0]['text'] == 'CHANGED'
+
+    def test_cmd_strings_import_unmatched_warns(self, tmp_path, capsys):
+        """cmd_strings_import warns on unmatched patches."""
+        from ult3edit.patch import cmd_strings_import
+        path = self._make_test_binary(tmp_path, 'HELLO')
+        jpath = str(tmp_path / 'patches.json')
+        with open(jpath, 'w') as f:
+            json.dump({'patches': [
+                {'vanilla': 'NONEXISTENT', 'text': 'X'},
+                {'index': 0, 'text': 'OK'},
+            ]}, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=False, dry_run=False)
+        cmd_strings_import(args)
+        captured = capsys.readouterr()
+        assert 'no match' in captured.err.lower()
+
+
+# =============================================================================
+# Coverage tests: _encode_region and _parse_region
+# =============================================================================
+
+class TestEncodeRegionCoverage:
+    """Tests for _encode_region and _parse_region edge cases."""
+
+    def test_encode_bytes_region_pads(self):
+        """_encode_region pads bytes regions with nulls."""
+        from ult3edit.patch import _encode_region
+        reg = {'data_type': 'bytes', 'max_length': 8}
+        result = _encode_region(reg, [1, 2, 3])
+        assert len(result) == 8
+        assert result[:3] == bytes([1, 2, 3])
+        assert result[3:] == b'\x00' * 5
+
+    def test_encode_bytes_region_too_long(self):
+        """_encode_region raises on bytes region exceeding max."""
+        from ult3edit.patch import _encode_region
+        reg = {'data_type': 'bytes', 'max_length': 2}
+        with pytest.raises(ValueError, match='exceeds max'):
+            _encode_region(reg, [1, 2, 3, 4, 5])
+
+    def test_encode_coords_region(self):
+        """_encode_region handles coords type."""
+        from ult3edit.patch import _encode_region
+        reg = {'data_type': 'coords', 'max_length': 8}
+        result = _encode_region(reg, [{'x': 10, 'y': 20}])
+        assert result[:2] == bytes([10, 20])
+        assert len(result) == 8
+
+    def test_parse_region_coords(self):
+        """_parse_region handles coords type."""
+        from ult3edit.patch import _parse_region
+        data = bytes([10, 20, 30, 40] + [0] * 100)
+        reg = {'offset': 0, 'max_length': 4, 'data_type': 'coords'}
+        result = _parse_region(data, reg)
+        assert len(result) == 2
+        assert result[0] == {'x': 10, 'y': 20}
+
+    def test_parse_region_bytes(self):
+        """_parse_region handles bytes type."""
+        from ult3edit.patch import _parse_region
+        data = bytes([0xAA, 0xBB, 0xCC] + [0] * 100)
+        reg = {'offset': 0, 'max_length': 3, 'data_type': 'bytes'}
+        result = _parse_region(data, reg)
+        assert result == [0xAA, 0xBB, 0xCC]
+
+
+# =============================================================================
+# Coverage tests: _parse_text_region trailing content (line 133)
+# =============================================================================
+
+class TestParseTextRegionEdge:
+    """Test parse_text_region edge cases."""
+
+    def test_trailing_non_null_content(self):
+        """Text region with non-terminated trailing content."""
+        from ult3edit.patch import parse_text_region
+        # Build data: "HI\0" + "BYE" (no trailing null)
+        data = bytearray(20)
+        data[0] = 0xC8  # H
+        data[1] = 0xC9  # I
+        data[2] = 0x00
+        data[3] = 0xC2  # B
+        data[4] = 0xD9  # Y
+        data[5] = 0xC5  # E
+        # No null terminator — rest is zeros (padding)
+        strings = parse_text_region(bytes(data), 0, 20)
+        assert 'HI' in strings
+        assert 'BYE' in strings
+
+
+# =============================================================================
+# Coverage tests: Name table compile/decompile/validate
+# =============================================================================
+
+class TestNameTableCoverage:
+    """Additional name table compile/decompile/validate coverage."""
+
+    def test_compile_names_empty_exits(self, tmp_path):
+        """cmd_compile_names with no names exits."""
+        from ult3edit.patch import cmd_compile_names
+        src = str(tmp_path / 'empty.names')
+        with open(src, 'w') as f:
+            f.write('# Just comments\n')
+        args = argparse.Namespace(source=src, output=None)
+        with pytest.raises(SystemExit):
+            cmd_compile_names(args)
+
+    def test_compile_names_over_budget_exits(self, tmp_path):
+        """cmd_compile_names with names exceeding budget exits."""
+        from ult3edit.patch import cmd_compile_names
+        names = [f'LONG_NAME_PADDING_{i:04d}' for i in range(100)]
+        src = str(tmp_path / 'big.names')
+        with open(src, 'w') as f:
+            f.write('\n'.join(names) + '\n')
+        args = argparse.Namespace(source=src, output=None)
+        with pytest.raises(SystemExit):
+            cmd_compile_names(args)
+
+    def test_decompile_names_stdout(self, tmp_path, capsys):
+        """cmd_decompile_names with no --output prints to stdout."""
+        from ult3edit.patch import cmd_decompile_names
+        data = bytearray(0x397A + 921)
+        offset = 0x397A
+        for name in ['WATER', 'GRASS']:
+            for ch in name:
+                data[offset] = ord(ch) | 0x80
+                offset += 1
+            data[offset] = 0x00
+            offset += 1
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(file=path, output=None)
+        cmd_decompile_names(args)
+        captured = capsys.readouterr()
+        assert 'WATER' in captured.out
+        assert 'GRASS' in captured.out
+
+    def test_parse_names_single_quotes(self):
+        """_parse_names_file handles '' for empty strings."""
+        from ult3edit.patch import _parse_names_file
+        text = "FOO\n''\nBAR\n"
+        names = _parse_names_file(text)
+        assert names == ['FOO', '', 'BAR']
+
+
+# =============================================================================
+# Coverage tests: dispatch() and main() entry points
+# =============================================================================
+
+class TestPatchDispatch:
+    """Tests for patch dispatch() and main() entry points."""
+
+    def _make_ult3_file(self, tmp_path):
+        data = bytearray(17408)
+        data[0x272C] = 0x04
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        """dispatch() routes 'view' to cmd_view."""
+        from ult3edit.patch import dispatch
+        path = self._make_ult3_file(tmp_path)
+        args = argparse.Namespace(
+            patch_command='view', file=path,
+            region=None, json=False, output=None)
+        dispatch(args)
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        """dispatch() routes 'edit' to cmd_edit."""
+        from ult3edit.patch import dispatch
+        path = self._make_ult3_file(tmp_path)
+        args = argparse.Namespace(
+            patch_command='edit', file=path,
+            region='food-rate', data='02',
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_dump(self, tmp_path, capsys):
+        """dispatch() routes 'dump' to cmd_dump."""
+        from ult3edit.patch import dispatch
+        path = self._make_ult3_file(tmp_path)
+        args = argparse.Namespace(
+            patch_command='dump', file=path,
+            offset=0, length=16)
+        dispatch(args)
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        """dispatch() routes 'import' to cmd_import."""
+        from ult3edit.patch import dispatch
+        path = self._make_ult3_file(tmp_path)
+        jdata = {'regions': {'food-rate': {'data': [2]}}}
+        jpath = str(tmp_path / 'p.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            patch_command='import', file=path, json_file=jpath,
+            region=None, output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_strings(self, tmp_path, capsys):
+        """dispatch() routes 'strings' to cmd_strings."""
+        from ult3edit.patch import dispatch
+        # Create a binary with at least one inline string
+        data = bytearray(100)
+        data[4:7] = bytes([0x20, 0xBA, 0x46])
+        data[7] = ord('A') | 0x80
+        data[8] = 0x00
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            patch_command='strings', file=path,
+            json=False, search=None, output=None)
+        dispatch(args)
+
+    def test_dispatch_strings_edit(self, tmp_path, capsys):
+        """dispatch() routes 'strings-edit' to cmd_strings_edit."""
+        from ult3edit.patch import dispatch
+        data = bytearray(100)
+        data[4:7] = bytes([0x20, 0xBA, 0x46])
+        for i, ch in enumerate('HELLO'):
+            data[7 + i] = ord(ch) | 0x80
+        data[12] = 0x00
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            patch_command='strings-edit', file=path,
+            text='HI', index=0, vanilla=None, address=None,
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_strings_import(self, tmp_path, capsys):
+        """dispatch() routes 'strings-import' to cmd_strings_import."""
+        from ult3edit.patch import dispatch
+        data = bytearray(100)
+        data[4:7] = bytes([0x20, 0xBA, 0x46])
+        for i, ch in enumerate('HELLO'):
+            data[7 + i] = ord(ch) | 0x80
+        data[12] = 0x00
+        path = str(tmp_path / 'test.bin')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jpath = str(tmp_path / 'patches.json')
+        with open(jpath, 'w') as f:
+            json.dump({'patches': [{'index': 0, 'text': 'HI'}]}, f)
+        args = argparse.Namespace(
+            patch_command='strings-import', file=path, json_file=jpath,
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_compile_names(self, tmp_path, capsys):
+        """dispatch() routes 'compile-names' to cmd_compile_names."""
+        from ult3edit.patch import dispatch
+        src = str(tmp_path / 'test.names')
+        with open(src, 'w') as f:
+            f.write('WATER\nGRASS\n')
+        args = argparse.Namespace(
+            patch_command='compile-names', source=src, output=None)
+        dispatch(args)
+
+    def test_dispatch_decompile_names(self, tmp_path, capsys):
+        """dispatch() routes 'decompile-names' to cmd_decompile_names."""
+        from ult3edit.patch import dispatch
+        data = bytearray(0x397A + 921)
+        offset = 0x397A
+        for ch in 'WATER':
+            data[offset] = ord(ch) | 0x80
+            offset += 1
+        data[offset] = 0x00
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            patch_command='decompile-names', file=path, output=None)
+        dispatch(args)
+
+    def test_dispatch_validate_names(self, tmp_path, capsys):
+        """dispatch() routes 'validate-names' to cmd_validate_names."""
+        from ult3edit.patch import dispatch
+        src = str(tmp_path / 'test.names')
+        with open(src, 'w') as f:
+            f.write('WATER\nGRASS\n')
+        args = argparse.Namespace(
+            patch_command='validate-names', source=src)
+        dispatch(args)
+        captured = capsys.readouterr()
+        assert 'PASS' in captured.out
+
+    def test_dispatch_unknown_command(self, capsys):
+        """dispatch() with unknown command prints usage."""
+        from ult3edit.patch import dispatch
+        args = argparse.Namespace(patch_command=None)
+        dispatch(args)
+        captured = capsys.readouterr()
+        assert 'Usage' in captured.err
+
+    def test_main_no_args(self):
+        """main() with no args dispatches (prints usage or exits)."""
+        from ult3edit.patch import main
+        old_argv = sys.argv
+        try:
+            sys.argv = ['ult3-patch']
+            main()
+        except SystemExit:
+            pass
+        finally:
+            sys.argv = old_argv
+
+    def test_main_view_subcommand(self, tmp_path, capsys):
+        """main() with 'view' subcommand works."""
+        from ult3edit.patch import main
+        data = bytearray(17408)
+        path = str(tmp_path / 'ULT3')
+        with open(path, 'wb') as f:
+            f.write(data)
+        old_argv = sys.argv
+        try:
+            sys.argv = ['ult3-patch', 'view', path]
+            main()
+        except SystemExit:
+            pass
+        finally:
+            sys.argv = old_argv
+

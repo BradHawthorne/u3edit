@@ -54,7 +54,7 @@ class MapEditor(BaseTileEditor):
             return f'| Level {self.current_level + 1}/{self.num_levels}'
         return f'| {self.state.width}x{self.state.height}'
 
-    def _extra_keybindings(self, kb) -> None:
+    def _extra_keybindings(self, kb) -> None:  # pragma: no cover
         editor = self
 
         # Dungeon level switching (1-8)

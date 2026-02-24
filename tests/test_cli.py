@@ -706,3 +706,103 @@ class TestDictKeyValidation:
         })()
         combat_import(args)  # Should not crash
 
+
+# =============================================================================
+# Coverage: cli.py lines 48-51 (_cmd_unified_edit error path),
+# 108-136 (dispatch routing dict, handler call)
+# =============================================================================
+
+
+class TestCliUnifiedEditError:
+    """Cover lines 48-51: _cmd_unified_edit when file not found."""
+
+    def test_edit_nonexistent_image(self):
+        from ult3edit.cli import _cmd_unified_edit
+        args = argparse.Namespace(image='/nonexistent/fake.po')
+        with pytest.raises(SystemExit):
+            _cmd_unified_edit(args)
+
+
+class TestCliMainDispatchRouting:
+    """Cover lines 108-136: main() dispatcher routing table."""
+
+    def test_main_version(self, capsys):
+        from ult3edit.cli import main
+        old_argv = sys.argv
+        sys.argv = ['ult3edit', '--version']
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 0
+        finally:
+            sys.argv = old_argv
+
+    def test_main_dispatch_spell(self, capsys):
+        """main() dispatches 'spell view' through the routing dict."""
+        from ult3edit.cli import main
+        old_argv = sys.argv
+        sys.argv = ['ult3edit', 'spell', 'view']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Wizard Spells' in out
+
+    def test_main_dispatch_equip(self, capsys):
+        """main() dispatches 'equip view' through the routing dict."""
+        from ult3edit.cli import main
+        old_argv = sys.argv
+        sys.argv = ['ult3edit', 'equip', 'view']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Weapons' in out
+
+    def test_main_no_tool_shows_help(self, capsys):
+        """main() with no tool shows help and exits 0."""
+        from ult3edit.cli import main
+        old_argv = sys.argv
+        sys.argv = ['ult3edit']
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+            assert exc_info.value.code == 0
+        finally:
+            sys.argv = old_argv
+
+
+# =============================================================================
+# Coverage: __main__.py (2 uncovered lines) — import and call main
+# =============================================================================
+
+
+class TestDunderMain:
+    """Cover __main__.py lines 2-4: the module imports cli.main and calls it."""
+
+    def test_dunder_main_import_and_call(self):
+        """Importing __main__ calls main(), which uses sys.argv.
+        We mock sys.argv to '--help' so it exits cleanly."""
+        old_argv = sys.argv
+        sys.argv = ['ult3edit', '--help']
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                import importlib
+                # Force re-import since it may be cached
+                import ult3edit.__main__ as m
+                importlib.reload(m)
+            assert exc_info.value.code == 0
+        finally:
+            sys.argv = old_argv
+
+    def test_python_m_ult3edit_help(self):
+        """Run python -m ult3edit --help to cover __main__.py execution."""
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, '-m', 'ult3edit', '--help'],
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+        assert 'ult3edit' in result.stdout
+

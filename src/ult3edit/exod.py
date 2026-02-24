@@ -554,7 +554,7 @@ def encode_hgr_image(pixels: list, width: int, height: int,
             byte_val = byte_palettes[byte_idx] << 7
             for bit in range(7):
                 pix_idx = pix_start + bit
-                if pix_idx >= width:
+                if pix_idx >= width:  # pragma: no cover — num_bytes = width // 7
                     break
                 if matched_colors[pix_idx] != 'black':
                     byte_val |= (1 << bit)

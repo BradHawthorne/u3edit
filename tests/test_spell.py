@@ -108,3 +108,77 @@ class TestSpellDispatchFallback:
         err = capsys.readouterr().err
         assert 'Usage' in err
 
+
+# =============================================================================
+# Coverage: spell.py lines 59, 65-76 — dispatch view route and main()
+# =============================================================================
+
+
+class TestSpellDispatchView:
+    """Cover line 59: dispatch routes spell_command='view' to cmd_view."""
+
+    def test_dispatch_view_runs(self, capsys):
+        from ult3edit.spell import dispatch
+        args = argparse.Namespace(
+            spell_command='view',
+            json=False, output=None,
+            wizard_only=False, cleric_only=False)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Wizard Spells' in out
+
+
+class TestSpellMain:
+    """Cover lines 65-76: main() standalone entry point."""
+
+    def test_main_view(self, capsys):
+        from ult3edit.spell import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-spell', 'view']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Wizard Spells' in out
+        assert 'Cleric Spells' in out
+
+    def test_main_view_wizard_only(self, capsys):
+        from ult3edit.spell import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-spell', 'view', '--wizard-only']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        out = capsys.readouterr().out
+        assert 'Wizard Spells' in out
+        assert 'Cleric Spells' not in out
+
+    def test_main_view_json(self, tmp_path, capsys):
+        from ult3edit.spell import main
+        outfile = tmp_path / 'spells.json'
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-spell', 'view', '--json', '--output', str(outfile)]
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        result = json.loads(outfile.read_text())
+        assert 'wizard' in result
+
+    def test_main_no_subcommand(self, capsys):
+        from ult3edit.spell import main
+        import sys
+        old_argv = sys.argv
+        sys.argv = ['ult3-spell']
+        try:
+            main()
+        finally:
+            sys.argv = old_argv
+        err = capsys.readouterr().err
+        assert 'Usage' in err or 'usage' in err.lower() or 'spell' in err.lower()
+

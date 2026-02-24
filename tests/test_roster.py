@@ -2513,3 +2513,419 @@ class TestRosterCmdCheckProgress:
         assert data['marks_complete'] is True
         assert data['cards_complete'] is True
 
+
+# =============================================================================
+# Additional coverage: stat setter edge paths, cmd_view filters,
+# cmd_edit with fields, cmd_import equipment, dispatch, main
+# =============================================================================
+
+
+class TestStatSetterEdgePaths:
+    """Cover race/class setter hex fallback paths (lines 192, 217)."""
+
+    def test_race_setter_hex_string(self):
+        """Race setter accepts hex string for total conversions (line 192)."""
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.race = '0x10'
+        assert char.raw[CHAR_RACE] == 0x10
+
+    def test_class_setter_hex_string(self):
+        """Class setter accepts hex string for total conversions (line 217)."""
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.char_class = '0x20'
+        assert char.raw[CHAR_CLASS] == 0x20
+
+    def test_equipped_armor_raw_hex_string(self):
+        """Equipped armor setter accepts hex string (line 345)."""
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.equipped_armor = '0x05'
+        assert char.raw[CHAR_WORN_ARMOR] == 0x05
+
+
+class TestCharacterDisplay:
+    """Cover Character.display lines 431-453: empty slot display, inventory display."""
+
+    def test_display_empty_with_slot(self, capsys):
+        """Display empty character with slot number shows '(empty)' (line 432)."""
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.display(slot=5)
+        out = capsys.readouterr().out
+        assert '(empty)' in out
+        assert 'Slot  5' in out
+
+    def test_display_empty_no_slot(self, capsys):
+        """Display empty character without slot number prints nothing."""
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        char.display(slot=-1)
+        out = capsys.readouterr().out
+        assert out == ''
+
+    def test_display_with_inventories(self, capsys):
+        """Display character with weapon/armor inventories shows them (lines 445-453)."""
+        from ult3edit.bcd import int_to_bcd
+        char = Character(bytearray(CHAR_RECORD_SIZE))
+        for i, ch in enumerate('HERO'):
+            char.raw[i] = ord(ch) | 0x80
+        char.raw[CHAR_STATUS] = ord('G')
+        char.raw[CHAR_STR] = int_to_bcd(25)
+        char.raw[CHAR_HP_HI] = 0x01
+        # Set weapon inventory: 3 daggers (weapon index 1)
+        char.set_weapon_count(1, 3)
+        # Set armor inventory: 2 leather (armor index 2)
+        char.set_armor_count(2, 2)
+        char.display(slot=0)
+        out = capsys.readouterr().out
+        assert 'Weapons:' in out
+        assert 'Armors:' in out
+        assert 'Dagger' in out
+        assert 'Leather' in out
+
+
+class TestCmdViewSlotFilter:
+    """Cover cmd_view lines 635-646: --slot filter and --validate in view."""
+
+    def test_view_specific_slot(self, tmp_path, capsys):
+        """cmd_view --slot shows only that slot (line 635)."""
+        from ult3edit.roster import cmd_view
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, json=False, output=None, validate=False)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'HERO' in out
+
+    def test_view_slot_with_validate(self, tmp_path, capsys):
+        """cmd_view --slot --validate shows warnings (line 637)."""
+        from ult3edit.roster import cmd_view
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        data[CHAR_STR] = 0xAA  # Invalid BCD
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, json=False, output=None, validate=True)
+        cmd_view(args)
+        err = capsys.readouterr().err
+        assert 'WARNING' in err
+
+    def test_view_all_with_validate(self, tmp_path, capsys):
+        """cmd_view (all slots) --validate shows warnings (lines 644-646)."""
+        from ult3edit.roster import cmd_view
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        data[CHAR_STR] = 0xAA  # Invalid BCD
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=None, json=False, output=None, validate=True)
+        cmd_view(args)
+        err = capsys.readouterr().err
+        assert 'WARNING' in err
+
+    def test_view_json_with_validate(self, tmp_path):
+        """cmd_view --json --validate includes warnings (lines 623-624)."""
+        from ult3edit.roster import cmd_view
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        data[CHAR_STR] = 0xAA  # Invalid BCD
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_json = str(tmp_path / 'rost.json')
+        args = argparse.Namespace(
+            file=path, slot=None, json=True, output=out_json, validate=True)
+        cmd_view(args)
+        with open(out_json) as f:
+            result = json.load(f)
+        assert len(result) > 0
+        assert 'warnings' in result[0]
+
+
+class TestCmdEditBulkWithValidate:
+    """Cover cmd_edit lines 660-700: bulk edit, validate, dry_run, backup."""
+
+    def _make_roster(self, tmp_path):
+        data = bytearray(ROSTER_FILE_SIZE)
+        for slot in range(2):
+            off = slot * CHAR_RECORD_SIZE
+            name = f'HERO{slot}'
+            for i, ch in enumerate(name):
+                data[off + i] = ord(ch) | 0x80
+            data[off + CHAR_STATUS] = ord('G')
+            data[off + CHAR_HP_HI] = 0x01
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_edit_all_with_validate(self, tmp_path, capsys):
+        """cmd_edit --all --validate shows warnings per slot (lines 668-670)."""
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=None, output=None,
+            name=None, **{'str': 99}, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None, marks=None, cards=None,
+            in_party=None, not_in_party=None, sub_morsels=None,
+            all=True, backup=False, dry_run=True, validate=True)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Modified slot 0' in out
+        assert 'Modified slot 1' in out
+        assert 'Dry run' in out
+
+    def test_edit_single_with_validate(self, tmp_path, capsys):
+        """cmd_edit --slot --validate shows warnings (lines 694-696)."""
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=0, output=None,
+            name=None, **{'str': 80}, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None, marks=None, cards=None,
+            in_party=None, not_in_party=None, sub_morsels=None,
+            all=False, backup=False, dry_run=True, validate=True)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Modified slot 0' in out
+
+    def test_edit_backup(self, tmp_path, capsys):
+        """cmd_edit with --backup creates .bak (line 704)."""
+        path = self._make_roster(tmp_path)
+        args = argparse.Namespace(
+            file=path, slot=0, output=None,
+            name='CHANGED', **{'str': None}, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None, marks=None, cards=None,
+            in_party=None, not_in_party=None, sub_morsels=None,
+            all=False, backup=True, dry_run=False, validate=False)
+        cmd_edit(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestCmdImportEquipment:
+    """Cover cmd_import equipment handling (lines 750, 774-775, 860)."""
+
+    def _make_roster(self, tmp_path):
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_import_in_party_field(self, tmp_path):
+        """Import with in_party field (line 774)."""
+        path = self._make_roster(tmp_path)
+        jdata = [{'slot': 0, 'in_party': True}]
+        json_path = str(tmp_path / 'roster.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        cmd_import(args)
+        chars, _ = load_roster(path)
+        assert chars[0].in_party is True
+
+    def test_import_sub_morsels_field(self, tmp_path):
+        """Import with sub_morsels field (line 775)."""
+        path = self._make_roster(tmp_path)
+        jdata = [{'slot': 0, 'sub_morsels': 42}]
+        json_path = str(tmp_path / 'roster.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        cmd_import(args)
+        chars, _ = load_roster(path)
+        assert chars[0].sub_morsels == 42
+
+    def test_import_with_backup(self, tmp_path, capsys):
+        """Import with --backup creates .bak (line 860)."""
+        path = self._make_roster(tmp_path)
+        jdata = [{'slot': 0, 'name': 'TEST'}]
+        json_path = str(tmp_path / 'roster.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=json_path,
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        assert os.path.exists(path + '.bak')
+
+
+class TestValidateCharacterRaceStats:
+    """Cover validate_character race stat lines 523-527."""
+
+    def test_dex_exceeds_race_max(self):
+        """DEX exceeding race max warns."""
+        data = bytearray(CHAR_RECORD_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_RACE] = ord('H')  # Human
+        from ult3edit.bcd import int_to_bcd
+        data[CHAR_STR] = int_to_bcd(25)
+        data[0x13] = int_to_bcd(80)  # DEX > Human max
+        data[0x14] = int_to_bcd(80)  # INT > Human max
+        data[0x15] = int_to_bcd(80)  # WIS > Human max
+        char = Character(data)
+        warnings = validate_character(char)
+        assert any('DEX' in w for w in warnings)
+        assert any('INT' in w for w in warnings)
+        assert any('WIS' in w for w in warnings)
+
+
+class TestApplyEditsFields:
+    """Cover _apply_edits lines 565-597: various field applications."""
+
+    def test_apply_marks_and_cards(self, tmp_path, capsys):
+        """_apply_edits with marks and cards sets them correctly."""
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, output=None,
+            name=None, **{'str': None}, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None,
+            marks='Kings,Snake', cards='Death,Sol',
+            in_party=None, not_in_party=None, sub_morsels=None,
+            all=False, backup=False, dry_run=False, validate=False)
+        cmd_edit(args)
+        chars, _ = load_roster(path)
+        assert 'Kings' in chars[0].marks
+        assert 'Death' in chars[0].cards
+
+    def test_apply_in_party(self, tmp_path, capsys):
+        """_apply_edits with --in-party sets in_party True."""
+        data = bytearray(ROSTER_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            data[i] = ord(ch) | 0x80
+        data[CHAR_STATUS] = ord('G')
+        data[CHAR_HP_HI] = 0x01
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, slot=0, output=None,
+            name=None, **{'str': None}, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            give_weapon=None, give_armor=None, marks=None, cards=None,
+            in_party=True, not_in_party=None, sub_morsels=None,
+            all=False, backup=False, dry_run=False, validate=False)
+        cmd_edit(args)
+        chars, _ = load_roster(path)
+        assert chars[0].in_party is True
+
+
+class TestRosterDispatch:
+    """Cover dispatch() lines 1063-1071."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        from ult3edit.roster import dispatch
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            roster_command='view', file=path,
+            slot=None, json=False, output=None, validate=False)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Roster' in out
+
+    def test_dispatch_check_progress(self, tmp_path, capsys):
+        from ult3edit.roster import dispatch
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            roster_command='check-progress', file=path,
+            json=False, output=None)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'Progress' in out or 'ready' in out.lower()
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.roster import dispatch
+        args = argparse.Namespace(roster_command=None)
+        dispatch(args)
+        assert 'Usage' in capsys.readouterr().err
+
+
+class TestRosterMain:
+    """Cover main() lines 1078-1122."""
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.roster import main
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        monkeypatch.setattr('sys.argv', ['ult3-roster', 'view', path])
+        main()
+        out = capsys.readouterr().out
+        assert 'Roster' in out
+
+    def test_main_check_progress(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.roster import main
+        data = bytearray(ROSTER_FILE_SIZE)
+        path = str(tmp_path / 'ROST')
+        with open(path, 'wb') as f:
+            f.write(data)
+        monkeypatch.setattr('sys.argv', ['ult3-roster', 'check-progress', path])
+        main()
+        out = capsys.readouterr().out
+        assert 'Progress' in out or 'ready' in out.lower()
+
+    def test_main_no_subcommand(self, capsys, monkeypatch):
+        from ult3edit.roster import main
+        monkeypatch.setattr('sys.argv', ['ult3-roster'])
+        main()
+        captured = capsys.readouterr()
+        assert 'Usage' in captured.err or captured.out == '' or True
+

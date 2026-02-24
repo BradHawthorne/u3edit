@@ -424,7 +424,7 @@ def diff_file(path1: str, path2: str) -> FileDiff | None:
         return _diff_plrs(path1, path2)
     if ftype in ('SOSA', 'SOSM', 'MBS', 'TEXT', 'DDRW', 'SHPS'):
         return diff_binary(path1, path2, ftype)
-    return None
+    return None  # pragma: no cover — all detect_file_type results handled above
 
 
 def diff_directories(dir1: str, dir2: str) -> GameDiff:

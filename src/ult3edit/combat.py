@@ -251,7 +251,7 @@ def _has_cli_edit_args(args) -> bool:
 
 def cmd_edit(args) -> None:
     """Edit a combat map via CLI args or TUI fallback."""
-    if not _has_cli_edit_args(args):
+    if not _has_cli_edit_args(args):  # pragma: no cover
         # No CLI args — launch TUI editor
         from .tui import require_prompt_toolkit
         require_prompt_toolkit()

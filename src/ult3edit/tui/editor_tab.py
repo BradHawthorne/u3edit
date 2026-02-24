@@ -28,7 +28,7 @@ class TileEditorTab:
     def is_dirty(self):
         return self._editor.state.dirty
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         return self._editor._build_ui(embedded=True)
 
     def save(self):
@@ -49,7 +49,7 @@ class TextEditorTab:
     def is_dirty(self):
         return self._editor.dirty
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         return self._editor._build_ui(embedded=True)
 
     def save(self):
@@ -70,7 +70,7 @@ class DialogEditorTab:
     def is_dirty(self):
         return self._editor.is_dirty
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         return self._editor.build_ui()
 
     def save(self):
@@ -108,7 +108,7 @@ class DrillDownTab:
         if self.active_editor:
             self.active_editor.save()
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         """Build a dynamic container that switches between selector and editor."""
         tab = self
 

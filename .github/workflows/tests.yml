@@ -45,4 +45,4 @@ jobs:
 
       - name: Run tests with coverage
         if: matrix.python-version == '3.13'
-        run: pytest -v --cov=ult3edit --cov-report=xml --cov-report=term-missing --cov-fail-under=75
+        run: pytest -v --cov=ult3edit --cov-report=xml --cov-report=term-missing --cov-fail-under=100

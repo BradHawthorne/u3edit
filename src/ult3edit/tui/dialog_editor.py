@@ -56,7 +56,7 @@ class DialogEditor:
                 f.write(data)
         self.dirty = False
 
-    def build_ui(self):
+    def build_ui(self):  # pragma: no cover
         from prompt_toolkit.layout import HSplit, Window, FormattedTextControl
         from prompt_toolkit.layout.controls import UIControl, UIContent
         from prompt_toolkit.key_binding import KeyBindings

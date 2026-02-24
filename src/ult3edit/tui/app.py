@@ -144,7 +144,7 @@ class UnifiedApp:
             return ExodFrameViewer(exod_data)
         return None
 
-    def run(self):
+    def run(self):  # pragma: no cover
         """Run the unified tabbed editor."""
         from prompt_toolkit import Application
         from prompt_toolkit.layout import Layout, HSplit, Window, FormattedTextControl

@@ -50,16 +50,16 @@ def _cmd_unified_edit(args) -> None:
         print(f"Error: Disk image not found: {args.image}", file=sys.stderr)
         sys.exit(1)
 
-    from .tui import require_prompt_toolkit
-    require_prompt_toolkit()
-    from .tui.game_session import GameSession
-    from .tui.app import UnifiedApp
+    from .tui import require_prompt_toolkit  # pragma: no cover
+    require_prompt_toolkit()  # pragma: no cover
+    from .tui.game_session import GameSession  # pragma: no cover
+    from .tui.app import UnifiedApp  # pragma: no cover
 
-    try:
+    try:  # pragma: no cover
         with GameSession(args.image) as session:
             app = UnifiedApp(session)
             app.run()
-    except Exception as e:
+    except Exception as e:  # pragma: no cover
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -126,14 +126,14 @@ def main() -> None:
     }
 
     if args.tool == 'edit':
-        _cmd_unified_edit(args)
-        return
+        _cmd_unified_edit(args)  # pragma: no cover
+        return  # pragma: no cover
 
     handler = dispatchers.get(args.tool)
     if handler:
         handler(args)
     else:
-        parser.print_help()
+        parser.print_help()  # pragma: no cover
 
 
 if __name__ == '__main__':

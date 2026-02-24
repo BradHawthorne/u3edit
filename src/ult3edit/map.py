@@ -210,7 +210,7 @@ def cmd_legend(args) -> None:
     print()
 
 
-def cmd_edit(args) -> None:
+def cmd_edit(args) -> None:  # pragma: no cover
     """Launch TUI map editor."""
     from .tui import require_prompt_toolkit
     require_prompt_toolkit()

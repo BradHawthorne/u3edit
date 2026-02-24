@@ -7,14 +7,15 @@ import pytest
 
 from ult3edit.diff import (
     FieldDiff, EntityDiff, FileDiff, GameDiff,
-    diff_dicts, diff_roster, diff_bestiary, diff_map, diff_special,
-    _diff_prty, detect_file_type, diff_directories,
-    format_text, format_summary, to_json, cmd_diff,
+    diff_dicts, _diff_lists, diff_roster, diff_bestiary, diff_map, diff_special,
+    _diff_prty, _diff_plrs, diff_tlk, detect_file_type, diff_file,
+    diff_directories, diff_binary,
+    format_text, format_summary, to_json, cmd_diff, dispatch,
 )
 from ult3edit.constants import (
     CHAR_RECORD_SIZE, CHAR_HP_HI, CHAR_STATUS, ROSTER_FILE_SIZE, CHAR_STR,
-    MON_FILE_SIZE, PRTY_FILE_SIZE, SPECIAL_FILE_SIZE, CON_FILE_SIZE,
-    MAP_OVERWORLD_SIZE, MAP_DUNGEON_SIZE, PRTY_OFF_TRANSPORT,
+    MON_FILE_SIZE, PRTY_FILE_SIZE, PLRS_FILE_SIZE, SPECIAL_FILE_SIZE,
+    CON_FILE_SIZE, MAP_OVERWORLD_SIZE, MAP_DUNGEON_SIZE, PRTY_OFF_TRANSPORT,
 )
 from ult3edit.bcd import int_to_bcd
 from ult3edit.tlk import encode_record
@@ -708,7 +709,6 @@ class TestDiffNewFileTypes:
 
     def test_diff_binary_identical(self, tmp_path, capsys):
         """Identical binary files show no byte changes."""
-        from ult3edit.diff import diff_binary
         from ult3edit.constants import DDRW_FILE_SIZE
         da = tmp_path / 'a'
         db = tmp_path / 'b'
@@ -1019,7 +1019,6 @@ class TestDiffTlk:
 
     def test_identical_tlk(self, tmp_path):
         """Identical TLK files produce no changes."""
-        from ult3edit.diff import diff_tlk
         data = encode_record(['HELLO WORLD'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
         p2 = os.path.join(str(tmp_path), 'TLKA2')
@@ -1032,7 +1031,6 @@ class TestDiffTlk:
 
     def test_changed_record(self, tmp_path):
         """Changed dialog record is detected."""
-        from ult3edit.diff import diff_tlk
         d1 = encode_record(['HELLO WORLD'])
         d2 = encode_record(['GOODBYE WORLD'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
@@ -1046,7 +1044,6 @@ class TestDiffTlk:
 
     def test_added_record(self, tmp_path):
         """Extra record in file2 shows as added."""
-        from ult3edit.diff import diff_tlk
         d1 = encode_record(['HELLO'])
         d2 = encode_record(['HELLO']) + encode_record(['EXTRA'])
         p1 = os.path.join(str(tmp_path), 'TLKA1')
@@ -1064,7 +1061,6 @@ class TestDiffBinary:
 
     def test_identical_binary(self, tmp_path):
         """Identical binary files show no changes."""
-        from ult3edit.diff import diff_binary
         data = bytes(100)
         p1 = os.path.join(str(tmp_path), 'FILE1')
         p2 = os.path.join(str(tmp_path), 'FILE2')
@@ -1077,7 +1073,6 @@ class TestDiffBinary:
 
     def test_changed_binary(self, tmp_path):
         """Changed bytes detected in binary diff."""
-        from ult3edit.diff import diff_binary
         d1 = bytes(100)
         d2 = bytearray(100)
         d2[50] = 0xFF
@@ -1092,7 +1087,6 @@ class TestDiffBinary:
 
     def test_different_size_binary(self, tmp_path):
         """Different-sized binaries show size diff."""
-        from ult3edit.diff import diff_binary
         p1 = os.path.join(str(tmp_path), 'FILE1')
         p2 = os.path.join(str(tmp_path), 'FILE2')
         with open(p1, 'wb') as f:
@@ -1147,7 +1141,6 @@ class TestDiffFileDispatch:
 
     def test_diff_file_roster(self, tmp_path):
         """diff_file dispatches correctly for ROST files."""
-        from ult3edit.diff import diff_file
         data = bytearray(ROSTER_FILE_SIZE)
         p1 = os.path.join(str(tmp_path), 'ROST')
         p2 = os.path.join(str(tmp_path), 'ROST2')
@@ -1162,7 +1155,6 @@ class TestDiffFileDispatch:
 
     def test_diff_file_unknown_returns_none(self, tmp_path):
         """diff_file with unrecognizable files returns None."""
-        from ult3edit.diff import diff_file
         p1 = os.path.join(str(tmp_path), 'UNKNOWN1')
         p2 = os.path.join(str(tmp_path), 'UNKNOWN2')
         with open(p1, 'wb') as f:
@@ -1289,7 +1281,6 @@ class TestDiffFileGaps:
 
     def test_diff_file_undetectable_type(self, tmp_path):
         """diff_file returns None for unrecognizable files."""
-        from ult3edit.diff import diff_file
         p1 = os.path.join(str(tmp_path), 'UNKNOWN1')
         p2 = os.path.join(str(tmp_path), 'UNKNOWN2')
         with open(p1, 'wb') as f:
@@ -1311,7 +1302,6 @@ class TestDiffFileGaps:
 
     def test_diff_file_binary_type(self, tmp_path):
         """diff_file handles binary file types (TEXT, DDRW, SHPS)."""
-        from ult3edit.diff import diff_file
         from ult3edit.constants import TEXT_FILE_SIZE
         p1 = os.path.join(str(tmp_path), 'TEXT')
         p2 = os.path.join(str(tmp_path), 'TEXT2')
@@ -1327,7 +1317,6 @@ class TestDiffFileGaps:
 
     def test_diff_file_prty(self, tmp_path):
         """diff_file handles PRTY files."""
-        from ult3edit.diff import diff_file
         p1 = os.path.join(str(tmp_path), 'PRTY')
         p2 = os.path.join(str(tmp_path), 'PRTY2')
         data1 = bytearray(PRTY_FILE_SIZE)
@@ -1372,7 +1361,6 @@ class TestDiffFileDispatchCombat:
     """Test diff_file dispatches to diff_combat for CON files."""
 
     def test_diff_file_combat(self, tmp_path):
-        from ult3edit.diff import diff_file
         p1 = os.path.join(str(tmp_path), 'CONA')
         p2 = os.path.join(str(tmp_path), 'CONA_2')
         data = bytearray(192)
@@ -1390,7 +1378,6 @@ class TestDiffFileDispatchTlk:
     """Test diff_file dispatches to diff_tlk for TLK files."""
 
     def test_diff_file_tlk(self, tmp_path):
-        from ult3edit.diff import diff_file
         # Build a simple TLK file (text record + null terminator)
         rec = bytearray([ord('H') | 0x80, ord('I') | 0x80, 0x00])
         p1 = os.path.join(str(tmp_path), 'TLKA')
@@ -1409,7 +1396,6 @@ class TestDiffFileDispatchSpecial:
     """Test diff_file dispatches to diff_special for BRND/SHRN files."""
 
     def test_diff_file_special(self, tmp_path):
-        from ult3edit.diff import diff_file
         p1 = os.path.join(str(tmp_path), 'BRND')
         p2 = os.path.join(str(tmp_path), 'BRND_2')
         data = bytearray(128)
@@ -1445,7 +1431,6 @@ class TestDiffBinaryChangedBytes:
     """Test diff_binary changed_bytes FieldDiff uses old=0 sentinel."""
 
     def test_changed_bytes_old_is_zero(self, tmp_path):
-        from ult3edit.diff import diff_binary
         p1 = os.path.join(str(tmp_path), 'FILE1')
         p2 = os.path.join(str(tmp_path), 'FILE2')
         with open(p1, 'wb') as f:
@@ -1591,4 +1576,442 @@ class TestDiffMapDungeonLevelFormat:
         text = format_text(gd)
         assert 'Level' not in text
         assert '(20, 10)' in text
+
+
+# =============================================================================
+# Batch 3: Coverage for diff.py uncovered lines
+# =============================================================================
+
+
+class TestDiffListsNestedDicts:
+    """Cover line 134: _diff_lists with nested dicts inside list elements."""
+
+    def test_nested_dicts_in_list(self):
+        old = [{'hp': 10, 'name': 'A'}, {'hp': 20}]
+        new = [{'hp': 99, 'name': 'A'}, {'hp': 20}]
+        diffs = _diff_lists(old, new, 'items')
+        assert len(diffs) == 1
+        assert diffs[0].path == 'items[0].hp'
+        assert diffs[0].old == 10
+        assert diffs[0].new == 99
+
+
+class TestDiffBestiaryAddedRemoved:
+    """Cover lines 194-201: bestiary added/removed monster detection."""
+
+    def test_added_monster(self, tmp_path):
+        """Empty slot in file1, populated in file2 -> added."""
+        from ult3edit.diff import diff_bestiary
+        d1 = bytearray(MON_FILE_SIZE)  # all empty
+        d2 = bytearray(MON_FILE_SIZE)
+        # Monster 0: set tile1 and tile2 to make non-empty
+        d2[0 * 16 + 0] = 0x48  # tile1
+        d2[1 * 16 + 0] = 0x48  # tile2
+        d2[4 * 16 + 0] = 50    # hp
+        p1 = str(tmp_path / 'MONA1')
+        p2 = str(tmp_path / 'MONA2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = diff_bestiary(p1, p2, 'A')
+        assert len(fd.added_entities) >= 1
+        # The label should include the monster's name from file2
+        assert 'Monster #0' in fd.added_entities[0]
+
+    def test_removed_monster(self, tmp_path):
+        """Populated slot in file1, empty in file2 -> removed."""
+        from ult3edit.diff import diff_bestiary
+        d1 = bytearray(MON_FILE_SIZE)
+        d2 = bytearray(MON_FILE_SIZE)
+        d1[0 * 16 + 0] = 0x48
+        d1[1 * 16 + 0] = 0x48
+        d1[4 * 16 + 0] = 50
+        p1 = str(tmp_path / 'MONA1')
+        p2 = str(tmp_path / 'MONA2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = diff_bestiary(p1, p2, 'A')
+        assert len(fd.removed_entities) >= 1
+
+
+class TestDiffPlrs:
+    """Cover lines 243-265: _diff_plrs comparing PLRS files."""
+
+    def test_plrs_identical(self, tmp_path):
+        data = bytearray(PLRS_FILE_SIZE)
+        p1 = str(tmp_path / 'PLRS1')
+        p2 = str(tmp_path / 'PLRS2')
+        with open(p1, 'wb') as f:
+            f.write(data)
+        with open(p2, 'wb') as f:
+            f.write(data)
+        fd = _diff_plrs(p1, p2)
+        assert not fd.changed
+
+    def test_plrs_added_character(self, tmp_path):
+        """Empty slot in file1, populated in file2 -> added."""
+        d1 = bytearray(PLRS_FILE_SIZE)
+        d2 = bytearray(PLRS_FILE_SIZE)
+        # Set name in slot 0 of d2 to make it non-empty
+        for i, ch in enumerate('TEST'):
+            d2[i] = ord(ch) | 0x80
+        d2[CHAR_STATUS] = ord('G')
+        p1 = str(tmp_path / 'PLRS1')
+        p2 = str(tmp_path / 'PLRS2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = _diff_plrs(p1, p2)
+        assert len(fd.added_entities) >= 1
+        assert 'Active slot 0' in fd.added_entities[0]
+
+    def test_plrs_removed_character(self, tmp_path):
+        """Populated slot in file1, empty in file2 -> removed."""
+        d1 = bytearray(PLRS_FILE_SIZE)
+        d2 = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            d1[i] = ord(ch) | 0x80
+        d1[CHAR_STATUS] = ord('G')
+        p1 = str(tmp_path / 'PLRS1')
+        p2 = str(tmp_path / 'PLRS2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = _diff_plrs(p1, p2)
+        assert len(fd.removed_entities) >= 1
+
+    def test_plrs_changed_character(self, tmp_path):
+        """Both slots populated but different -> field diffs."""
+        d1 = bytearray(PLRS_FILE_SIZE)
+        d2 = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            d1[i] = ord(ch) | 0x80
+            d2[i] = ord(ch) | 0x80
+        d1[CHAR_STATUS] = ord('G')
+        d2[CHAR_STATUS] = ord('G')
+        d1[CHAR_STR] = int_to_bcd(25)
+        d2[CHAR_STR] = int_to_bcd(50)
+        p1 = str(tmp_path / 'PLRS1')
+        p2 = str(tmp_path / 'PLRS2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = _diff_plrs(p1, p2)
+        assert fd.changed
+        assert any(e.changed for e in fd.entities)
+
+
+class TestDiffTlkRemoved:
+    """Cover line 312: diff_tlk with removed record."""
+
+    def test_removed_record(self, tmp_path):
+        d1 = encode_record(['HELLO']) + encode_record(['EXTRA'])
+        d2 = encode_record(['HELLO'])
+        p1 = str(tmp_path / 'TLKA1')
+        p2 = str(tmp_path / 'TLKA2')
+        with open(p1, 'wb') as f:
+            f.write(d1)
+        with open(p2, 'wb') as f:
+            f.write(d2)
+        fd = diff_tlk(p1, p2, 'A')
+        assert len(fd.removed_entities) >= 1
+
+
+class TestDetectFileTypeSaveSound:
+    """Cover lines 370-374: detect_file_type for PLRS, SOSA, SOSM."""
+
+    def test_detect_plrs(self, tmp_path):
+        from ult3edit.diff import detect_file_type
+        path = str(tmp_path / 'PLRS')
+        with open(path, 'wb') as f:
+            f.write(bytearray(PLRS_FILE_SIZE))
+        assert detect_file_type(path) == 'PLRS'
+
+    def test_detect_sosa(self, tmp_path):
+        from ult3edit.diff import detect_file_type
+        from ult3edit.constants import SOSA_FILE_SIZE
+        path = str(tmp_path / 'SOSA')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSA_FILE_SIZE))
+        assert detect_file_type(path) == 'SOSA'
+
+    def test_detect_sosm(self, tmp_path):
+        from ult3edit.diff import detect_file_type
+        from ult3edit.constants import SOSM_FILE_SIZE
+        path = str(tmp_path / 'SOSM')
+        with open(path, 'wb') as f:
+            f.write(bytearray(SOSM_FILE_SIZE))
+        assert detect_file_type(path) == 'SOSM'
+
+
+class TestDiffFileDispatchExtended:
+    """Cover lines 412, 424, 427: diff_file dispatch for MON, PLRS, and fallback."""
+
+    def test_diff_file_mon(self, tmp_path):
+        """diff_file dispatches to diff_bestiary for MON files."""
+        data = bytearray(MON_FILE_SIZE)
+        p1 = str(tmp_path / 'MONA')
+        p2 = str(tmp_path / 'MONA2')
+        with open(p1, 'wb') as f:
+            f.write(data)
+        with open(p2, 'wb') as f:
+            f.write(data)
+        result = diff_file(p1, p2)
+        assert result is not None
+        assert result.file_type == 'MONA'
+
+    def test_diff_file_plrs(self, tmp_path):
+        """diff_file dispatches to _diff_plrs for PLRS files."""
+        data = bytearray(PLRS_FILE_SIZE)
+        p1 = str(tmp_path / 'PLRS')
+        p2 = str(tmp_path / 'PLRS2')
+        with open(p1, 'wb') as f:
+            f.write(data)
+        with open(p2, 'wb') as f:
+            f.write(data)
+        result = diff_file(p1, p2)
+        assert result is not None
+        assert result.file_type == 'PLRS'
+
+    def test_diff_file_fallback_returns_none(self, tmp_path):
+        """diff_file returns None for unrecognizable type (line 427)."""
+        # Create a file that matches size but not name pattern
+        p1 = str(tmp_path / 'WEIRD')
+        p2 = str(tmp_path / 'WEIRD2')
+        with open(p1, 'wb') as f:
+            f.write(bytearray(7))
+        with open(p2, 'wb') as f:
+            f.write(bytearray(7))
+        result = diff_file(p1, p2)
+        assert result is None
+
+
+class TestDiffDirectoriesExtended:
+    """Cover lines 452, 459-460, 464, 485, 492: CON, MAP, save, special, TLK in dir diffs."""
+
+    def test_dir_with_con_files(self, tmp_path):
+        from ult3edit.diff import diff_directories
+        d1 = tmp_path / 'g1'
+        d2 = tmp_path / 'g2'
+        d1.mkdir()
+        d2.mkdir()
+        data1 = bytearray(CON_FILE_SIZE)
+        data2 = bytearray(CON_FILE_SIZE)
+        data2[0] = 0x04
+        (d1 / 'CONA').write_bytes(bytes(data1))
+        (d2 / 'CONA').write_bytes(bytes(data2))
+        gd = diff_directories(str(d1), str(d2))
+        con_files = [f for f in gd.files if f.file_name.startswith('CON')]
+        assert len(con_files) == 1
+        assert con_files[0].tile_changes >= 1
+
+    def test_dir_with_map_files(self, tmp_path):
+        from ult3edit.diff import diff_directories
+        d1 = tmp_path / 'g1'
+        d2 = tmp_path / 'g2'
+        d1.mkdir()
+        d2.mkdir()
+        data1 = bytearray(MAP_OVERWORLD_SIZE)
+        data2 = bytearray(MAP_OVERWORLD_SIZE)
+        data2[0] = 0xFF
+        (d1 / 'MAPA').write_bytes(bytes(data1))
+        (d2 / 'MAPA').write_bytes(bytes(data2))
+        gd = diff_directories(str(d1), str(d2))
+        map_files = [f for f in gd.files if f.file_name.startswith('MAP')]
+        assert len(map_files) == 1
+        assert map_files[0].tile_changes >= 1
+
+    def test_dir_with_save_files(self, tmp_path):
+        from ult3edit.diff import diff_directories
+        d1 = tmp_path / 'g1'
+        d2 = tmp_path / 'g2'
+        d1.mkdir()
+        d2.mkdir()
+        data1 = bytearray(PRTY_FILE_SIZE)
+        data2 = bytearray(PRTY_FILE_SIZE)
+        data2[0] = 0x03
+        (d1 / 'PRTY').write_bytes(bytes(data1))
+        (d2 / 'PRTY').write_bytes(bytes(data2))
+        gd = diff_directories(str(d1), str(d2))
+        save_files = [f for f in gd.files if f.file_type == 'PRTY']
+        assert len(save_files) >= 1
+
+    def test_dir_with_special_files(self, tmp_path):
+        from ult3edit.diff import diff_directories
+        d1 = tmp_path / 'g1'
+        d2 = tmp_path / 'g2'
+        d1.mkdir()
+        d2.mkdir()
+        data1 = bytearray(SPECIAL_FILE_SIZE)
+        data2 = bytearray(SPECIAL_FILE_SIZE)
+        data2[0] = 0xFF
+        (d1 / 'BRND').write_bytes(bytes(data1))
+        (d2 / 'BRND').write_bytes(bytes(data2))
+        gd = diff_directories(str(d1), str(d2))
+        sp_files = [f for f in gd.files if f.file_name == 'BRND']
+        assert len(sp_files) == 1
+        assert sp_files[0].tile_changes >= 1
+
+    def test_dir_with_tlk_files(self, tmp_path):
+        from ult3edit.diff import diff_directories
+        d1 = tmp_path / 'g1'
+        d2 = tmp_path / 'g2'
+        d1.mkdir()
+        d2.mkdir()
+        rec1 = encode_record(['HELLO'])
+        rec2 = encode_record(['GOODBYE'])
+        (d1 / 'TLKA').write_bytes(rec1)
+        (d2 / 'TLKA').write_bytes(rec2)
+        gd = diff_directories(str(d1), str(d2))
+        tlk_files = [f for f in gd.files if f.file_name.startswith('TLK')]
+        assert len(tlk_files) == 1
+        assert tlk_files[0].changed
+
+
+class TestFormatTextSkipUnchanged:
+    """Cover line 520: format_text skips unchanged entities."""
+
+    def test_unchanged_entity_not_in_output(self):
+        gd = GameDiff()
+        fd = FileDiff('ROST', 'ROST')
+        # One changed entity, one unchanged
+        ed1 = EntityDiff('character', 'Slot 0: HERO')
+        ed1.fields.append(FieldDiff('hp', 100, 200))
+        ed2 = EntityDiff('character', 'Slot 1: MAGE')
+        # No fields -> unchanged
+        fd.entities.extend([ed1, ed2])
+        gd.files.append(fd)
+        text = format_text(gd)
+        assert 'Slot 0: HERO' in text
+        assert 'Slot 1: MAGE' not in text
+
+
+class TestFormatSummaryRemoved:
+    """Cover line 557: format_summary with removed entities."""
+
+    def test_summary_shows_removed(self):
+        gd = GameDiff()
+        fd = FileDiff('ROST', 'ROST')
+        fd.removed_entities.append('Slot 5: THIEF')
+        gd.files.append(fd)
+        text = format_summary(gd)
+        assert '1 removed' in text
+
+
+class TestToJsonExtended:
+    """Cover lines 581, 584, 595-596: to_json with removed, skip-unchanged, tile_changes."""
+
+    def test_json_includes_removed(self):
+        gd = GameDiff()
+        fd = FileDiff('ROST', 'ROST')
+        fd.removed_entities.append('Slot 1')
+        gd.files.append(fd)
+        result = to_json(gd)
+        assert result['files'][0]['removed'] == ['Slot 1']
+
+    def test_json_skips_unchanged_entity(self):
+        gd = GameDiff()
+        fd = FileDiff('ROST', 'ROST')
+        ed = EntityDiff('character', 'Slot 0')
+        # No fields -> unchanged -> should be skipped
+        fd.entities.append(ed)
+        fd.tile_changes = 1  # But file-level is changed due to tiles
+        fd.tile_positions = [(0, 0)]
+        gd.files.append(fd)
+        result = to_json(gd)
+        # The entity list should be empty (the unchanged one is skipped)
+        assert result['files'][0]['entities'] == []
+
+    def test_json_includes_tile_positions(self):
+        gd = GameDiff()
+        fd = FileDiff('MAPA', 'MAPA')
+        fd.tile_changes = 2
+        fd.tile_positions = [(3, 4), (5, 6)]
+        gd.files.append(fd)
+        result = to_json(gd)
+        assert result['files'][0]['tile_changes'] == 2
+        assert result['files'][0]['tile_positions'] == [
+            {'x': 3, 'y': 4}, {'x': 5, 'y': 6}
+        ]
+
+
+class TestCmdDiffFileReturnsNone:
+    """Cover line 621: cmd_diff exits when diff_file returns None."""
+
+    def test_unknown_file_type_exits(self, tmp_path):
+        p1 = str(tmp_path / 'UNKNOWN1')
+        p2 = str(tmp_path / 'UNKNOWN2')
+        with open(p1, 'wb') as f:
+            f.write(bytearray(7))
+        with open(p2, 'wb') as f:
+            f.write(bytearray(7))
+        args = argparse.Namespace(
+            path1=p1, path2=p2, json=False, summary=False, output=None)
+        with pytest.raises(SystemExit):
+            cmd_diff(args)
+
+
+class TestDiffDispatch:
+    """Cover line 645: dispatch function."""
+
+    def test_dispatch_calls_cmd_diff(self, tmp_path, capsys):
+        data = bytearray(ROSTER_FILE_SIZE)
+        d1 = tmp_path / 'a'
+        d2 = tmp_path / 'b'
+        d1.mkdir()
+        d2.mkdir()
+        (d1 / 'ROST').write_bytes(bytes(data))
+        (d2 / 'ROST').write_bytes(bytes(data))
+        args = argparse.Namespace(
+            path1=str(d1 / 'ROST'), path2=str(d2 / 'ROST'),
+            json=False, summary=False, output=None)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'No differences' in out
+
+
+class TestDiffMain:
+    """Cover lines 650-658: main() standalone entry point."""
+
+    def test_main_with_files(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.diff import main
+        data = bytearray(ROSTER_FILE_SIZE)
+        d1 = tmp_path / 'a'
+        d2 = tmp_path / 'b'
+        d1.mkdir()
+        d2.mkdir()
+        p1 = str(d1 / 'ROST')
+        p2 = str(d2 / 'ROST')
+        (d1 / 'ROST').write_bytes(bytes(data))
+        (d2 / 'ROST').write_bytes(bytes(data))
+        monkeypatch.setattr(sys, 'argv', ['ult3-diff', p1, p2])
+        main()
+        out = capsys.readouterr().out
+        assert 'No differences' in out
+
+    def test_main_summary(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.diff import main
+        d1 = bytearray(ROSTER_FILE_SIZE)
+        d2 = bytearray(ROSTER_FILE_SIZE)
+        d2[CHAR_STR] = int_to_bcd(50)
+        da = tmp_path / 'a'
+        db = tmp_path / 'b'
+        da.mkdir()
+        db.mkdir()
+        p1 = str(da / 'ROST')
+        p2 = str(db / 'ROST')
+        (da / 'ROST').write_bytes(bytes(d1))
+        (db / 'ROST').write_bytes(bytes(d2))
+        monkeypatch.setattr(sys, 'argv', ['ult3-diff', p1, p2, '--summary'])
+        main()
+        out = capsys.readouterr().out
+        assert 'Total' in out
 

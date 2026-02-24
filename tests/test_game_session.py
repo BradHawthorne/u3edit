@@ -189,3 +189,76 @@ class TestDiskContextHashParsing:
         assert name == 'FOO'
         assert ft == 0x06
         assert at == 0x0000
+
+
+# =============================================================================
+# Coverage: game_session.py lines 28-30 (__init__), 33-36 (__enter__),
+# 39-41 (__exit__), 46 (_scan_catalog guard), 119 (EXOD catalog entry)
+# =============================================================================
+
+
+class TestGameSessionInit:
+    """Cover lines 28-30: GameSession.__init__ sets attributes."""
+
+    def test_init_attributes(self):
+        session = GameSession('fake.po')
+        assert session.image_path == 'fake.po'
+        assert session.ctx is None
+        assert session.catalog == {}
+
+
+class TestGameSessionExitWithoutCtx:
+    """Cover lines 39-41: __exit__ when ctx is None returns False."""
+
+    def test_exit_no_ctx(self):
+        session = GameSession('fake.po')
+        result = session.__exit__(None, None, None)
+        assert result is False
+
+
+class TestGameSessionScanNoCtx:
+    """Cover line 46: _scan_catalog returns early when ctx or tmpdir is None."""
+
+    def test_scan_no_ctx(self):
+        session = GameSession('fake.po')
+        session._scan_catalog()
+        assert session.catalog == {}
+
+    def test_scan_ctx_no_tmpdir(self):
+        session = GameSession('fake.po')
+        session.ctx = type('Ctx', (), {'_tmpdir': None})()
+        session._scan_catalog()
+        assert session.catalog == {}
+
+
+class TestGameSessionExodCatalog:
+    """Cover line 119: EXOD catalog entry with virtual sub-editors."""
+
+    def test_exod_detected(self, tmp_dir):
+        session = _make_session(tmp_dir, files={
+            'EXOD#062000': 26208,
+        })
+        assert session.has_category('exod')
+        exod_files = session.files_in('exod')
+        names = [n for n, _ in exod_files]
+        assert 'EXOD:crawl' in names
+        assert 'EXOD:glyphs' in names
+        assert 'EXOD:frames' in names
+
+    def test_exod_virtual_read(self, tmp_dir):
+        """Reading EXOD:crawl should read the base EXOD file."""
+        session = _make_session(tmp_dir, files={
+            'EXOD#062000': 26208,
+        })
+        data = session.read('EXOD:crawl')
+        assert data is not None
+        assert len(data) == 26208
+
+    def test_exod_virtual_save_callback(self, tmp_dir):
+        """Save callback for EXOD:crawl writes to base EXOD."""
+        session = _make_session(tmp_dir, files={
+            'EXOD#062000': 26208,
+        })
+        cb = session.make_save_callback('EXOD:crawl')
+        cb(b'\x00' * 26208)
+        assert 'EXOD' in session.ctx._modified

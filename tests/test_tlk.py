@@ -1133,3 +1133,303 @@ class TestTlkExtractBuildAdditional:
         for orig, rebuilt in zip(original_records, rebuilt_records):
             assert orig == rebuilt
 
+
+# =============================================================================
+# Batch 3: Coverage for tlk.py uncovered lines
+# =============================================================================
+
+
+class TestIsTextRecordEmpty:
+    """Cover line 28: is_text_record returns False for empty data."""
+
+    def test_empty_bytes(self):
+        assert is_text_record(b'') is False
+
+
+class TestLoadTlkSkipBinaryFalse:
+    """Cover line 89: load_tlk_records with skip_binary=False."""
+
+    def test_binary_records_included(self, tmp_path):
+        """Binary records are included when skip_binary=False."""
+        # Build a TLK file with a binary record and a text record
+        binary_part = bytearray([0x20, 0x30, 0x4C, 0x10, 0x08, 0x00])
+        text_part = bytearray()
+        for ch in 'HELLO':
+            text_part.append(ord(ch) | 0x80)
+        text_part.append(0x00)
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(binary_part + text_part))
+        # With skip_binary=True (default), binary record is excluded
+        recs_skip = load_tlk_records(path, skip_binary=True)
+        assert len(recs_skip) == 1
+        # With skip_binary=False, binary record is included
+        recs_all = load_tlk_records(path, skip_binary=False)
+        assert len(recs_all) == 2
+
+
+class TestCmdViewDirJson:
+    """Cover lines 111-119: cmd_view directory mode with --json."""
+
+    def test_view_dir_json_output(self, tmp_path):
+        from ult3edit.tlk import cmd_view
+        # Create a TLK file in the directory
+        rec = encode_record(['TEST DIALOG'])
+        (tmp_path / 'TLKA').write_bytes(bytes(rec))
+        outfile = tmp_path / 'output.json'
+        args = argparse.Namespace(
+            path=str(tmp_path), json=True, output=str(outfile))
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'TLKA' in result
+        assert 'location' in result['TLKA']
+        assert 'records' in result['TLKA']
+
+
+class TestCmdViewTruncation:
+    """Cover line 129: cmd_view truncates long text to 72 chars."""
+
+    def test_long_text_truncated(self, tmp_path, capsys):
+        from ult3edit.tlk import cmd_view
+        long_text = 'A' * 100
+        rec = encode_record([long_text])
+        (tmp_path / 'TLKA').write_bytes(bytes(rec))
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert '...' in out
+
+
+class TestCmdBuildEmptyBlock:
+    """Cover line 181: cmd_build skips empty blocks."""
+
+    def test_build_with_empty_block(self, tmp_path):
+        from ult3edit.tlk import cmd_build
+        txt = '# Record 0\nHELLO\n---\n\n---\n# Record 1\nWORLD\n'
+        txt_path = str(tmp_path / 'tlk.txt')
+        with open(txt_path, 'w') as f:
+            f.write(txt)
+        out_path = str(tmp_path / 'TLK_OUT')
+        args = type('Args', (), {'input': txt_path, 'output': out_path})()
+        cmd_build(args)
+        records = load_tlk_records(out_path)
+        assert len(records) == 2
+        assert records[0] == ['HELLO']
+        assert records[1] == ['WORLD']
+
+
+class TestCmdEditWritePath:
+    """Cover lines 251-257: cmd_edit writing to output file."""
+
+    def test_edit_record_writes(self, tmp_path, capsys):
+        from ult3edit.tlk import cmd_edit
+        rec = encode_record(['HELLO WORLD']) + encode_record(['GOODBYE'])
+        tlk_path = tmp_path / 'TLKA'
+        tlk_path.write_bytes(bytes(rec))
+        out_path = str(tmp_path / 'TLKA_OUT')
+        args = argparse.Namespace(
+            file=str(tlk_path), record=0, text='HI THERE',
+            find=None, replace=None, ignore_case=False,
+            output=out_path, backup=False, dry_run=False)
+        cmd_edit(args)
+        records = load_tlk_records(out_path)
+        assert records[0] == ['HI THERE']
+        assert records[1] == ['GOODBYE']
+        out = capsys.readouterr().out
+        assert 'Updated record 0' in out
+
+
+class TestCmdSearchSingleFileRegex:
+    """Cover line 350: cmd_search on single file with regex match."""
+
+    def test_search_regex_single_file(self, tmp_path, capsys):
+        rec = encode_record(['LOOK FOR MARK OF FIRE'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        args = argparse.Namespace(
+            path=path, pattern=r'MARK.*FIRE', regex=True,
+            json=False, output=None)
+        cmd_search(args)
+        out = capsys.readouterr().out
+        assert 'MARK OF FIRE' in out
+
+    def test_search_no_results(self, tmp_path, capsys):
+        rec = encode_record(['HELLO WORLD'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        args = argparse.Namespace(
+            path=path, pattern='ZZZZZ', regex=False,
+            json=False, output=None)
+        cmd_search(args)
+        out = capsys.readouterr().out
+        assert 'No matches' in out
+
+
+class TestTlkDispatchAll:
+    """Cover lines 462-472: dispatch routes to all subcommands."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        rec = encode_record(['TEST'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        args = argparse.Namespace(
+            tlk_command='view', path=path, json=False, output=None)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'TEST' in out
+
+    def test_dispatch_extract(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        rec = encode_record(['DATA'])
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(bytes(rec))
+        txt_path = str(tmp_path / 'out.txt')
+        args = argparse.Namespace(
+            tlk_command='extract', input=tlk_path, output=txt_path)
+        dispatch(args)
+        assert os.path.exists(txt_path)
+
+    def test_dispatch_build(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        txt_path = str(tmp_path / 'in.txt')
+        with open(txt_path, 'w') as f:
+            f.write('# Record 0\nBUILD TEST\n')
+        out_path = str(tmp_path / 'TLK_OUT')
+        args = argparse.Namespace(
+            tlk_command='build', input=txt_path, output=out_path)
+        dispatch(args)
+        assert os.path.exists(out_path)
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        rec = encode_record(['BEFORE'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        out_path = str(tmp_path / 'OUT')
+        args = argparse.Namespace(
+            tlk_command='edit', file=path, record=0, text='AFTER',
+            find=None, replace=None, ignore_case=False,
+            output=out_path, backup=False, dry_run=False)
+        dispatch(args)
+        records = load_tlk_records(out_path)
+        assert records[0] == ['AFTER']
+
+    def test_dispatch_search(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        rec = encode_record(['HELLO'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        args = argparse.Namespace(
+            tlk_command='search', path=path, pattern='HELLO',
+            regex=False, json=False, output=None)
+        dispatch(args)
+        out = capsys.readouterr().out
+        assert 'HELLO' in out
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        from ult3edit.tlk import dispatch
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(bytes(64))
+        json_path = str(tmp_path / 'dlg.json')
+        with open(json_path, 'w') as f:
+            json.dump({'records': [{'lines': ['IMPORTED']}]}, f)
+        args = argparse.Namespace(
+            tlk_command='import', file=tlk_path, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        dispatch(args)
+        records = load_tlk_records(tlk_path)
+        assert records[0] == ['IMPORTED']
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.tlk import dispatch
+        args = argparse.Namespace(tlk_command=None)
+        dispatch(args)
+        err = capsys.readouterr().err
+        assert 'Usage' in err
+
+
+class TestTlkMain:
+    """Cover lines 479-528: main() standalone entry point."""
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        rec = encode_record(['MAIN TEST'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        monkeypatch.setattr(sys, 'argv', ['ult3-tlk', 'view', path])
+        main()
+        out = capsys.readouterr().out
+        assert 'MAIN TEST' in out
+
+    def test_main_search(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        rec = encode_record(['FIND ME'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        monkeypatch.setattr(sys, 'argv', ['ult3-tlk', 'search', path, 'FIND'])
+        main()
+        out = capsys.readouterr().out
+        assert 'FIND ME' in out
+
+    def test_main_extract_build(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        rec = encode_record(['ROUNDTRIP'])
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(bytes(rec))
+        txt_path = str(tmp_path / 'out.txt')
+        monkeypatch.setattr(sys, 'argv', ['ult3-tlk', 'extract', tlk_path, txt_path])
+        main()
+        assert os.path.exists(txt_path)
+
+    def test_main_edit(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        rec = encode_record(['ORIGINAL'])
+        path = str(tmp_path / 'TLKA')
+        with open(path, 'wb') as f:
+            f.write(bytes(rec))
+        out_path = str(tmp_path / 'OUT')
+        monkeypatch.setattr(sys, 'argv', [
+            'ult3-tlk', 'edit', path, '--record', '0',
+            '--text', 'EDITED', '-o', out_path])
+        main()
+        records = load_tlk_records(out_path)
+        assert records[0] == ['EDITED']
+
+    def test_main_import(self, tmp_path, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        tlk_path = str(tmp_path / 'TLKA')
+        with open(tlk_path, 'wb') as f:
+            f.write(bytes(64))
+        json_path = str(tmp_path / 'dlg.json')
+        with open(json_path, 'w') as f:
+            json.dump([{'lines': ['VIA MAIN']}], f)
+        monkeypatch.setattr(sys, 'argv', ['ult3-tlk', 'import', tlk_path, json_path])
+        main()
+        records = load_tlk_records(tlk_path)
+        assert records[0] == ['VIA MAIN']
+
+    def test_main_no_command(self, capsys, monkeypatch):
+        import sys
+        from ult3edit.tlk import main
+        monkeypatch.setattr(sys, 'argv', ['ult3-tlk'])
+        main()
+        err = capsys.readouterr().err
+        assert 'Usage' in err
+

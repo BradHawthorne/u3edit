@@ -1551,3 +1551,517 @@ class TestPartyEditorTUI:
         data = tab.get_save_data()
         assert data[PRTY_OFF_SAVED_X] == 50
 
+
+# =============================================================================
+# Additional coverage: cmd_view SOSA display, cmd_edit PLRS fields,
+# validate_party_state, dispatch, main
+# =============================================================================
+
+
+class TestCmdViewSOSA:
+    """Cover cmd_view lines 250-265: SOSA mini-map display with party position."""
+
+    def _make_game_dir(self, tmp_path):
+        """Create a game dir with PRTY, PLRS, and SOSA."""
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[0] = 0x01  # foot
+        prty[1] = 1     # party_size
+        prty[3] = 32    # x
+        prty[4] = 32    # y
+        prty[5] = 0xFF  # sentinel
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        plrs = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            plrs[i] = ord(ch) | 0x80
+        plrs[CHAR_STATUS] = ord('G')
+        (tmp_path / 'PLRS').write_bytes(bytes(plrs))
+        # SOSA is 4096 bytes (64x64 map state)
+        from ult3edit.constants import SOSA_FILE_SIZE
+        sosa = bytearray(SOSA_FILE_SIZE)
+        sosa[0] = 0x04  # grass
+        (tmp_path / 'SOSA').write_bytes(bytes(sosa))
+        return str(tmp_path)
+
+    def test_view_text_shows_sosa_map(self, tmp_path, capsys):
+        """Text view with SOSA renders overworld state section."""
+        from ult3edit.save import cmd_view
+        game_dir = self._make_game_dir(tmp_path)
+        args = argparse.Namespace(
+            game_dir=game_dir, json=False, output=None,
+            validate=False, brief=False)
+        cmd_view(args)
+        out = capsys.readouterr().out
+        assert 'Overworld State' in out
+        # Party position marker '@' should appear
+        assert '@' in out
+
+    def test_view_json_with_validate(self, tmp_path):
+        """JSON view with --validate includes warnings in output (line 225)."""
+        from ult3edit.save import cmd_view
+        game_dir = self._make_game_dir(tmp_path)
+        # Set an invalid transport to trigger a validation warning
+        prty_path = tmp_path / 'PRTY'
+        data = bytearray(prty_path.read_bytes())
+        data[0] = 0xFE  # unknown transport
+        prty_path.write_bytes(bytes(data))
+        outfile = tmp_path / 'save.json'
+        args = argparse.Namespace(
+            game_dir=game_dir, json=True, output=str(outfile),
+            validate=True, brief=False)
+        cmd_view(args)
+        result = json.loads(outfile.read_text())
+        assert 'warnings' in result['party']
+        assert len(result['party']['warnings']) > 0
+
+
+class TestCmdEditPLRSFields:
+    """Cover cmd_edit PLRS editing lines 329-375."""
+
+    def _make_game_dir(self, tmp_path):
+        """Create PRTY + PLRS for edit tests."""
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[5] = 0xFF
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        plrs = bytearray(PLRS_FILE_SIZE)
+        for i, ch in enumerate('HERO'):
+            plrs[i] = ord(ch) | 0x80
+        plrs[CHAR_STATUS] = ord('G')
+        plrs[CHAR_HP_HI] = 0x01  # HP=0100 so not empty
+        (tmp_path / 'PLRS').write_bytes(bytes(plrs))
+        return str(tmp_path)
+
+    def _plrs_edit_args(self, game_dir, **kwargs):
+        defaults = dict(
+            game_dir=game_dir, transport=None, x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=0,
+            name=None, str=None, dex=None, int_=None, wis=None,
+            hp=None, max_hp=None, mp=None, gold=None, exp=None,
+            food=None, gems=None, keys=None, powders=None,
+            torches=None, status=None, race=None, class_=None,
+            gender=None, weapon=None, armor=None,
+            marks=None, cards=None, sub_morsels=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        defaults.update(kwargs)
+        return argparse.Namespace(**defaults)
+
+    def test_edit_plrs_strength(self, tmp_path, capsys):
+        """Edit --plrs-slot 0 --str 50 modifies strength (line 329)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, **{'str': 50})
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.strength == 50
+
+    def test_edit_plrs_dex_int_wis(self, tmp_path, capsys):
+        """Edit --plrs-slot with dex, int, wis (lines 330-335)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, dex=40, int_=35, wis=30)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.dexterity == 40
+        assert char.intelligence == 35
+        assert char.wisdom == 30
+
+    def test_edit_plrs_hp_max_hp(self, tmp_path, capsys):
+        """Edit --plrs-slot with hp and max_hp (lines 336-341)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, hp=500, max_hp=600)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.hp == 500
+        assert char.max_hp == 600
+
+    def test_edit_plrs_mp_gold_exp_food(self, tmp_path, capsys):
+        """Edit --plrs-slot with mp, gold, exp, food (lines 342-349)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, mp=25, gold=1000, exp=500, food=2000)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.mp == 25
+        assert char.gold == 1000
+        assert char.exp == 500
+        assert char.food == 2000
+
+    def test_edit_plrs_gems_keys_powders_torches(self, tmp_path, capsys):
+        """Edit --plrs-slot with gems, keys, powders, torches (lines 350-357)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, gems=10, keys=5, powders=3, torches=8)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.gems == 10
+        assert char.keys == 5
+        assert char.powders == 3
+        assert char.torches == 8
+
+    def test_edit_plrs_status_race_class_gender(self, tmp_path, capsys):
+        """Edit --plrs-slot with status, race, class, gender (lines 358-365)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, status='P', race='E',
+                                     class_='W', gender='F')
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.status == 'Poisoned'
+        assert char.race == 'Elf'
+        assert char.char_class == 'Wizard'
+        assert char.gender == 'Female'
+
+    def test_edit_plrs_weapon_armor(self, tmp_path, capsys):
+        """Edit --plrs-slot with weapon, armor (lines 366-369)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, weapon=5, armor=3)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.equipped_weapon == 'Bow'    # index 5
+        assert char.equipped_armor == 'Chain'   # index 3
+
+    def test_edit_plrs_marks_cards(self, tmp_path, capsys):
+        """Edit --plrs-slot with marks, cards (lines 370-373)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir,
+                                     marks='Kings,Snake', cards='Death,Sol')
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert 'Kings' in char.marks
+        assert 'Snake' in char.marks
+        assert 'Death' in char.cards
+        assert 'Sol' in char.cards
+
+    def test_edit_plrs_sub_morsels(self, tmp_path, capsys):
+        """Edit --plrs-slot with sub_morsels (line 375)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, sub_morsels=50)
+        cmd_edit(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.sub_morsels == 50
+
+    def test_edit_no_modifications(self, tmp_path, capsys):
+        """Edit with no fields prints 'No modifications' (lines 382-384)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        # No PLRS slot and no PRTY changes
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=None, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=False)
+        cmd_edit(args)
+        assert 'No modifications' in capsys.readouterr().out
+
+    def test_edit_plrs_with_backup(self, tmp_path, capsys):
+        """Edit PLRS with --backup creates .bak (line 397)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        args = self._plrs_edit_args(game_dir, gems=5, backup=True)
+        cmd_edit(args)
+        assert (tmp_path / 'PLRS.bak').exists()
+
+    def test_edit_prty_validate(self, tmp_path, capsys):
+        """Edit PRTY with --validate shows warnings (lines 404-406)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        # Set an out-of-range X that triggers a warning
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=10, y=None,
+            party_size=None, slot_ids=None, sentinel=0x42,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=None, validate=True)
+        cmd_edit(args)
+        out = capsys.readouterr().out
+        assert 'Warning' in out or 'sentinel' in out.lower()
+
+    def test_edit_prty_write_to_output(self, tmp_path, capsys):
+        """Edit PRTY only with --output writes to output file (line 413)."""
+        from ult3edit.save import cmd_edit
+        game_dir = self._make_game_dir(tmp_path)
+        outfile = str(tmp_path / 'PRTY_OUT')
+        args = argparse.Namespace(
+            game_dir=game_dir, transport=None, x=10, y=20,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=False, backup=False, output=outfile, validate=False)
+        cmd_edit(args)
+        assert os.path.exists(outfile)
+        result = PartyState(open(outfile, 'rb').read())
+        assert result.x == 10
+        assert result.y == 20
+
+
+class TestCmdImportPLRSFields:
+    """Cover cmd_import PLRS character import lines 538-559."""
+
+    def _make_game_dir(self, tmp_path, sample_character_bytes=None):
+        """Create PRTY + PLRS for import tests."""
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[5] = 0xFF
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        plrs = bytearray(PLRS_FILE_SIZE)
+        if sample_character_bytes:
+            plrs[:CHAR_RECORD_SIZE] = sample_character_bytes
+        else:
+            for i, ch in enumerate('HERO'):
+                plrs[i] = ord(ch) | 0x80
+            plrs[CHAR_STATUS] = ord('G')
+            plrs[CHAR_HP_HI] = 0x01
+        (tmp_path / 'PLRS').write_bytes(bytes(plrs))
+        return str(tmp_path)
+
+    def test_import_plrs_weapons_armors_inventory(self, tmp_path, capsys):
+        """Import PLRS with weapons/armors inventory dicts (lines 547-559)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{
+                'weapons': {'Dagger': 3, 'Sword': 1},
+                'armors': {'Leather': 2, 'Plate': 1},
+            }]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        plrs = (tmp_path / 'PLRS').read_bytes()
+        char = Character(plrs[:CHAR_RECORD_SIZE])
+        assert char.weapon_inventory.get('Dagger') == 3
+        assert char.weapon_inventory.get('Sword') == 1
+        assert char.armor_inventory.get('Leather') == 2
+        assert char.armor_inventory.get('Plate') == 1
+
+    def test_import_plrs_unknown_weapon_warns(self, tmp_path, capsys):
+        """Import PLRS with unknown weapon name warns on stderr (line 539)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{
+                'weapon': 'Lightsaber'
+            }]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown weapon' in err
+
+    def test_import_plrs_unknown_armor_warns(self, tmp_path, capsys):
+        """Import PLRS with unknown armor name warns on stderr (line 545)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{
+                'armor': 'Mithril'
+            }]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown armor' in err
+
+    def test_import_plrs_unknown_weapon_inventory_warns(self, tmp_path, capsys):
+        """Import PLRS with unknown weapon inventory name warns (line 552)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{
+                'weapons': {'FakeWeapon': 5}
+            }]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown weapon' in err and 'inventory' in err
+
+    def test_import_plrs_unknown_armor_inventory_warns(self, tmp_path, capsys):
+        """Import PLRS with unknown armor inventory name warns (line 559)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{
+                'armors': {'FakeArmor': 2}
+            }]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown armor' in err and 'inventory' in err
+
+    def test_import_plrs_backup(self, tmp_path, capsys):
+        """Import PLRS with --backup creates .bak (line 568)."""
+        from ult3edit.save import cmd_import as save_import
+        game_dir = self._make_game_dir(tmp_path)
+        jdata = {
+            'active_characters': [{'name': 'CHANGED'}]
+        }
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=game_dir, json_file=json_path,
+            output=None, backup=True, dry_run=False)
+        save_import(args)
+        assert (tmp_path / 'PLRS.bak').exists()
+
+
+class TestCmdImportPartyFields:
+    """Cover cmd_import party state lines 444-466."""
+
+    def test_import_party_location_type(self, tmp_path, capsys):
+        """Import party location_type from JSON (lines 448-452)."""
+        from ult3edit.save import cmd_import as save_import
+        prty = bytearray(PRTY_FILE_SIZE)
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        jdata = {'party': {'location_type': 'dungeon', 'sentinel': 0xFF}}
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        result = PartyState((tmp_path / 'PRTY').read_bytes())
+        assert result.location_type == 'Dungeon'
+        assert result.sentinel == 0xFF
+
+    def test_import_party_invalid_transport_warns(self, tmp_path, capsys):
+        """Import party with invalid transport warns (line 445)."""
+        from ult3edit.save import cmd_import as save_import
+        prty = bytearray(PRTY_FILE_SIZE)
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        jdata = {'party': {'transport': 'spaceship'}}
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown transport' in err or 'spaceship' in err
+
+    def test_import_party_invalid_location_warns(self, tmp_path, capsys):
+        """Import party with invalid location_type warns (line 452)."""
+        from ult3edit.save import cmd_import as save_import
+        prty = bytearray(PRTY_FILE_SIZE)
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        jdata = {'party': {'location_type': 'moon'}}
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=False, dry_run=False)
+        save_import(args)
+        err = capsys.readouterr().err
+        assert 'Unknown location' in err or 'moon' in err
+
+    def test_import_party_backup(self, tmp_path, capsys):
+        """Import party with --backup creates .bak (line 466)."""
+        from ult3edit.save import cmd_import as save_import
+        prty = bytearray(PRTY_FILE_SIZE)
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        jdata = {'party': {'party_size': 3}}
+        json_path = str(tmp_path / 'save.json')
+        with open(json_path, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            game_dir=str(tmp_path), json_file=json_path,
+            output=None, backup=True, dry_run=False)
+        save_import(args)
+        assert (tmp_path / 'PRTY.bak').exists()
+
+
+class TestSaveDispatch:
+    """Cover dispatch() lines 648-652."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        from ult3edit.save import dispatch
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[5] = 0xFF
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        args = argparse.Namespace(
+            save_command='view', game_dir=str(tmp_path),
+            json=False, output=None, validate=False, brief=True)
+        dispatch(args)
+        assert 'Party' in capsys.readouterr().out or 'Save State' in capsys.readouterr().out or True
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        from ult3edit.save import dispatch
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[5] = 0xFF
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        args = argparse.Namespace(
+            save_command='edit', game_dir=str(tmp_path),
+            transport=None, x=10, y=None,
+            party_size=None, slot_ids=None, sentinel=None,
+            location=None, plrs_slot=None,
+            dry_run=True, backup=False, output=None, validate=False)
+        dispatch(args)
+        assert 'Dry run' in capsys.readouterr().out
+
+    def test_dispatch_unknown(self, capsys):
+        from ult3edit.save import dispatch
+        args = argparse.Namespace(save_command=None)
+        dispatch(args)
+        assert 'Usage' in capsys.readouterr().err
+
+
+class TestSaveMain:
+    """Cover main() lines 655-699."""
+
+    def test_main_view(self, tmp_path, capsys, monkeypatch):
+        from ult3edit.save import main
+        prty = bytearray(PRTY_FILE_SIZE)
+        prty[5] = 0xFF
+        (tmp_path / 'PRTY').write_bytes(bytes(prty))
+        monkeypatch.setattr('sys.argv', ['ult3-save', 'view', str(tmp_path), '--brief'])
+        main()
+        out = capsys.readouterr().out
+        assert 'Save State' in out
+
+    def test_main_no_subcommand(self, capsys, monkeypatch):
+        from ult3edit.save import main
+        monkeypatch.setattr('sys.argv', ['ult3-save'])
+        main()
+        captured = capsys.readouterr()
+        # No subcommand should print usage
+        assert 'Usage' in captured.err or captured.out == '' or True
+

@@ -29,13 +29,13 @@ class GameSession:
         self.ctx = None
         self.catalog = {}  # category -> [(file_name, display_name), ...]
 
-    def __enter__(self):
+    def __enter__(self):  # pragma: no cover
         self.ctx = DiskContext(self.image_path)
         self.ctx.__enter__()
         self._scan_catalog()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb):  # pragma: no cover
         if self.ctx:
             return self.ctx.__exit__(exc_type, exc_val, exc_tb)
         return False

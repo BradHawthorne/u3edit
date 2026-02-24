@@ -1526,3 +1526,705 @@ class TestShapesCompileJsonStructure:
         frames = data['tiles'][0]['frames']
         indices = [f['index'] for f in frames]
         assert indices == [0, 1, 2, 3]
+
+
+# =============================================================================
+# Coverage tests: cmd_export() PNG generation
+# =============================================================================
+
+class TestCmdExport:
+    """Tests for cmd_export() PNG generation — single glyph, sheet, scaling."""
+
+    def _make_shps_file(self, tmp_path, pattern=0x55):
+        """Create a synthetic SHPS file with a known pattern."""
+        data = bytearray(SHPS_FILE_SIZE)
+        for i in range(0, SHPS_FILE_SIZE, GLYPH_SIZE):
+            data[i] = pattern
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_export_creates_glyph_pngs(self, tmp_path):
+        """cmd_export() creates individual glyph PNG files."""
+        from ult3edit.shapes import cmd_export
+        shps_path = self._make_shps_file(tmp_path)
+        out_dir = str(tmp_path / 'export')
+        args = argparse.Namespace(
+            file=shps_path, output_dir=out_dir, scale=1, sheet=False)
+        cmd_export(args)
+        # Should create 256 PNG files
+        assert os.path.exists(os.path.join(out_dir, 'glyph_000.png'))
+        assert os.path.exists(os.path.join(out_dir, 'glyph_255.png'))
+
+    def test_export_with_scaling(self, tmp_path):
+        """cmd_export() with scale factor produces larger PNGs."""
+        from ult3edit.shapes import cmd_export
+        shps_path = self._make_shps_file(tmp_path)
+        out_dir = str(tmp_path / 'export')
+        args = argparse.Namespace(
+            file=shps_path, output_dir=out_dir, scale=2, sheet=False)
+        cmd_export(args)
+        # PNGs should exist and be valid
+        png_path = os.path.join(out_dir, 'glyph_000.png')
+        assert os.path.exists(png_path)
+        with open(png_path, 'rb') as f:
+            header = f.read(8)
+        assert header[:4] == b'\x89PNG'
+
+    def test_export_with_sheet(self, tmp_path, capsys):
+        """cmd_export() with --sheet generates a sprite sheet."""
+        from ult3edit.shapes import cmd_export
+        shps_path = self._make_shps_file(tmp_path)
+        out_dir = str(tmp_path / 'export')
+        args = argparse.Namespace(
+            file=shps_path, output_dir=out_dir, scale=1, sheet=True)
+        cmd_export(args)
+        sheet_path = os.path.join(out_dir, 'glyph_sheet.png')
+        assert os.path.exists(sheet_path)
+        captured = capsys.readouterr()
+        assert 'sprite sheet' in captured.out
+
+    def test_export_non_charset_exits(self, tmp_path):
+        """cmd_export() on non-charset file exits with error."""
+        from ult3edit.shapes import cmd_export
+        # Create a non-SHPS file (not 2048 bytes)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(bytearray(512))
+        out_dir = str(tmp_path / 'export')
+        args = argparse.Namespace(
+            file=path, output_dir=out_dir, scale=4, sheet=False)
+        with pytest.raises(SystemExit):
+            cmd_export(args)
+
+    def test_export_default_scale(self, tmp_path):
+        """cmd_export() defaults to scale=4 via getattr."""
+        from ult3edit.shapes import cmd_export
+        shps_path = self._make_shps_file(tmp_path)
+        out_dir = str(tmp_path / 'export')
+        # Namespace without 'scale' attribute — getattr fallback to 4
+        args = argparse.Namespace(file=shps_path, output_dir=out_dir, sheet=False)
+        cmd_export(args)
+        assert os.path.exists(os.path.join(out_dir, 'glyph_000.png'))
+
+
+# =============================================================================
+# Coverage tests: cmd_edit() glyph editing error paths
+# =============================================================================
+
+class TestCmdEditCoverage:
+    """Tests for cmd_edit() uncovered error paths."""
+
+    def test_edit_glyph_out_of_range(self, tmp_path):
+        """cmd_edit() with glyph index past file end exits."""
+        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
+        # Create a small file (only 8 glyphs)
+        data = bytearray(64)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, glyph=100,
+            data='FF FF FF FF FF FF FF FF',
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            shapes_cmd_edit(args)
+
+    def test_edit_invalid_hex_data(self, tmp_path):
+        """cmd_edit() with invalid hex data exits."""
+        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, glyph=0, data='ZZZZ',
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            shapes_cmd_edit(args)
+
+    def test_edit_wrong_byte_count(self, tmp_path):
+        """cmd_edit() with wrong number of hex bytes exits."""
+        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, glyph=0, data='FF FF',
+            output=None, backup=False, dry_run=False)
+        with pytest.raises(SystemExit):
+            shapes_cmd_edit(args)
+
+    def test_edit_overlaps_code_region_warns(self, tmp_path, capsys):
+        """cmd_edit() warns when editing overlaps embedded code region."""
+        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
+        from ult3edit.shapes import SHPS_CODE_OFFSET
+        data = bytearray(SHPS_FILE_SIZE)
+        # Populate the code region so check_shps_code_region returns True
+        data[SHPS_CODE_OFFSET] = 0x4C  # JMP instruction
+        data[SHPS_CODE_OFFSET + 1] = 0x00
+        data[SHPS_CODE_OFFSET + 2] = 0x08
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # Glyph 63 overlaps the code region at 0x1F9 (63*8 = 0x1F8)
+        out_path = str(tmp_path / 'SHPS_out')
+        args = argparse.Namespace(
+            file=path, glyph=63,
+            data='AA BB CC DD EE FF 00 11',
+            output=out_path, backup=False, dry_run=False)
+        shapes_cmd_edit(args)
+        captured = capsys.readouterr()
+        assert 'overlaps embedded code' in captured.err
+
+    def test_edit_backup_same_file(self, tmp_path):
+        """cmd_edit() with --backup and no --output creates .bak."""
+        from ult3edit.shapes import cmd_edit as shapes_cmd_edit
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            file=path, glyph=0,
+            data='FF FF FF FF FF FF FF FF',
+            output=None, backup=True, dry_run=False)
+        shapes_cmd_edit(args)
+        assert os.path.exists(path + '.bak')
+
+
+# =============================================================================
+# Coverage tests: cmd_import() overlay string and JSON import
+# =============================================================================
+
+class TestCmdImportCoverage:
+    """Tests for cmd_import() uncovered paths."""
+
+    def test_import_overlay_skip_missing_offset(self, tmp_path, capsys):
+        """cmd_import() overlay string with bad offset produces warning."""
+        from ult3edit.shapes import cmd_import
+        # Build an SHP overlay with inline string
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])  # JSR $46BA
+        for ch in 'HELLO':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # JSON with bad offset
+        jdata = {'strings': [{'offset': 9999, 'text': 'NOPE'}]}
+        jpath = str(tmp_path / 'strings.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'No string at offset' in captured.err
+
+    def test_import_overlay_skip_missing_keys(self, tmp_path, capsys):
+        """cmd_import() overlay string entry missing offset/text is skipped."""
+        from ult3edit.shapes import cmd_import
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in 'HI':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # Missing 'text' key
+        jdata = {'strings': [{'offset': 19}]}
+        jpath = str(tmp_path / 'strings.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert '0 string(s)' in captured.out
+
+    def test_import_overlay_too_long_warns(self, tmp_path, capsys):
+        """cmd_import() overlay string too long produces warning."""
+        from ult3edit.shapes import cmd_import
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in 'HI':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        # String too long for 2-char slot
+        jdata = {'strings': [{'offset': 19, 'text': 'THIS IS WAY TOO LONG'}]}
+        jpath = str(tmp_path / 'strings.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            dry_run=False, backup=False, output=None)
+        cmd_import(args)
+        captured = capsys.readouterr()
+        assert 'exceeds available space' in captured.err
+
+    def test_import_backup_existing_file(self, tmp_path):
+        """cmd_import() with --backup creates .bak when writing in-place."""
+        from ult3edit.shapes import cmd_import
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = [{'index': 0, 'raw': [0xFF] * 8}]
+        jpath = str(tmp_path / 'glyphs.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            file=path, json_file=jpath,
+            output=None, backup=True, dry_run=False)
+        cmd_import(args)
+        assert os.path.exists(path + '.bak')
+
+
+# =============================================================================
+# Coverage tests: cmd_edit_string() additional paths
+# =============================================================================
+
+class TestCmdEditStringCoverage:
+    """Additional cmd_edit_string tests for backup path."""
+
+    def _make_overlay(self, tmp_path, text='HELLO'):
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in text:
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        return path
+
+    def test_edit_string_with_backup(self, tmp_path):
+        """cmd_edit_string with --backup creates .bak file."""
+        from ult3edit.shapes import cmd_edit_string
+        path = self._make_overlay(tmp_path)
+        args = argparse.Namespace(
+            file=path, offset=19, text='HI',
+            output=None, backup=True, dry_run=False)
+        cmd_edit_string(args)
+        assert os.path.exists(path + '.bak')
+
+
+# =============================================================================
+# Coverage tests: cmd_view() various format branches
+# =============================================================================
+
+class TestCmdViewCoverage:
+    """Tests for cmd_view() uncovered branches."""
+
+    def test_view_charset_json(self, tmp_path, capsys):
+        """cmd_view() on a charset file with --json."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(SHPS_FILE_SIZE)
+        data[0] = 0x55
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path, tile=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert 'tiles' in result
+        assert result['format']['type'] == 'charset'
+
+    def test_view_overlay_json(self, tmp_path):
+        """cmd_view() on overlay file with --json."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in 'SHOP':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path, tile=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert 'strings' in result
+
+    def test_view_overlay_text(self, tmp_path, capsys):
+        """cmd_view() on overlay file shows text output."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in 'SHOP':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=path, json=False, output=None, tile=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'SHOP' in captured.out
+        assert 'overlay' in captured.out.lower()
+
+    def test_view_hgr_bitmap_json(self, tmp_path):
+        """cmd_view() on HGR bitmap with --json."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(1024)
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path, tile=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert result['format']['type'] == 'hgr_bitmap'
+
+    def test_view_hgr_bitmap_text(self, tmp_path, capsys):
+        """cmd_view() on HGR bitmap shows text output."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(1024)
+        path = str(tmp_path / 'TEXT')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=path, json=False, output=None, tile=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'HGR bitmap' in captured.out
+
+    def test_view_binary_json(self, tmp_path):
+        """cmd_view() on generic binary file with --json."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(512)
+        path = str(tmp_path / 'UNKNOWN')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_path = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            path=path, json=True, output=out_path, tile=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert result['format']['type'] == 'binary'
+
+    def test_view_charset_all_tiles(self, tmp_path, capsys):
+        """cmd_view() without --tile shows all tiles."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=path, json=False, output=None, tile=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'Water' in captured.out or 'Tile' in captured.out
+
+    def test_view_dir_with_shps_json(self, tmp_path):
+        """cmd_view() on directory with SHPS and --json."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(SHPS_FILE_SIZE)
+        shps_path = str(tmp_path / 'SHPS')
+        with open(shps_path, 'wb') as f:
+            f.write(data)
+        out_path = str(tmp_path / 'out.json')
+        args = argparse.Namespace(
+            path=str(tmp_path), json=True, output=out_path, tile=None)
+        cmd_view(args)
+        with open(out_path, 'r') as f:
+            result = json.load(f)
+        assert 'tiles' in result
+
+    def test_view_dir_with_specific_tile(self, tmp_path, capsys):
+        """cmd_view() on directory with --tile shows one tile."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(SHPS_FILE_SIZE)
+        data[0] = 0x7F
+        shps_path = str(tmp_path / 'SHPS')
+        with open(shps_path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None, tile=0)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'Tile 0x00' in captured.out
+
+    def test_view_dir_all_tiles(self, tmp_path, capsys):
+        """cmd_view() on directory without --tile shows all tiles."""
+        from ult3edit.shapes import cmd_view
+        data = bytearray(SHPS_FILE_SIZE)
+        shps_path = str(tmp_path / 'SHPS')
+        with open(shps_path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            path=str(tmp_path), json=False, output=None, tile=None)
+        cmd_view(args)
+        captured = capsys.readouterr()
+        assert 'Tile' in captured.out
+
+
+# =============================================================================
+# Coverage tests: cmd_compile_tiles() / cmd_decompile_tiles() edges
+# =============================================================================
+
+class TestCompileDecompileCoverage:
+    """Additional coverage for compile/decompile edge cases."""
+
+    def test_compile_json_no_output(self, tmp_path, capsys):
+        """cmd_compile_tiles() JSON with no --output prints to stdout."""
+        from ult3edit.shapes import cmd_compile_tiles
+        lines = []
+        for idx in range(4):
+            lines.append(f'# Tile 0x{idx:02X}')
+            for _ in range(8):
+                lines.append('#.#.#.#')
+            lines.append('')
+        src = str(tmp_path / 'test.tiles')
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        args = argparse.Namespace(source=src, output=None, format='json')
+        cmd_compile_tiles(args)
+        captured = capsys.readouterr()
+        result = json.loads(captured.out)
+        assert 'tiles' in result
+
+    def test_decompile_no_output_prints(self, tmp_path, capsys):
+        """cmd_decompile_tiles() with no --output prints to stdout."""
+        from ult3edit.shapes import cmd_decompile_tiles
+        data = bytearray(SHPS_FILE_SIZE)
+        data[0] = 0x7F
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(file=path, output=None)
+        cmd_decompile_tiles(args)
+        captured = capsys.readouterr()
+        assert '# Tile 0x00' in captured.out
+
+
+# =============================================================================
+# Coverage tests: render_hgr_sprite short row padding (line 191)
+# =============================================================================
+
+class TestRenderHgrSpritePadding:
+    """Test render_hgr_sprite with truncated row data."""
+
+    def test_short_data_padded(self):
+        """render_hgr_sprite pads short row data with zeros."""
+        from ult3edit.shapes import render_hgr_sprite
+        # Data shorter than expected: request 2 bytes/row x 2 rows
+        # but only provide 3 bytes total (1 byte short on last row)
+        data = bytes([0x7F, 0x7F, 0x01])
+        pixels = render_hgr_sprite(data, width_bytes=2, height=2, offset=0)
+        # Should have 2 rows x (2*7) = 28 pixels total
+        assert len(pixels) == 28
+
+
+# =============================================================================
+# Coverage tests: parse_tiles_text error paths (lines 883-917)
+# =============================================================================
+
+class TestParseTilesTextErrors:
+    """Test parse_tiles_text error paths."""
+
+    def test_incomplete_tile_raises(self):
+        """Tile with fewer than 8 rows raises ValueError."""
+        from ult3edit.shapes import parse_tiles_text
+        text = '# Tile 0x00: Test\n'
+        text += '#######\n' * 5  # Only 5 rows, need 8
+        with pytest.raises(ValueError, match='expected 8 rows, got 5'):
+            parse_tiles_text(text)
+
+    def test_incomplete_tile_at_eof_raises(self):
+        """Tile with fewer than 8 rows at end of file raises ValueError."""
+        from ult3edit.shapes import parse_tiles_text
+        text = '# Tile 0x00: Complete\n'
+        text += '#######\n' * 8
+        text += '\n'
+        text += '# Tile 0x01: Incomplete\n'
+        text += '#######\n' * 3
+        with pytest.raises(ValueError, match='expected 8 rows, got 3'):
+            parse_tiles_text(text)
+
+
+# =============================================================================
+# Coverage tests: dispatch() and main() entry points
+# =============================================================================
+
+class TestShapesDispatch:
+    """Tests for shapes dispatch() and main() entry points."""
+
+    def test_dispatch_view(self, tmp_path, capsys):
+        """dispatch() routes 'view' to cmd_view."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            shapes_command='view', path=path,
+            json=False, output=None, tile=0)
+        dispatch(args)
+        captured = capsys.readouterr()
+        assert 'Tile' in captured.out
+
+    def test_dispatch_export(self, tmp_path, capsys):
+        """dispatch() routes 'export' to cmd_export."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        out_dir = str(tmp_path / 'out')
+        args = argparse.Namespace(
+            shapes_command='export', file=path,
+            output_dir=out_dir, scale=1, sheet=False)
+        dispatch(args)
+        assert os.path.exists(os.path.join(out_dir, 'glyph_000.png'))
+
+    def test_dispatch_edit(self, tmp_path, capsys):
+        """dispatch() routes 'edit' to cmd_edit."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            shapes_command='edit', file=path, glyph=0,
+            data='FF FF FF FF FF FF FF FF',
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_import(self, tmp_path, capsys):
+        """dispatch() routes 'import' to cmd_import."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        jdata = [{'index': 0, 'raw': [0xFF] * 8}]
+        jpath = str(tmp_path / 'g.json')
+        with open(jpath, 'w') as f:
+            json.dump(jdata, f)
+        args = argparse.Namespace(
+            shapes_command='import', file=path, json_file=jpath,
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_info(self, tmp_path, capsys):
+        """dispatch() routes 'info' to cmd_info."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            shapes_command='info', file=path,
+            json=False, output=None)
+        dispatch(args)
+
+    def test_dispatch_edit_string(self, tmp_path, capsys):
+        """dispatch() routes 'edit-string' to cmd_edit_string."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(b'\x60' * 16)
+        data += bytes([0x20, 0xBA, 0x46])
+        for ch in 'HELLO':
+            data.append(ord(ch) | 0x80)
+        data.append(0x00)
+        data += bytearray(b'\x60' * 16)
+        path = str(tmp_path / 'SHP0')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            shapes_command='edit-string', file=path,
+            offset=19, text='HI',
+            output=None, backup=False, dry_run=True)
+        dispatch(args)
+
+    def test_dispatch_compile(self, tmp_path, capsys):
+        """dispatch() routes 'compile' to cmd_compile_tiles."""
+        from ult3edit.shapes import dispatch
+        lines = ['# Tile 0x00']
+        for _ in range(8):
+            lines.append('#######')
+        lines.append('')
+        src = str(tmp_path / 'test.tiles')
+        with open(src, 'w') as f:
+            f.write('\n'.join(lines))
+        args = argparse.Namespace(
+            shapes_command='compile', source=src,
+            output=None, format='binary')
+        dispatch(args)
+
+    def test_dispatch_decompile(self, tmp_path, capsys):
+        """dispatch() routes 'decompile' to cmd_decompile_tiles."""
+        from ult3edit.shapes import dispatch
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        args = argparse.Namespace(
+            shapes_command='decompile', file=path, output=None)
+        dispatch(args)
+
+    def test_dispatch_unknown_command(self, capsys):
+        """dispatch() with unknown command prints usage."""
+        from ult3edit.shapes import dispatch
+        args = argparse.Namespace(shapes_command=None)
+        dispatch(args)
+        captured = capsys.readouterr()
+        assert 'Usage' in captured.err
+
+    def test_main_no_args(self):
+        """main() with no args dispatches (prints usage or exits)."""
+        from ult3edit.shapes import main
+        import sys
+        old_argv = sys.argv
+        try:
+            sys.argv = ['ult3-shapes']
+            # No subcommand -> dispatches with None, prints usage
+            main()
+        except SystemExit:
+            pass
+        finally:
+            sys.argv = old_argv
+
+    def test_main_view_subcommand(self, tmp_path, capsys):
+        """main() with 'view' subcommand works."""
+        from ult3edit.shapes import main
+        import sys
+        data = bytearray(SHPS_FILE_SIZE)
+        path = str(tmp_path / 'SHPS')
+        with open(path, 'wb') as f:
+            f.write(data)
+        old_argv = sys.argv
+        try:
+            sys.argv = ['ult3-shapes', 'view', path, '--tile', '0']
+            main()
+        except SystemExit:
+            pass
+        finally:
+            sys.argv = old_argv
+        captured = capsys.readouterr()
+        assert 'Tile' in captured.out
